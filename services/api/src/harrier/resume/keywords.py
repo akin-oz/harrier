@@ -73,8 +73,11 @@ def missing_keywords(
         line = _posting_line(_word(term), posting)
         if line is not None:
             found[term.casefold()] = MissingKeyword(term, line)
+    # A watch term is checked against the truth sources whatever the
+    # vocabulary says: an alias can verify "Git" through "GitHub Actions"
+    # (review of PR #343).
     for term in bundle.watch_terms:
-        if term.casefold() in found or term.casefold() in verified:
+        if term.casefold() in found:
             continue
         line = _posting_line(_word(term), posting)
         if line is not None and not _truth_holds(sources, term):

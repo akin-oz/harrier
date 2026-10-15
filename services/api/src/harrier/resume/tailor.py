@@ -179,7 +179,11 @@ def run_tailor(
             fit_evaluation=fit_evaluation,
         )
         metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-        if rules.missing_keywords:
+        if not rules.missing_keywords:
+            # The same path an earlier focused run wrote: it would sit beside
+            # this draft as if it were this run's (review of PR #343).
+            paths["missing_keywords"].unlink(missing_ok=True)
+        else:
             # Beside the draft and never in it: the posting's skills the truth
             # does not hold (spec 140).
             paths["missing_keywords"].write_text(

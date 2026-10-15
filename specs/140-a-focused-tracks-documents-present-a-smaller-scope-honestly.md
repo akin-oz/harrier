@@ -268,6 +268,24 @@ unchanged.
    `services/api/tests/test_focused_documents.py`, which builds the
    focused bundle once for all of them.
 
+9. **CodeRabbit's review of PR #343, five findings, all applied.**
+   - An `ai_bullets` or `watch_terms` entry that is not a non-empty string
+     is refused, naming its index, rather than dropped
+     (`services/api/tests/test_focused_documents.py::test_a_non_string_entry_is_refused_not_dropped`).
+   - `candidate.github` and each link's `url` must be an http or https URL,
+     so a `javascript:` link is refused when the facts are read, never
+     rendered as a live href
+     (`services/api/tests/test_focused_documents.py::test_an_unsafe_link_scheme_is_refused`).
+   - A watch term is checked against the truth sources even when an alias
+     verifies it in the vocabulary
+     (`services/api/tests/test_focused_documents.py::test_a_watch_term_an_alias_verifies_is_still_checked_against_the_truth`).
+   - A stop followed by a closing quote or bracket ends a sentence, so a
+     quoted summary cannot pass the three-sentence limit
+     (`services/api/tests/test_focused_documents.py::test_a_quoted_sentence_counts_toward_the_profile_limit`).
+   - A run on a kind with no sidecar removes one an earlier focused run
+     left at the same path
+     (`services/api/tests/test_focused_documents.py::test_a_later_industry_run_removes_a_stale_sidecar`).
+
 ## Proof / origin
 
 - The header today: `templates/resume-template.html`,

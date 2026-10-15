@@ -26,8 +26,9 @@ from harrier.apply.claims import NeedsInputError
 from harrier.connection import Connection
 from harrier.db import connect
 from harrier.profile.store import put_document
-from harrier.resume.content import TruthSources, bundle_from_documents
+from harrier.resume.content import ResumeBundleError, TruthSources, bundle_from_documents
 from harrier.resume.htmlrender import render_html
+from harrier.resume.keywords import missing_keywords
 from harrier.resume.markdown import build_markdown
 from harrier.resume.plan import build_content_plan
 from harrier.tracker import add_job
@@ -283,3 +284,72 @@ def test_the_focused_letter_has_a_salutation(db: Connection) -> None:
     assert paragraphs[-2].startswith("Paragraph 6.")
     # No header: the focused letter opens with the salutation.
     assert 'class="header"' not in html
+
+
+# --- review of PR #343 ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("key", ["ai_bullets", "watch_terms"])
+def test_a_non_string_entry_is_refused_not_dropped(key: str) -> None:
+    facts, _ = example_documents()
+    framing = focused_framing()
+    framing[key] = ["ach_9", 123]
+    with pytest.raises(ResumeBundleError, match=rf"{key}\[1\] must be a non-empty string"):
+        bundle_from_documents(facts, framing)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("links", [{"label": "Demo", "url": "javascript:alert(1)"}]), ("github", "javascript:x")],
+)
+def test_an_unsafe_link_scheme_is_refused(field: str, value: object) -> None:
+    facts = facts_with_links()
+    cast("dict[str, Any]", facts["candidate"])[field] = value
+    with pytest.raises(ResumeBundleError, match="must be an http or https URL"):
+        bundle_from_documents(facts, focused_framing())
+
+
+def test_a_watch_term_an_alias_verifies_is_still_checked_against_the_truth() -> None:
+    """An alias can verify "Git" through "GitHub Actions"; the truth names
+    only GitHub Actions, so Git is still missing."""
+    facts = facts_with_links()
+    facts["all_skills"] = [*cast("list[str]", facts["all_skills"]), "GitHub Actions"]
+    facts["verified_skills"] = [*cast("list[str]", facts["verified_skills"]), "GitHub Actions"]
+    facts["technology_aliases"] = {
+        **cast("dict[str, Any]", facts.get("technology_aliases", {})),
+        "GitHub Actions": ["Git"],
+    }
+    bundle = bundle_from_documents(facts, focused_framing())
+    sources = TruthSources(
+        truth_text="Built CI pipelines with GitHub Actions.", achievements_text=""
+    )
+    found = missing_keywords(bundle, sources, "You use Git every day.")
+    assert [item.term for item in found] == ["Git"]
+
+
+def test_a_quoted_sentence_counts_toward_the_profile_limit(
+    db: Connection, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    focused_scope(db)
+    capsys.readouterr()
+    framing = focused_framing()
+    framing["profile_summary"] = '"Ships small." "Ships often."'
+    quoted = tmp_path / "framing.json"
+    quoted.write_text(json.dumps(framing), encoding="utf-8")
+    put = ["--track", SLUG, "profile", "put", "resume_framing", "--file", str(quoted)]
+    assert main(put) == 1
+    assert "has 4 sentences, at most 3" in capsys.readouterr().err
+
+
+def test_a_later_industry_run_removes_a_stale_sidecar(db: Connection, tmp_path: Path) -> None:
+    """A focused run's sidecar at the same path must not sit beside a later
+    industry draft as if it were that run's."""
+    focused_scope(db)
+    stale = tailor_module.resume_paths_for(
+        "Deniz Örnek", "Example Studio", "Frontend Developer", tmp_path / "resumes"
+    )["missing_keywords"]
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("# Missing keywords: from an earlier focused run\n", encoding="utf-8")
+    result = tailor(db, default_scope(db), tmp_path)
+    assert sidecar(result) == stale
+    assert not stale.exists()

@@ -225,17 +225,20 @@ def build_content_plan(
     return order_achievements_by_core(plan, bundle, jd_text, requested_role)
 
 
-_SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
+# A stop, then any closing quotes or brackets, then a space or the end
+# (review of PR #343: `"One." "Two."` is two sentences).
+_SENTENCE_END = re.compile(r"[.!?][\"'\u201d\u2019)\]]*(?=\s|$)")
 
 
 def sentence_count(text: str) -> int:
     """Sentences, counted by the stops that end them: a stop followed by a
-    space or the end. A stop inside a word, as in "Next.js", ends nothing."""
+    space or the end, after any closing quote or bracket. A stop inside a
+    word, as in "Next.js", ends nothing."""
     stripped = text.strip()
     if not stripped:
         return 0
-    count = len(_SENTENCE_END.findall(stripped))
-    return count if _SENTENCE_END.search(stripped[-1:]) else count + 1
+    ends = list(_SENTENCE_END.finditer(stripped))
+    return len(ends) if ends and ends[-1].end() == len(stripped) else len(ends) + 1
 
 
 def validate_content_plan(plan: ContentPlan, bundle: ResumeBundle) -> list[str]:

@@ -478,6 +478,35 @@ def _optional_str(source: dict[str, object], key: str, errors: list[str], path: 
     return value.strip()
 
 
+_SAFE_LINK = re.compile(r"^https?://\S+$", re.IGNORECASE)
+
+
+def _check_link(path: str, url: str, errors: list[str]) -> None:
+    """A header link is an http or https URL (review of PR #343): any other
+    scheme, `javascript:` among them, would render as a live href."""
+    if url and not _SAFE_LINK.match(url):
+        errors.append(f"{path} must be an http or https URL")
+
+
+def _strict_strings(data: dict[str, object], key: str, errors: list[str]) -> tuple[str, ...]:
+    """An optional list of non-empty strings. An entry of another type is
+    refused rather than dropped, so a framing is never accepted with an entry
+    silently missing (review of PR #343)."""
+    if key not in data:
+        return ()
+    raw = data[key]
+    if not isinstance(raw, list):
+        errors.append(f"{key} must be a list of strings")
+        return ()
+    values: list[str] = []
+    for index, item in enumerate(cast("list[object]", raw)):
+        if not isinstance(item, str) or not item.strip():
+            errors.append(f"{key}[{index}] must be a non-empty string")
+            continue
+        values.append(item.strip())
+    return tuple(values)
+
+
 def _parse_links(candidate: dict[str, object], errors: list[str]) -> tuple[tuple[str, str], ...]:
     """`candidate.links`: at most two `{"label", "url"}` objects (spec 140),
     each value checked as every emitted string is."""
@@ -507,6 +536,7 @@ def _parse_links(candidate: dict[str, object], errors: list[str]) -> tuple[tuple
             continue
         _check_emitted(f"{path}.label", entry["label"], errors)
         _check_emitted(f"{path}.url", entry["url"], errors)
+        _check_link(f"{path}.url", url, errors)
         links.append((label, url))
     return tuple(links)
 
@@ -529,20 +559,22 @@ def _parse_presentation(
     entity_line = _optional_str(candidate, "entity_line", errors, "candidate.entity_line")
     if len(entity_line) > ENTITY_LINE_MAX:
         errors.append(f"candidate.entity_line is longer than {ENTITY_LINE_MAX} characters")
-    ai_bullets = _str_tuple(data.get("ai_bullets"))
+    ai_bullets = _strict_strings(data, "ai_bullets", errors)
     if "ai_bullets" in data and not 1 <= len(ai_bullets) <= MAX_AI_BULLETS:
         errors.append(f"ai_bullets holds one or {MAX_AI_BULLETS} bullet ids")
     for bullet_id in ai_bullets:
         if bullet_id not in pool:
             errors.append(f"ai_bullets id {bullet_id!r} is not in the pool")
-    watch_terms = _str_tuple(data.get("watch_terms"))
+    watch_terms = _strict_strings(data, "watch_terms", errors)
+    github = _optional_str(candidate, "github", errors, "candidate.github")
+    _check_link("candidate.github", github, errors)
     return _Presentation(
-        github=_optional_str(candidate, "github", errors, "candidate.github"),
+        github=github,
         links=_parse_links(candidate, errors),
         headline=_optional_str(candidate, "headline", errors, "candidate.headline"),
         entity_line=entity_line,
         ai_bullets=ai_bullets,
-        watch_terms=tuple(term for term in watch_terms if term.strip()),
+        watch_terms=watch_terms,
     )
 
 
