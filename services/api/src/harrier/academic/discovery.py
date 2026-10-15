@@ -28,10 +28,9 @@ from harrier.academic.search import (
     refusal_before_run,
     worst_case_usd,
 )
-from harrier.atomicio import write_json_atomic
 from harrier.connection import Connection
-from harrier.db import data_dir
 from harrier.demo import fixtures_dir, is_demo_mode
+from harrier.filestore import files, local_file, save_json
 from harrier.notify import build_academic_telegram_message, send_telegram_message
 from harrier.runoutcome import age_in_days, last_success, record_success
 from harrier.screening.normalized import dedupe_normalized_jobs
@@ -149,27 +148,33 @@ def shadow_plan(entry: SearchEntry, scope: Scope) -> dict[str, object]:
     }
 
 
-def _runs_dir(scope: Scope) -> Path:
-    return data_dir() / "discovery" / str(scope.track.id) / source.SOURCE_NAME / "runs"
+def _runs_prefix(scope: Scope) -> str:
+    return f"discovery/{scope.track.id}/{source.SOURCE_NAME}/runs"
 
 
 def save_dataset(scope: Scope, run_id: str, items: list[dict[str, Any]]) -> Path:
     """The raw dataset and run id, before normalization, so a later change to
     the field map can be replayed too. Newest kept, up to the cap."""
-    directory = _runs_dir(scope)
-    target = directory / f"{run_id}.json"
-    write_json_atomic(
-        target,
+    prefix = _runs_prefix(scope)
+    key = f"{prefix}/{run_id}.json"
+    save_json(
+        key,
         {"run_id": run_id, "saved_at": datetime.now(UTC).isoformat(), "items": items},
+        atomic=True,
     )
-    saved = sorted(directory.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    store = files()
+    saved = sorted(
+        (entry for entry in store.list(prefix) if entry.name.endswith(".json")),
+        key=lambda entry: entry.mtime,
+        reverse=True,
+    )
     for old in saved[SAVED_RUNS_CAP:]:
-        old.unlink(missing_ok=True)
-    return target
+        store.delete(old.key)
+    return local_file(key)
 
 
-def _incoming_dir(scope: Scope) -> Path:
-    return data_dir() / "incoming" / str(scope.track.id)
+def _incoming_key(scope: Scope) -> str:
+    return f"incoming/{scope.track.id}/{source.SOURCE_NAME}_latest.json"
 
 
 def _term_hits(entry: SearchEntry, hits: dict[str, int]) -> tuple[dict[str, int], list[str]]:
@@ -343,8 +348,7 @@ def run_academic_discovery(
         return summary
 
     record_success(conn, discovery_job(scope))
-    target = _incoming_dir(scope) / f"{source.SOURCE_NAME}_latest.json"
-    write_json_atomic(target, summary)
+    save_json(_incoming_key(scope), summary, atomic=True)
     if options.notify:
         send_telegram_message(
             build_academic_telegram_message(
