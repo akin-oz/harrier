@@ -606,17 +606,19 @@ def test_the_store_user_is_masked_after_user_equals(
     )
     one, two = STORES[DATABASE_URL][1], STORES[IMPORT_URL][1]
 
+    # The longer name in the format string: an argument that is the whole
+    # user is masked on its own, whatever follows it (spec 145, failure modes).
     logging.getLogger("psycopg").warning(
-        "users: (user=%s) user='%s' user=postgres, the postgres role, user=stranger, user=%sx",
+        f"users: (user=%s) user='%s' user=postgres, the postgres role, user=stranger, user={one}x",
         one,
         two,
-        one,
     )
 
     written = capsys.readouterr().err
     assert one not in written.replace(f"user={one}x", "")
     assert two not in written
-    assert "(user=REDACTED) user='REDACTED' user=REDACTED, the postgres role" in written
+    # `postgres` names no project, so it is never masked (spec 145, amendment).
+    assert "(user=REDACTED) user='REDACTED' user=postgres, the postgres role" in written
     assert "user=stranger" in written
     assert f"user={one}x" in written
 
@@ -659,8 +661,7 @@ def test_the_store_user_is_masked_in_a_url_and_at_every_ending(
     log.warning("opening %s", _store_url(STORES[ACCOUNT_URL][0], "ops%3Ab(c)*"))
     log.warning("json %s", f"postgresql:\\/\\/{one}@{host}")
     log.warning(
-        'endings ?user=%s&sslmode=require user=%s; user=%s. user="%s" user=%s.more',
-        one,
+        f'endings ?user=%s&sslmode=require user=%s; user=%s. user="%s" user={one}.more',
         one,
         one,
         one,
@@ -676,6 +677,42 @@ def test_the_store_user_is_masked_in_a_url_and_at_every_ending(
         f' user="REDACTED" user={one}.more\n' in written
     )
     assert encoded not in written
+
+
+def test_the_store_user_is_masked_wherever_it_stands_as_a_role_name(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every shape the local privacy review of PR #360 found printing the
+    user, and the longer role names that must stay (spec 145, amendment)."""
+    import json
+
+    _last_resort(monkeypatch)
+    host, one = STORES[DATABASE_URL]
+    _stores(monkeypatch, **{DATABASE_URL: _store_url(host, one)})
+    log = logging.getLogger("harrier.tests.users")
+    shapes = {
+        "dict": (str({"user": one, "host": host}), "{'user': 'REDACTED', 'host': 'REDACTED'}"),
+        "json": (json.dumps({"user": one}), '{"user": "REDACTED"}'),
+        "keyword": (f"user = '{one}' host = {host}", "user = 'REDACTED' host = REDACTED"),
+        "escaped": (f'user=\\"{one}\\"', 'user=\\"REDACTED\\"'),
+        "no scheme": (f"connecting as {one}@{host}:6543", "connecting as REDACTED@REDACTED:6543"),
+        "encoded": (
+            f"next=postgresql%3A%2F%2F{one}%3Asynthetic-pw%40{host}",
+            "next=postgresql%3A%2F%2FREDACTED%3AREDACTED%40REDACTED",
+        ),
+        "libpq": (
+            f'password authentication failed for user "{one}"',
+            'password authentication failed for user "REDACTED"',
+        ),
+        "longer": (f"x.{one} {one}x {one}.more harrier_account", None),
+    }
+
+    for name, (text, _) in shapes.items():
+        log.warning("%s: %s", name, text)
+
+    written = capsys.readouterr().err
+    for name, (text, expected) in shapes.items():
+        assert f"{name}: {expected if expected is not None else text}\n" in written, name
 
 
 def test_a_configured_handler_masks_the_store_host(

@@ -389,22 +389,27 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 # part of the host (spec 145, amendment): a backslash escape as `repr` or
 # JSON writes one, `\n`, `\x1b`, `\u200b` or `\U0001f600`, or a percent
 # escape such as `%40`.
-_HOST_BEFORE = (
-    r"(?:(?<![A-Za-z0-9.-])"
-    r"|(?<=\\[A-Za-z])"
+_ESCAPE_BEFORE = (
+    r"(?<=\\[A-Za-z])"
     r"|(?<=\\x[0-9A-Fa-f]{2})"
     r"|(?<=\\u[0-9A-Fa-f]{4})"
     r"|(?<=\\U[0-9A-Fa-f]{8})"
-    r"|(?<=%[0-9A-Fa-f]{2}))"
+    r"|(?<=%[0-9A-Fa-f]{2})"
 )
+_HOST_BEFORE = rf"(?:(?<![A-Za-z0-9.-])|{_ESCAPE_BEFORE})"
 _HOST_AFTER = r"(?![A-Za-z0-9-])(?!\.[A-Za-z0-9])"
 
-# Where a user name ends after `user=`: at any character that cannot
-# continue a role name, and at a `.` that no such character follows.
+# A store's user as a whole role name, wherever it stands (spec 145,
+# amendment): neither side a character that could continue a role name, a
+# `.` before it, nor a `.` after it that another such character follows.
+# An escape before it is a boundary, as it is for a host.
+_ROLE_BEFORE = rf"(?:(?<![A-Za-z0-9_$.-])|{_ESCAPE_BEFORE})"
 _ROLE_AFTER = r"(?![A-Za-z0-9_$-])(?!\.[A-Za-z0-9_$-])"
 
-# Right after a URL's `://`, or its JSON-escaped `:\/\/`.
-_USERINFO_BEFORE = r"(?:(?<=://)|(?<=:\\/\\/))"
+# Every Postgres server's default role. It names no project, and as a word
+# it is in ordinary messages, so a store whose user it is masks its host and
+# password only.
+_PLAIN_ROLE = "postgres"
 
 
 def _store_urls() -> tuple[str, ...]:
@@ -473,7 +478,11 @@ def _hosts_and_users_of(url: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
         written = urlsplit(url).username or ""
     except ValueError:
         written = ""
-    users = tuple(dict.fromkeys(form for form in (user, written, quote(user, safe="")) if form))
+    users = tuple(
+        dict.fromkeys(
+            form for form in (user, written, quote(user, safe="")) if form and user != _PLAIN_ROLE
+        )
+    )
     return hosts, users
 
 
@@ -482,22 +491,20 @@ def _store_identity_pattern(
     hosts: tuple[str, ...], users: tuple[str, ...]
 ) -> re.Pattern[str] | None:
     """One pattern for every host, in any case, and every user exactly as
-    written: after `user=`, bare or quoted, and in a URL's userinfo. The
-    longest first, so a name is never matched by a shorter one inside it."""
+    written, each wherever it stands whole. The longest first, so a name is
+    never matched by a shorter one inside it."""
     alternatives: list[str] = []
     if hosts:
         names = "|".join(re.escape(host) for host in sorted(hosts, key=len, reverse=True))
         alternatives.append(f"{_HOST_BEFORE}(?P<host>(?i:{names})){_HOST_AFTER}")
     if users:
         names = "|".join(re.escape(user) for user in sorted(users, key=len, reverse=True))
-        alternatives.append(f"user=['\"]?(?P<user>{names}){_ROLE_AFTER}")
-        alternatives.append(f"{_USERINFO_BEFORE}(?P<userinfo>{names})(?=[:@])")
+        alternatives.append(f"{_ROLE_BEFORE}(?P<user>{names}){_ROLE_AFTER}")
     return re.compile("|".join(alternatives)) if alternatives else None
 
 
 def _store_identity_spans(text: str) -> list[tuple[int, int]]:
-    """Where `text` names a store's host, or its user after `user=` or in a
-    URL's userinfo."""
+    """Where `text` names a store's host or user, each standing whole."""
     hosts: list[str] = []
     users: list[str] = []
     for url in _store_urls():
@@ -509,7 +516,7 @@ def _store_identity_spans(text: str) -> list[tuple[int, int]]:
         return []
     spans: list[tuple[int, int]] = []
     for found in pattern.finditer(text):
-        group = next(name for name in ("host", "user", "userinfo") if found.group(name) is not None)
+        group = "host" if found.group("host") is not None else "user"
         spans.append(found.span(group))
     return spans
 

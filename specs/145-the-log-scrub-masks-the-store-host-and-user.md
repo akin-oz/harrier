@@ -98,22 +98,28 @@ libpq cannot parse it. On Supabase's pooler it is `postgres.<project ref>`,
 and the ref names the project as surely as the host does. psycopg's repr
 prints it whenever it differs from the database name.
 
-A user name is replaced with `REDACTED` in two places, and only there:
+A user name is replaced with `REDACTED` wherever it stands as a whole
+role name, in any of its forms: as libpq reads it, as the URL writes it,
+and percent-encoded. It stands whole where the character before it and the
+character after it cannot continue a role name: neither is a letter, digit,
+`_`, `$` or `-`, and a `.` counts only where another such character follows
+it after the name, or comes before it. A letter or digit before the name
+that ends an escape counts as a boundary, as it does for a host. So the
+user is masked after `user=` (bare or quoted, with or without spaces), in
+a URL's userinfo (plain, JSON-escaped or percent-encoded), in a dict or
+JSON value, before `@host` without a scheme, and in libpq's own text
+(`for user "<name>"`).
 
-- **After `user=`**: the characters `user=`, then the name, bare or in
-  single or double quotes. The shape psycopg's repr, libpq's keyword form
-  and a URL's `?user=` query all write. A bare name ends at the first
-  character that cannot continue a role name: anything but a letter, digit,
-  `_`, `$` or `-`, and a `.` only where another such character follows. So
-  `&`, `;`, `"`, a closing quote, whitespace, `)`, `,` and a full stop end
-  it.
-- **In a URL's userinfo**: right after `://` (or its JSON-escaped form
-  `:\/\/`), followed by `:` or `@`. The user as written in the URL, and
-  percent-encoded when that differs.
+**The plain role `postgres` is never masked.** It is the default role of
+every Postgres server and names no project, and as a word it appears in
+ordinary messages (`the Postgres store`, `postgresql://`). A store whose
+user is `postgres` masks its host and password only.
 
-Matching is exact, as Postgres role names are. A user name elsewhere in the
-text stays, so a plain user such as `postgres` does not mask that word
-wherever a message uses it.
+Matching is exact, as Postgres role names are. A role name that is not a
+store's user, such as one the schema creates, stays. A store's user that is
+also a word in a message, such as a role named `harrier_account`, is masked
+in that message too: the rule hides more than the identifying value, never
+less.
 
 So the line in Problem prints as:
 
@@ -144,7 +150,10 @@ refusing, as spec 103 meant.
 | A multi-host URL (`host1,host2`) | Each host masked |
 | Two variables naming the same host | Masked once; no doubled marker |
 | The host overlaps a password form in the same text | The union of the spans is replaced, as `_mask` does for overlapping password forms |
-| The user name appears in a message without `user=` before it, outside a URL's userinfo | Not masked |
+| The user name appears anywhere as a whole role name | Masked, in any form: `{'user': '<name>'}`, `"user": "<name>"`, `user = '<name>'`, `<name>@host`, `postgresql%3A%2F%2F<name>%3A...`, `for user "<name>"` |
+| The user is `postgres` | Not masked anywhere; the host and password still are |
+| The user inside a longer role name (`x.<name>`, `<name>x`, `<name>.more`) | Not masked |
+| A log call passes the user or a host as an argument of its own, and the format string continues it (`"user=%sx"`) | The argument is masked on its own, as every string argument is scrubbed before the record is rendered: `user=REDACTEDx`. This hides more, never less |
 | A logged store URL, `postgresql://postgres.<ref>:...@host/db` | The user, the password and the host are masked: `postgresql://REDACTED:REDACTED@REDACTED/db` |
 | `user=` followed by the name and `&`, `;`, `.` or a closing `"` | Masked |
 | A host after a written-out escape (`\ndb.example.co`) or a percent escape (`%40db.example.co`) | Masked |
@@ -167,13 +176,18 @@ refusing, as spec 103 meant.
   only in `.env` are not read; `HARRIER_DATABASE_URL` set only in `.env` is
   (`services/api/tests/test_logging.py::test_the_host_variables_are_read_where_their_specs_read_them`).
 - [ ] The same record prints `user=REDACTED` for the user name of each
-  of the three URLs, keeps a bare `postgres` elsewhere in the message, and
+  of the three URLs, keeps `postgres` when a URL's user is `postgres`, and
   keeps `user=` followed by a name no URL holds
   (`services/api/tests/test_logging.py::test_the_store_user_is_masked_after_user_equals`).
 - [ ] A store URL's user is masked in its userinfo, as written and
   percent-encoded, and after `user=` before `&`, `;`, `.` and inside
   double quotes
   (`services/api/tests/test_logging.py::test_the_store_user_is_masked_in_a_url_and_at_every_ending`).
+- [ ] A store's user is masked as a whole role name in a dict repr, a
+  JSON value, libpq's keyword form with spaces, an escaped double quote,
+  `<name>@host` without a scheme, a percent-encoded URL and libpq's
+  `for user "<name>"`, and is kept inside a longer role name
+  (`services/api/tests/test_logging.py::test_the_store_user_is_masked_wherever_it_stands_as_a_role_name`).
 - [ ] A host after a written-out backslash escape or a `%40` escape is
   masked
   (`services/api/tests/test_logging.py::test_a_host_after_an_escape_is_masked`).
@@ -309,6 +323,18 @@ followed by one letter counted as an escape, so a host after `\x1b`,
 `\xa0`, `\u200b` or a JSON `\u00a0` printed. Both are fixed: the user as
 written is masked, and `\xHH`, `\uHHHH` and `\UHHHHHHHH` count as
 escapes.
+
+## Amendment (2026-10-15): the user wherever it stands
+
+A local privacy review of the amendment above found the user still
+printed in shapes the "only after `user=` or in userinfo" rule left out:
+a percent-encoded URL, a dict or JSON value, libpq's keyword form with
+spaces, an escaped double quote, `<name>@host` without a scheme, and
+libpq's own `password authentication failed for user "<name>"` when that
+text is copied outside a driver error. Akin chose on 2026-10-15 to mask
+the user wherever it stands as a whole role name, with the host's
+boundaries and escapes, except the plain role `postgres`. Behavior above
+states the rule. It replaces the two places of the amendment above.
 
 ## Migration
 
