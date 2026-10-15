@@ -1,8 +1,8 @@
 ---
 spec: 140
 title: A focused track's documents present a chosen smaller scope honestly
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [034, 065, 071, 098, 099, 101, 130, 137]
 ---
