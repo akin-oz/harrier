@@ -132,6 +132,12 @@ class StoreDeployRefused(StoreError):
     """
 
 
+class StoreImportRefused(StoreError):
+    """A check of `harrier store import-local` refused the import, and
+    nothing was written (spec 141). The text names the check and a table or
+    column, never an owner, a host or a value."""
+
+
 class StoreMigrationRefused(StoreError):
     """A migration's own precheck refused this store (spec 105).
 
