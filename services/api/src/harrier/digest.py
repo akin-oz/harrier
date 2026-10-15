@@ -18,7 +18,8 @@ from email.utils import parsedate_to_datetime
 from typing import cast
 
 from harrier.connection import Connection
-from harrier.mail.watch import events_path
+from harrier.filestore import files
+from harrier.mail.watch import EVENTS_KEY
 from harrier.notify import send_telegram_message
 from harrier.runoutcome import (
     DIGEST_JOB,
@@ -173,12 +174,12 @@ def _event_in_scope(payload: dict[str, object], scope: Scope) -> bool:
 
 
 def actionable_updates(target_date: date, scope: Scope) -> list[dict[str, object]]:
-    path = events_path()
-    if not path.exists():
+    raw = files().read(EVENTS_KEY)
+    if raw is None:
         return []
     updates: list[dict[str, object]] = []
     seen: set[tuple[str, str, str, str, str]] = set()
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in raw.decode("utf-8", errors="replace").splitlines():
         payload = extract_json_payload(line)
         if not payload:
             continue

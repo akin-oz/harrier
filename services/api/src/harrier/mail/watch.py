@@ -24,10 +24,9 @@ from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 from typing import Any, cast
 
-from harrier.atomicio import read_json_mapping, write_json_atomic
 from harrier.connection import Connection
-from harrier.db import data_dir
 from harrier.demo import is_demo_mode
+from harrier.filestore import files, load_mapping, local_file, save_json
 from harrier.tracker import list_jobs
 from harrier.tracks import Scope
 
@@ -160,16 +159,20 @@ def normalize(text: str) -> str:
     return " ".join((text or "").strip().lower().split())
 
 
+STATE_KEY = "gmail-watch/seen_messages.json"
+EVENTS_KEY = "gmail-watch/events.jsonl"
+
+
 def watch_dir() -> Path:
-    return data_dir() / "gmail-watch"
+    return state_path().parent
 
 
 def state_path() -> Path:
-    return watch_dir() / "seen_messages.json"
+    return local_file(STATE_KEY)
 
 
 def events_path() -> Path:
-    return watch_dir() / "events.jsonl"
+    return local_file(EVENTS_KEY)
 
 
 # ---------------------------------------------------------------------------
@@ -452,12 +455,12 @@ def load_state() -> dict[str, object]:
     means every message looks unprocessed, and the save that follows
     overwrites the damage so the original is unrecoverable.
     """
-    record = read_json_mapping(state_path())
+    record = load_mapping(STATE_KEY)
     return record if record is not None else {"seen_message_ids": []}
 
 
 def save_state(state: dict[str, object]) -> None:
-    write_json_atomic(state_path(), state)
+    save_json(STATE_KEY, state, atomic=True)
 
 
 # What the archive keeps. Everything else about a message is dropped on the
@@ -503,24 +506,27 @@ def redact_event(event: dict[str, object]) -> dict[str, object]:
     return archived
 
 
-def _rotate_events(path: Path) -> None:
+def _rotate_events() -> None:
     """Keep the most recent EVENTS_MAX_LINES, once the file exceeds them."""
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        raw = files().read(EVENTS_KEY)
+        lines = [] if raw is None else _text_lines(raw)
     except (OSError, UnicodeDecodeError):
         return
     if len(lines) <= EVENTS_MAX_LINES:
         return
     kept = lines[-EVENTS_MAX_LINES:]
-    path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    files().put(EVENTS_KEY, ("\n".join(kept) + "\n").encode("utf-8"), atomic=False)
+
+
+def _text_lines(raw: bytes) -> list[str]:
+    """The file's lines, as reading it as UTF-8 text split them."""
+    return raw.decode("utf-8").splitlines()
 
 
 def append_event(event: dict[str, object]) -> None:
-    path = events_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(redact_event(event), ensure_ascii=False) + "\n")
-    _rotate_events(path)
+    files().append(EVENTS_KEY, json.dumps(redact_event(event), ensure_ascii=False) + "\n")
+    _rotate_events()
 
 
 @dataclass(frozen=True)
@@ -548,11 +554,11 @@ def read_events(limit: int | None = None) -> EventsWindow:
     domain and the subject and body were never stored. There is nothing to
     scrub here because the scrubbing happened on the way in.
     """
-    path = events_path()
-    if not path.is_file():
-        return EventsWindow(events=[], has_run=False, at_cap=False)
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        raw = files().read(EVENTS_KEY)
+        if raw is None:
+            return EventsWindow(events=[], has_run=False, at_cap=False)
+        lines = _text_lines(raw)
     except (OSError, UnicodeDecodeError):
         # An unreadable archive is not a watch that never ran, and saying so
         # would send the operator to fix the wrong thing.

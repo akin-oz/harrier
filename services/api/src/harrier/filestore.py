@@ -21,6 +21,7 @@ spec 107's second pull request.
 from __future__ import annotations
 
 import builtins
+import json
 import re
 import stat as stat_module
 from collections.abc import Generator
@@ -280,6 +281,13 @@ def load_text(key: str) -> str | None:
 def save_text(key: str, text: str, *, atomic: bool) -> None:
     """`text` encoded as UTF-8, written as `put` writes."""
     files().put(key, text.encode("utf-8"), atomic=atomic)
+
+
+def save_json(key: str, payload: object, *, atomic: bool) -> None:
+    """`payload` in the form `write_json_atomic` writes it, which the plain
+    JSON writers share: indented by two, UTF-8 and unescaped, with no final
+    newline."""
+    save_text(key, json.dumps(payload, indent=2, ensure_ascii=False), atomic=atomic)
 
 
 def load_mapping(key: str) -> dict[str, Any] | None:
