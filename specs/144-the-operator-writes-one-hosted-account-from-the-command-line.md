@@ -1,8 +1,8 @@
 ---
 spec: 144
 title: The operator writes one hosted account from the command line
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [091, 099, 103, 106, 112, 134, 137, 138, 141]
 ---
@@ -215,6 +215,13 @@ spec 141's.
 3. **`tracks list`, `profile list` and `profile check` with `--owner`.**
    Recommended: included. They only read, and they are how the operator
    checks a write without opening the browser.
+
+## Decisions taken (2026-10-15)
+
+Akin approved the spec as written, so all three open decisions are taken
+as recommended: the variable is `HARRIER_ACCOUNT_DATABASE_URL`, the
+`resume_facts` and `resume_truth` kinds are in this spec, and `tracks list`,
+`profile list` and `profile check` run with `--owner`.
 
 ## Migration
 
