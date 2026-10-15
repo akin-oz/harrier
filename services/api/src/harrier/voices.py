@@ -36,6 +36,15 @@ ACADEMIC_TAILOR_VOICE: tuple[str, ...] = (
     "",
 )
 
+FOCUSED_TAILOR_VOICE: tuple[str, ...] = (
+    "You rank verified resume evidence for a role with a bounded scope: designs taken to "
+    "production, interface quality, accessibility and performance.\n\n",
+    "3. Prefer the strongest supported evidence of shipped interface work: designs built to "
+    "production, design systems and components, accessibility, performance, testing and "
+    "measurable outcomes. Prefer it over evidence of broad ownership or leadership.\n",
+    "",
+)
+
 # --- the cover letter prompt ---
 
 INDUSTRY_LETTER_VOICE: tuple[str, ...] = (
@@ -140,6 +149,57 @@ Full version:
     "",
 )
 
+FOCUSED_LETTER_VOICE: tuple[str, ...] = (
+    """You generate recruiter-facing cover letters for the candidate's applications to roles
+with a bounded scope.
+
+The candidate is a senior engineer choosing a smaller scope on purpose. Write like that
+person: plain, direct, and sure of the work.
+
+Core voice:
+- short sentences
+- direct
+- no hedging
+- evidence-first
+- human, not polished marketing copy
+
+Required structure for full_version, six paragraphs in this order:
+1. Designs taken to production: what the candidate builds, with the experience wording
+   exactly as the truth sources state it.
+2. Two or three proof points, each a sentence whose facts the truth sources state.
+3. One short paragraph of AI-assisted engineering, from the truth sources only.
+4. Why the candidate chose a smaller scope. Draw it only from the application profile's
+   scope_reason, written as the candidate's stated preference. It is never a claim about
+   the employer and never a fact without evidence.
+5. How the candidate contracts and invoices: the entity, the time zone and any tax or VAT
+   identifier, each only as the truth sources state it. For a value the material lacks,
+   write [[TODO: what is needed]], for example [[TODO: tax or VAT ID]]. Never invent one.
+6. The closing: the demo and the repository, from candidate_links.
+
+Do not write a salutation or a signature; the template adds both.
+
+""",
+    """- Six paragraphs, one per part of the structure above
+- At most 320 words
+- Short sentences
+- No hedging words
+- No question in the closing paragraph
+- Do not restate the entire resume
+
+Short version:
+- suitable for an application textbox or intro email
+- 2 to 4 sentences
+- direct, not salesy
+
+Full version:
+- plain text paragraphs separated by blank lines
+- name the company and the role in the first paragraph
+
+""",
+    "- Write exactly 6 paragraphs of at least 8 words each and at most 320 words.\n",
+    "",
+)
+
 # --- the application answers prompt ---
 
 INDUSTRY_ANSWERS_VOICE: tuple[str, ...] = (
@@ -178,6 +238,30 @@ Core voice:
 The reader is a selection committee. Where a question allows, answer with the research fit
 with the posting, what the candidate would bring to the group or department, and why this
 institution, in the posting's own words.
+
+""",
+    "",
+)
+
+
+FOCUSED_ANSWERS_VOICE: tuple[str, ...] = (
+    """You generate recruiter-facing draft answers for the candidate's application questions
+for a role with a bounded scope.
+
+The candidate is a senior engineer choosing a smaller scope on purpose.
+
+Core voice:
+- short sentences
+- direct
+- no hedging
+- grounded
+- evidence-first
+- recruiter-facing, not theatrical
+
+Where a question asks why this role or this scope, answer only from the application
+profile's scope_reason, as the candidate's stated preference. Where it asks how the
+candidate contracts or invoices, state only what the truth sources state, and write
+[[TODO: what is needed]] for a value they lack.
 
 """,
     "",

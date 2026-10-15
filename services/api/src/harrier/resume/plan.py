@@ -72,7 +72,10 @@ def build_presentation_title(
     bundle: ResumeBundle, requested_role: str, jd_text: str, as_of: date | None = None
 ) -> str:
     """Select a target-aware title that cannot promote unsupported identity
-    claims."""
+    claims. A framing's `headline` is the title verbatim (spec 140); the
+    seniority and full-stack checks of `validate_content_plan` still read it."""
+    if bundle.headline:
+        return bundle.headline
     requested = f"{requested_role}\n{jd_text}".lower()
     wants_full_stack = bool(re.search(r"full[-\s]?stack", requested))
     title = (
@@ -162,16 +165,24 @@ def order_achievements_by_core(
 
 
 def build_content_plan(
-    bundle: ResumeBundle, jd_text: str, requested_role: str, as_of: date | None = None
+    bundle: ResumeBundle,
+    jd_text: str,
+    requested_role: str,
+    as_of: date | None = None,
+    *,
+    exclude: frozenset[str] = frozenset(),
 ) -> ContentPlan:
     """Make a deterministic, evidence-backed resume content plan before
-    rendering."""
+    rendering. `exclude` names pool lines another section prints, which are
+    then never chosen as achievements: a focused CV's AI-assisted section
+    (spec 140)."""
     skills = rank_skills(bundle, jd_text, requested_role, as_of)
     # The full ach_ pool ranks best; a bundle using another naming scheme
     # still gets its validated default_achievements as the candidate pool.
     achievement_ids = [key for key in bundle.bullet_pool if key.startswith("ach_")] or list(
         bundle.default_achievements
     )
+    achievement_ids = [item for item in achievement_ids if item not in exclude]
     from harrier.resume.evaluation import dated_bullets
 
     ranked_achievements = rank_bullet_ids(bundle, achievement_ids, jd_text, requested_role)
@@ -212,6 +223,22 @@ def build_content_plan(
         experience_label=professional_experience_label(bundle, as_of),
     )
     return order_achievements_by_core(plan, bundle, jd_text, requested_role)
+
+
+# A stop, then any closing quotes or brackets, then a space or the end
+# (review of PR #343: `"One." "Two."` is two sentences).
+_SENTENCE_END = re.compile(r"[.!?][\"'\u201d\u2019)\]]*(?=\s|$)")
+
+
+def sentence_count(text: str) -> int:
+    """Sentences, counted by the stops that end them: a stop followed by a
+    space or the end, after any closing quote or bracket. A stop inside a
+    word, as in "Next.js", ends nothing."""
+    stripped = text.strip()
+    if not stripped:
+        return 0
+    ends = list(_SENTENCE_END.finditer(stripped))
+    return len(ends) if ends and ends[-1].end() == len(stripped) else len(ends) + 1
 
 
 def validate_content_plan(plan: ContentPlan, bundle: ResumeBundle) -> list[str]:

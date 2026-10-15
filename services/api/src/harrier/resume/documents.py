@@ -30,6 +30,9 @@ FACTS_CANDIDATE = (
     "phone",
     "linkedin",
     "professional_career_start",
+    # A focused CV's header links, true on every track (spec 140).
+    "github",
+    "links",
 )
 FRAMING_CANDIDATE = (
     "primary_identity",
@@ -37,6 +40,10 @@ FRAMING_CANDIDATE = (
     "experience_statement",
     # The track's own opening sentence for the CV (spec 130).
     "profile_lead",
+    # A fixed CV title and the line saying how the candidate contracts
+    # (spec 140).
+    "headline",
+    "entity_line",
 )
 FACTS_ROLE = (
     "id",
@@ -67,6 +74,10 @@ FRAMING_TOP = (
     "default_achievements",
     "target_signal_weights",
     "evaluation_dimensions",
+    # The AI-assisted section's pool lines, and the posting terms the
+    # missing-keywords sidecar watches for (spec 140).
+    "ai_bullets",
+    "watch_terms",
 )
 
 _TABLES = {

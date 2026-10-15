@@ -38,7 +38,9 @@
       "config/outreach-defaults.json",
       "config/application-brief.json",
       "config/academic-searches.json",
-      "config/screening.focused.json"
+      "config/screening.focused.json",
+      "config/resume-framing.focused.json",
+      "config/application-profile.focused.json"
     ]
   }
 }

@@ -15,7 +15,7 @@ from typing import cast
 from harrier.resume.content import ResumeBundle
 from harrier.resume.heading import RoleHeadingError, split_role_heading
 from harrier.resume.markdown import normalize_visible_url_text
-from harrier.tracks import rules_for
+from harrier.tracks import AI_CV_SECTION, rules_for
 
 TEMPLATE_DIR = Path("templates")
 CSS_TEMPLATE = "resume-template.css"
@@ -127,6 +127,44 @@ def _render_experience_html(entries: list[dict[str, object]]) -> str:
     return "\n".join(articles)
 
 
+def _contact_html(bundle: ResumeBundle) -> str:
+    """A header with links (spec 140): email, LinkedIn, GitHub and each of
+    the facts' links, separated by bullets. An absent one leaves no
+    separator."""
+    links: list[tuple[str, str]] = [
+        (f"mailto:{bundle.email}", bundle.email),
+        (bundle.linkedin, normalize_visible_url_text(bundle.linkedin)),
+    ]
+    if bundle.github:
+        links.append((bundle.github, normalize_visible_url_text(bundle.github)))
+    links.extend((url, normalize_visible_url_text(url)) for _, url in bundle.links)
+    anchors = [
+        f'<a href="{html.escape(href)}">{html.escape(label)}</a>' for href, label in links if label
+    ]
+    return '\n          <span class="sep">&bull;</span>\n          '.join(anchors)
+
+
+def _entity_html(bundle: ResumeBundle) -> str:
+    if not bundle.entity_line:
+        return ""
+    return f'<p class="header__entity">{html.escape(bundle.entity_line)}</p>'
+
+
+def _ai_section_html(lines: list[str]) -> str:
+    """The AI-assisted section, or nothing when the markdown has none."""
+    bullets = [line[2:] for line in _extract_section(lines, AI_CV_SECTION) if line.startswith("- ")]
+    if not bullets:
+        return ""
+    return "\n".join(
+        [
+            '<section class="section">',
+            '  <h2 class="section-label">AI-Assisted Engineering</h2>',
+            f'  <ul class="compact-list">{_render_list_items(bullets)}</ul>',
+            "</section>",
+        ]
+    )
+
+
 def render_html(
     markdown: str, bundle: ResumeBundle, template_dir: Path | None = None, *, kind: str
 ) -> str:
@@ -175,6 +213,10 @@ def render_html(
     template = template.replace("{{experience_html}}", _render_experience_html(experience))
     template = template.replace("{{certifications_html}}", _render_list_items(certifications))
     template = template.replace("{{education_html}}", _render_education_html(education))
+    # Spec 140's placeholders, which only the focused template carries.
+    template = template.replace("{{contact_html}}", _contact_html(bundle))
+    template = template.replace("{{entity_line_html}}", _entity_html(bundle))
+    template = template.replace("{{ai_section_html}}", _ai_section_html(lines))
     unresolved = sorted(set(re.findall(r"{{([a-zA-Z0-9_]+)}}", template)))
     if unresolved:
         raise ValueError(f"unresolved resume template placeholders: {', '.join(unresolved)}")

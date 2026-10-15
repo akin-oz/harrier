@@ -96,6 +96,16 @@ class ResumeBundle:
     # The track's own opening sentence for the CV, used in place of the
     # derived "<identity> building user-facing web products" (spec 130).
     profile_lead: str = ""
+    # Spec 140, all optional. The facts' GitHub link and up to two more
+    # (label, url) links; the framing's fixed title, its line saying how the
+    # candidate contracts, the pool lines of its AI-assisted section, and the
+    # posting terms the missing-keywords sidecar watches for.
+    github: str = ""
+    links: tuple[tuple[str, str], ...] = ()
+    headline: str = ""
+    entity_line: str = ""
+    ai_bullets: tuple[str, ...] = ()
+    watch_terms: tuple[str, ...] = ()
     ownership_terms: tuple[str, ...] = field(
         default=("owned", "led", "designed", "established", "authored")
     )
@@ -361,6 +371,19 @@ def _check_markdown_structure(data: dict[str, object], errors: list[str]) -> Non
             candidate.get("positioning_technologies"),
             errors,
         )
+        # Spec 140's header strings. The headline is the CV's second line and
+        # the entity line begins one of its own, so neither may open as a
+        # heading.
+        _check_emitted("candidate.github", candidate.get("github"), errors)
+        _check_emitted(
+            "candidate.headline", candidate.get("headline"), errors, begins_unmarked_line=True
+        )
+        _check_emitted(
+            "candidate.entity_line",
+            candidate.get("entity_line"),
+            errors,
+            begins_unmarked_line=True,
+        )
     _check_emitted("profile_summary", data.get("profile_summary"), errors)
 
     roles_raw = data.get("roles")
@@ -438,6 +461,123 @@ def _check_experience_statement(bundle: ResumeBundle, errors: list[str]) -> None
             errors.append(f"{path} states {max(larger)} years; the record holds {computed}")
 
 
+ENTITY_LINE_MAX = 90
+MAX_LINKS = 2
+MAX_AI_BULLETS = 2
+
+
+def _optional_str(source: dict[str, object], key: str, errors: list[str], path: str) -> str:
+    """An optional string field: absent is empty, present must be a
+    non-empty string."""
+    if key not in source:
+        return ""
+    value = source[key]
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"{path} must be a non-empty string")
+        return ""
+    return value.strip()
+
+
+_SAFE_LINK = re.compile(r"^https?://\S+$", re.IGNORECASE)
+
+
+def _check_link(path: str, url: str, errors: list[str]) -> None:
+    """A header link is an http or https URL (review of PR #343): any other
+    scheme, `javascript:` among them, would render as a live href."""
+    if url and not _SAFE_LINK.match(url):
+        errors.append(f"{path} must be an http or https URL")
+
+
+def _strict_strings(data: dict[str, object], key: str, errors: list[str]) -> tuple[str, ...]:
+    """An optional list of non-empty strings. An entry of another type is
+    refused rather than dropped, so a framing is never accepted with an entry
+    silently missing (review of PR #343)."""
+    if key not in data:
+        return ()
+    raw = data[key]
+    if not isinstance(raw, list):
+        errors.append(f"{key} must be a list of strings")
+        return ()
+    values: list[str] = []
+    for index, item in enumerate(cast("list[object]", raw)):
+        if not isinstance(item, str) or not item.strip():
+            errors.append(f"{key}[{index}] must be a non-empty string")
+            continue
+        values.append(item.strip())
+    return tuple(values)
+
+
+def _parse_links(candidate: dict[str, object], errors: list[str]) -> tuple[tuple[str, str], ...]:
+    """`candidate.links`: at most two `{"label", "url"}` objects (spec 140),
+    each value checked as every emitted string is."""
+    if "links" not in candidate:
+        return ()
+    raw = candidate["links"]
+    if not isinstance(raw, list):
+        errors.append("candidate.links must be a list")
+        return ()
+    items = cast("list[object]", raw)
+    if len(items) > MAX_LINKS:
+        errors.append(f"candidate.links holds at most {MAX_LINKS} links")
+    links: list[tuple[str, str]] = []
+    for index, item in enumerate(items[:MAX_LINKS]):
+        path = f"candidate.links[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{path} must be an object with a label and a url")
+            continue
+        entry = cast("dict[str, object]", item)
+        unknown = sorted(key for key in entry if key not in ("label", "url"))
+        if unknown:
+            errors.append(f"{path} has unknown keys: {', '.join(unknown)}")
+        label = _optional_str(entry, "label", errors, f"{path}.label")
+        url = _optional_str(entry, "url", errors, f"{path}.url")
+        if "label" not in entry or "url" not in entry:
+            errors.append(f"{path} needs a label and a url")
+            continue
+        _check_emitted(f"{path}.label", entry["label"], errors)
+        _check_emitted(f"{path}.url", entry["url"], errors)
+        _check_link(f"{path}.url", url, errors)
+        links.append((label, url))
+    return tuple(links)
+
+
+@dataclass(frozen=True)
+class _Presentation:
+    github: str
+    links: tuple[tuple[str, str], ...]
+    headline: str
+    entity_line: str
+    ai_bullets: tuple[str, ...]
+    watch_terms: tuple[str, ...]
+
+
+def _parse_presentation(
+    data: dict[str, object], candidate: dict[str, object], pool: dict[str, str], errors: list[str]
+) -> _Presentation:
+    """Spec 140's optional fields, checked: the headline, the entity line and
+    its length, the AI section's pool ids, and the watch terms."""
+    entity_line = _optional_str(candidate, "entity_line", errors, "candidate.entity_line")
+    if len(entity_line) > ENTITY_LINE_MAX:
+        errors.append(f"candidate.entity_line is longer than {ENTITY_LINE_MAX} characters")
+    ai_bullets = _strict_strings(data, "ai_bullets", errors)
+    if "ai_bullets" in data and not 1 <= len(ai_bullets) <= MAX_AI_BULLETS:
+        errors.append(f"ai_bullets holds one or {MAX_AI_BULLETS} bullet ids")
+    for bullet_id in ai_bullets:
+        if bullet_id not in pool:
+            errors.append(f"ai_bullets id {bullet_id!r} is not in the pool")
+    watch_terms = _strict_strings(data, "watch_terms", errors)
+    github = _optional_str(candidate, "github", errors, "candidate.github")
+    _check_link("candidate.github", github, errors)
+    return _Presentation(
+        github=github,
+        links=_parse_links(candidate, errors),
+        headline=_optional_str(candidate, "headline", errors, "candidate.headline"),
+        entity_line=entity_line,
+        ai_bullets=ai_bullets,
+        watch_terms=watch_terms,
+    )
+
+
 def parse_bundle(raw: object) -> ResumeBundle:
     """Parse and validate the resume content bundle; raise ResumeBundleError
     with every problem named."""
@@ -512,6 +652,7 @@ def _parse_bundle(data: dict[str, object]) -> tuple[ResumeBundle, list[str]]:
             "verified_skills entries missing from all_skills: " + ", ".join(unknown_verified)
         )
 
+    presentation = _parse_presentation(data, candidate, bullet_pool, errors)
     bundle = ResumeBundle(
         name=_require_str(candidate, "name", errors, "candidate"),
         location=_require_str(candidate, "location", errors, "candidate"),
@@ -538,6 +679,12 @@ def _parse_bundle(data: dict[str, object]) -> tuple[ResumeBundle, list[str]]:
         profile_summary=str(data.get("profile_summary") or ""),
         experience_statement=str(candidate.get("experience_statement") or "").strip(),
         profile_lead=str(candidate.get("profile_lead") or "").strip(),
+        github=presentation.github,
+        links=presentation.links,
+        headline=presentation.headline,
+        entity_line=presentation.entity_line,
+        ai_bullets=presentation.ai_bullets,
+        watch_terms=presentation.watch_terms,
     )
     _check_experience_statement(bundle, errors)
     if not bundle.positioning_technologies:

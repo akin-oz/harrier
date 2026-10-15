@@ -20,6 +20,7 @@ from harrier.resume.ai import build_ai_tailored_content
 from harrier.resume.content import load_bundle, load_truth_sources
 from harrier.resume.evaluation import evaluate_resume_fit, format_fit_evaluation_markdown
 from harrier.resume.htmlrender import render_html
+from harrier.resume.keywords import missing_keywords, missing_keywords_markdown
 from harrier.resume.markdown import build_internal_metadata, build_markdown, slugify
 from harrier.resume.pdf import render_pdf, render_validated_pdf, validate_rendered_pdf
 from harrier.resume.plan import (
@@ -31,7 +32,7 @@ from harrier.resume.plan import (
 )
 from harrier.screening.descriptions import load_cached_description
 from harrier.tracker import get_job, set_status
-from harrier.tracks import Scope, rules_for
+from harrier.tracks import AI_CV_SECTION, Scope, rules_for
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,8 @@ def resume_paths_for(
         "pdf": directory / f"{slug}.pdf",
         "metadata": directory / f"{slug}.metadata.json",
         "evaluation": directory / f"{slug}.evaluation.md",
+        # The focused kind's sidecar (spec 140).
+        "missing_keywords": directory / f"{slug}.missing-keywords.md",
     }
 
 
@@ -119,8 +122,14 @@ def run_tailor(
         load_bundle(conn, scope), load_brief(conn, job_id).confirmed_skills
     )
     sources = load_truth_sources(conn)
+    rules = rules_for(kind)
 
-    plan = build_content_plan(bundle, jd_text or "", requested_role)
+    # A kind that prints the AI-assisted section keeps its lines out of the
+    # achievements (spec 140).
+    exclude = (
+        frozenset(bundle.ai_bullets) if AI_CV_SECTION in rules.cv_sections else frozenset[str]()
+    )
+    plan = build_content_plan(bundle, jd_text or "", requested_role, exclude=exclude)
     plan_errors = validate_content_plan(plan, bundle)
     if plan_errors:
         raise ValueError("invalid resume content plan: " + "; ".join(plan_errors))
@@ -170,6 +179,19 @@ def run_tailor(
             fit_evaluation=fit_evaluation,
         )
         metadata_path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+        if not rules.missing_keywords:
+            # The same path an earlier focused run wrote: it would sit beside
+            # this draft as if it were this run's (review of PR #343).
+            paths["missing_keywords"].unlink(missing_ok=True)
+        else:
+            # Beside the draft and never in it: the posting's skills the truth
+            # does not hold (spec 140).
+            paths["missing_keywords"].write_text(
+                missing_keywords_markdown(
+                    company, requested_role, missing_keywords(bundle, sources, jd_text or "")
+                ),
+                encoding="utf-8",
+            )
 
         pdf_errors = render_validated_pdf(html_text, pdf_path, render, gate)
         if pdf_errors:

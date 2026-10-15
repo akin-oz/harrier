@@ -445,7 +445,7 @@ def test_a_failed_letter_run_reports_its_pdf_as_absent(
     paths["pdf"].parent.mkdir(parents=True, exist_ok=True)
     paths["pdf"].write_bytes(b"%PDF-1.4\n%earlier run\n")
 
-    def stub_html(*_args: object) -> str:
+    def stub_html(*_args: object, **_kwargs: object) -> str:
         return "<html>letter</html>"
 
     monkeypatch.setattr(letters_module, "render_cover_letter_html", stub_html)

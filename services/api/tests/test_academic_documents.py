@@ -48,7 +48,7 @@ from harrier.resume.content import TruthSources, load_bundle, load_truth_sources
 from harrier.resume.plan import build_content_plan
 from harrier.tracker import add_job, get_job
 from harrier.tracker.actions import add_manually
-from harrier.tracks import TRACK_KINDS, Scope, add_track, default_scope, resolve_scope
+from harrier.tracks import TRACK_KINDS, Scope, add_track, default_scope, resolve_scope, rules_for
 from harrier_cli.main import main
 
 # --- the prompts ---------------------------------------------------------------
@@ -182,7 +182,11 @@ def test_each_generator_sends_its_kinds_prompt(
     kind: str, db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scope = _scope_of_kind(db, kind)
-    letters = _capture(monkeypatch, letters_module, letter_json())
+    # As many paragraphs as the kind's letter holds (spec 140: six on focused).
+    extra = (rules_for(kind).letter_paragraphs or 3) - 3
+    letters = _capture(
+        monkeypatch, letters_module, letter_json(extra_paragraphs=(PARAGRAPH_THREE,) * extra)
+    )
     letters_module.generate_cover_letter(db, COMPANY, ROLE, jd_text=POSTING, scope=scope)
     assert letters == [letters_module.letter_prompt(kind)]
 

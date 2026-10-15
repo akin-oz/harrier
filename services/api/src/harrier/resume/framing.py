@@ -25,7 +25,7 @@ from harrier.resume.content import (
     load_truth_sources,
 )
 from harrier.resume.documents import FRAMING_KIND
-from harrier.tracks import Scope, refuse_if_archived
+from harrier.tracks import Scope, refuse_if_archived, rules_for
 
 
 @dataclass(frozen=True)
@@ -47,9 +47,25 @@ def put_framing(conn: Connection, scope: Scope, text: str) -> CommandOutcome:
     if not isinstance(raw, dict):
         return CommandOutcome(1, (f"{FRAMING_KIND} file is not a JSON object",))
     try:
-        bundle_from_documents(load_facts(conn), cast("dict[str, object]", raw))
+        bundle = bundle_from_documents(load_facts(conn), cast("dict[str, object]", raw))
     except ResumeBundleError as exc:
         return CommandOutcome(1, (str(exc),))
+    limit = rules_for(scope.track.kind).profile_max_sentences
+    if limit is not None:
+        # The profile the CV opens with: the lead, the experience sentence and
+        # the summary (spec 140). Its skill phrase changes per posting; its
+        # sentence count does not.
+        from harrier.resume.plan import build_profile, sentence_count
+
+        count = sentence_count(build_profile(bundle, list(bundle.positioning_technologies)))
+        if count > limit:
+            return CommandOutcome(
+                1,
+                (
+                    f"the {scope.track.kind} CV profile has {count} sentences, at most "
+                    f"{limit}: profile_lead, the experience statement and profile_summary",
+                ),
+            )
     name = framing_name(scope)
     slug = scope.track.slug
     put_document(conn, FRAMING_KIND, name, "json", text, track_id=scope.track.id)
