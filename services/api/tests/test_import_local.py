@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 import uuid
 from collections.abc import Iterator, Sequence
@@ -712,6 +713,28 @@ def test_import_local_refuses_without_a_url_or_a_local_store(
     monkeypatch.setenv(IMPORT_URL_VARIABLE, "postgresql://u:p@127.0.0.1:1/db")
     assert main(["store", "import-local", "--owner", owner]) == 1
     assert "local store" in capsys.readouterr().err
+
+
+def test_import_local_never_takes_its_url_from_dotenv(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The hosted URL comes from the shell only (spec 141, Input). A `.env`
+    line naming it is not loaded, so the import refuses as unset, while the
+    file's other keys still load (CodeRabbit on PR #342)."""
+    (tmp_path / ".env").write_text(
+        f"{IMPORT_URL_VARIABLE}=postgresql://u:p@127.0.0.1:1/db\n"
+        "HARRIER_IMPORT_TEST_OTHER_KEY=kept\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv(IMPORT_URL_VARIABLE, raising=False)
+    monkeypatch.delenv("HARRIER_IMPORT_TEST_OTHER_KEY", raising=False)
+
+    assert main(["store", "import-local", "--owner", str(uuid.uuid4())]) == 1
+
+    assert f"{IMPORT_URL_VARIABLE} is not set" in capsys.readouterr().err
+    assert IMPORT_URL_VARIABLE not in os.environ
+    assert os.environ.get("HARRIER_IMPORT_TEST_OTHER_KEY") == "kept"
 
 
 @pytest.mark.parametrize("argv", [[], ["--owner", "a-person@example.test"], ["--owner", ""]])

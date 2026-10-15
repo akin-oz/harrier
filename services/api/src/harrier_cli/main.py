@@ -81,9 +81,14 @@ def load_project_env(path: Path | None = None) -> None:
     on it). Existing environment variables are never overridden. A hosted
     run never calls it (spec 106)."""
     from harrier.envfile import read_env_file
+    from harrier.tracker.importlocal import IMPORT_URL_VARIABLE
 
     for key, value in read_env_file(path if path is not None else Path(".env")).items():
         if key in os.environ:
+            continue
+        if key == IMPORT_URL_VARIABLE:
+            # The import's hosted URL comes from the shell for the one
+            # command, never from a file that outlives it (spec 141).
             continue
         if key == URL_VARIABLE and not _local_store_url(value):
             # Not copied into the environment, where it would look exported

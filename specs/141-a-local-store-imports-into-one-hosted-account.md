@@ -224,6 +224,14 @@ synthetic rows only.
    track 1's lock for `LOCK_WAIT_MS` in
    `services/api/src/harrier/tracker/importlocal.py`, then is refused as a
    busy store, rather than for the seam's default of a few seconds.
+4. **`.env` never supplies the import's URL.** Input says the hosted URL is
+   exported in the shell for the one command. The CLI's `.env` loader
+   copied every unset key, so a `HARRIER_IMPORT_DATABASE_URL` line in `.env`
+   would have been read. `load_project_env` in
+   `services/api/src/harrier_cli/main.py` now skips that key, and the import
+   then refuses it as unset; the file's other keys load as before
+   (`services/api/tests/test_import_local.py::test_import_local_never_takes_its_url_from_dotenv`,
+   CodeRabbit on PR #342).
 
 ## Proof / origin
 
