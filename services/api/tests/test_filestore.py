@@ -44,6 +44,7 @@ from harrier.apply.answers import write_output
 from harrier.connection import Connection
 from harrier.db import connect, data_dir
 from harrier.discovery import DiscoveryOptions, run_discovery
+from harrier.filestore import InvalidFileKey, LocalFileStore, bind_files, files
 from harrier.outreach.discovery import write_candidates_artifact
 from harrier.profile.store import put_document
 from harrier.scoring.export import export_features
@@ -587,3 +588,61 @@ def test_the_local_store_writes_what_it_wrote_before(
     for name, (content, mode) in expected.items():
         assert actual[name][0] == content, name
         assert actual[name][1] == mode, f"{name}: {oct(actual[name][1])} != {oct(mode)}"
+
+
+# --- the key grammar ------------------------------------------------------------------
+
+OUTSIDE_THE_GRAMMAR = [
+    "",
+    "/etc/passwd",
+    "resumes/",
+    "resumes//cv.md",
+    ".",
+    "..",
+    "../outside.json",
+    "resumes/../../outside.json",
+    "resumes/./cv.md",
+    "resumes/cv one.md",
+    "resumes/Örnek.md",
+    "resumes\\cv.md",
+    "resumes/cv.md\n",
+]
+
+
+@pytest.mark.parametrize("key", OUTSIDE_THE_GRAMMAR)
+def test_a_key_outside_the_grammar_is_refused(key: str, tmp_path: Path) -> None:
+    """Every operation refuses before it touches a file (spec 107): nothing
+    is created under the data directory or beside it."""
+    store = files()
+    operations: list[Callable[[], object]] = [
+        lambda: store.read(key),
+        lambda: store.put(key, b"data", atomic=True),
+        lambda: store.put(key, b"data", atomic=False),
+        lambda: store.append(key, "data\n"),
+        lambda: store.delete(key),
+        lambda: store.stat(key),
+        lambda: store.list(key),
+        lambda: store.local_path(key),
+        lambda: store.qualified_name(key),
+    ]
+    for operation in operations:
+        with pytest.raises(InvalidFileKey):
+            operation()
+    assert sorted(path.name for path in tmp_path.iterdir()) == []
+
+
+def test_the_local_store_follows_the_data_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Read at each call, as every writer read it before the seam: a moved
+    data directory moves the next write, and a bound store wins until its
+    block ends."""
+    files().put("answers/first.md", b"one", atomic=False)
+    monkeypatch.setenv("HARRIER_DATA_DIR", str(tmp_path / "moved"))
+    files().put("answers/second.md", b"two", atomic=False)
+    assert (tmp_path / "data" / "answers" / "first.md").read_bytes() == b"one"
+    assert (tmp_path / "moved" / "answers" / "second.md").read_bytes() == b"two"
+    with bind_files(LocalFileStore(tmp_path / "bound")):
+        files().put("third.md", b"three", atomic=False)
+    assert (tmp_path / "bound" / "third.md").read_bytes() == b"three"
+    assert files().local_path("third.md") == tmp_path / "moved" / "third.md"
