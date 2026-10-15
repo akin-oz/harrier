@@ -142,6 +142,10 @@ found three ways past them, each closed above:
   identity filter mutates it, so every handler sees the scrubbed text.
 - **A secret in a shape `scrub_secrets` does not match.** It is not
   scrubbed (Honest limitations).
+- **A message quotes a non-ASCII password with `ascii()`, `!a` or `%a`.**
+  Each non-ASCII character is written as `\xHH`, `\uHHHH` or
+  `\UHHHHHHHH`. That form is masked at every sink, as the `repr` form is
+  (Amendment (2026-10-15): a password quoted by `ascii()`).
 
 ## Acceptance criteria
 
@@ -177,6 +181,23 @@ found three ways past them, each closed above:
       (`services/api/tests/test_store_password_scrub.py::test_a_password_quoted_by_repr_or_json_is_masked_at_every_sink`,
       one case per sink, quoting and password; Amendment (2026-10-12): a
       password quoted by `repr` or `json.dumps`).
+- [ ] With a password generated at run time that holds `'`, a backslash
+      and one non-ASCII character of each escape width (`\xHH`, `\uHHHH`,
+      `\UHHHHHHHH`), a message that quotes the password alone with
+      `ascii()`, with `%a`, and inside a dict with `!a` leaves no
+      8-character window of it through any of the four sinks of the first
+      criterion. The same password holding both `'` and `"` is a second
+      case, so both readings of `'` are proved
+      (planned test_a_password_quoted_by_ascii_is_masked_at_every_sink,
+      in `services/api/tests/test_store_password_scrub.py`, one case per
+      sink, quoting and password; Amendment (2026-10-15): a password
+      quoted by `ascii()`).
+- [ ] With spec 145's user and host forms in place, a log record that
+      quotes a store's non-ASCII user and non-ASCII host with `ascii()`
+      or `%a` prints neither; `scrub_outbound` still keeps the host
+      (planned test_a_non_ascii_user_and_host_are_masked_as_ascii_writes_them,
+      in `services/api/tests/test_logging.py`; Amendment (2026-10-15): a
+      password quoted by `ascii()`).
 - [ ] Each new behavior has a test that fails when the code it proves is
       removed, and the pull request records each mutation and its result.
 - [ ] `uv run ruff check`, `uv run pyright` and `uv run lint-imports`
@@ -198,13 +219,14 @@ found three ways past them, each closed above:
 - A handler someone adds later without going through `configure_logging`
   is not filtered. The three places that install the filter are named in
   Scope; a fourth is a new change.
-- A password quoted once by `repr` or `json.dumps` is masked (Amendment
-  (2026-10-12): a password quoted by `repr` or `json.dumps`). A password
+- A password quoted once by `repr`, `json.dumps` or `ascii()` is masked
+  (Amendment (2026-10-12): a password quoted by `repr` or `json.dumps`;
+  Amendment (2026-10-15): a password quoted by `ascii()`). A password
   quoted twice, such as `%r` of an exception whose message already quotes
   it with `!r`, is escaped twice, and that text is not masked. Nor is a
-  password quoted by `ascii()` (`!a`, `%a`) or by `repr` of its bytes when
-  it holds a non-ASCII character, a password `reprlib` truncates, or any
-  other encoding (base64, a hex dump, an HTML entity).
+  password quoted by `repr` of its bytes when it holds a non-ASCII
+  character, a password `reprlib` truncates, or any other encoding
+  (base64, a hex dump, an HTML entity).
 - A value the operator stored is returned as data, unmasked, wherever a
   route returns it: `ConfigOut.value`, the import report
   (`ConfigImportOut.report`, which names a dropped feed and the one kept),
@@ -510,3 +532,77 @@ proved only two of them).
 **Limitation.** One level of quoting. A password quoted twice, such as
 `%r` of an exception whose message already quotes it with `!r`, has `\`
 escaped again, and that text is not masked (Honest limitations).
+
+## Amendment (2026-10-15): a password quoted by `ascii()`
+
+The amendment above masked a password as `repr` and `json.dumps` quote
+it, and left `ascii()` in Honest limitations. CodeRabbit's review of PR
+#360 (spec 145) raised the JSON form of a non-ASCII user name, and the
+`ascii()` form was found while fixing that. Spec 145 reuses this spec's
+quoted forms for the store's user and host, so it leaks the same way. This
+amendment closes it here, where the quoted forms are specified.
+
+**The gap.** `ascii()`, the `!a` conversion and the `%a` format write a
+string as `repr` does, except that every non-ASCII character becomes an
+escape: `\xHH` below U+0100, `\uHHHH` below U+10000, `\UHHHHHHHH` above.
+`json.dumps` writes the first kind as `\u00HH` and the third as a
+surrogate pair, so none of the listed forms matches. Reproduced on
+2026-10-15 on PR #360's head, with `HARRIER_DATABASE_URL` naming a user,
+a password and a host that each hold a non-ASCII character:
+`scrub_logged` masked each value as written and as `repr` writes it, and
+left each one whole as `ascii()` and `%a` write it.
+
+**Behavior.** For each form `UrlParts.passwords` lists,
+`harrier.logredact.store_password_forms` also lists two forms as
+`ascii()` writes it, each without the quotes around it:
+
+- with `'` escaped, as it appears inside a quoted text holding both quote
+  kinds;
+- with `'` left as it is, as it appears inside a text that does not hold
+  both.
+
+For a form with no non-ASCII character these equal the two `repr` forms
+and are listed once, as any repeated form is. Every sink already passes
+its text through `scrub_outbound`, so no sink changes. The forms are
+computed once per URL, as the forms are today.
+
+Spec 145's user and host forms are built by the same helper, so after
+this amendment `scrub_logged` masks a store's user and host as `ascii()`
+writes them as well. A host is matched in any case, as spec 145 matches
+it, so `H\xf6st` matches `h\xf6st`. `scrub_outbound` still keeps the
+host (spec 145).
+
+**Failure modes.**
+
+| Situation | Result |
+|---|---|
+| A password, user or host with only ASCII characters | No new form; scrubbing is as before |
+| A non-ASCII character of each escape width in one value | One form holds all three escapes, as `ascii()` writes the whole value |
+| The value holds both `'` and `"` | The form with `\'` is listed as well as the one with `'` |
+| Computing a form on the logging path | Cannot raise: `ascii()` accepts every string |
+
+**Order.** The password forms change on `main` alone. The user and host
+criterion needs spec 145's code, so this amendment is implemented after
+PR #360 merges.
+
+**Proof.** (planned test_a_password_quoted_by_ascii_is_masked_at_every_sink)
+in `services/api/tests/test_store_password_scrub.py` runs the four sinks
+of the first criterion with a password made at run time, quoted alone by
+`ascii()`, by `%a`, and inside a dict by `!a`. One password holds `'`, a
+backslash and a non-ASCII character of each escape width; the other holds
+the same and `"`. Each case finds no 8-character window of the password
+in what the sink wrote. Removing either `ascii()` form fails at least one
+case. (planned test_a_non_ascii_user_and_host_are_masked_as_ascii_writes_them)
+in `services/api/tests/test_logging.py` logs a record that quotes a
+non-ASCII user and host with `ascii()` and with `%a`, and finds neither
+in the output.
+
+**Limitations.**
+
+- One level of quoting, as before. `ascii()` of a value already quoted by
+  `!a` escapes the backslash again, and that text is not masked.
+- A host is matched in any case as text, not as a name: a host written
+  `h\xf6st` does not match `H\xd6ST`, where the non-ASCII letter itself
+  changed case. The JSON form has the same limit since spec 145.
+- `repr` of the password's bytes, and any other encoding, stay as Honest
+  limitations lists them.
