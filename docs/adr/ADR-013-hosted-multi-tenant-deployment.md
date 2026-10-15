@@ -209,6 +209,14 @@ Postgres hosted), and a JWT boundary the local product never had. Chosen.
 - Backups of the hosted store are Supabase's, plus whatever spec 110 adds.
   `just backup` stays local.
 - A tenant's data can be exported and deleted on request; spec 111 owns it.
+  **Amended (spec 111).** Export is spec 117's. Deletion is spec 111's: an
+  operator runs `harrier operator erase`, and the append-only tables
+  (`job_events`, `job_eligibility`, `job_verdicts`) and `tracks` yield to
+  one owner's erasure, by that owner's id and for the role that owns the
+  table, and to nothing else. Sign-up is by invitation only
+  (`harrier operator invite`). Supabase's backups keep an erased owner's
+  rows until they age out; a restore re-runs the erasures in the ledger
+  (`data/hosted/erasures.jsonl`, never in git) before the API serves.
 
 ## Honest limitations
 

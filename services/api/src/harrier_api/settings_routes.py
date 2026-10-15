@@ -84,6 +84,11 @@ _OPERATOR = (
     "operator's own database login."
 )
 
+_OPERATOR_ADMIN = (
+    "Hosted operator command (spec 111): it holds the project's secret key, which no hosted "
+    "process holds, so it runs only from the operator's shell."
+)
+
 _DEPLOY_STORE = (
     "Deploy steps (spec 110): they check a login role, grant it, or check the store as the "
     "migrator, which the deploy workflow and an operator run deliberately."
@@ -226,6 +231,10 @@ COMMAND_PLACES: dict[str, Place] = {
     # against a Postgres store.
     "operator scheduler": TerminalOnly(_OPERATOR),
     "operator schedule-report": TerminalOnly(_OPERATOR),
+    # Spec 111 added these: they hold a Supabase secret key, which the API
+    # never holds (ADR-013 decision 3), so they run on the operator's machine.
+    "operator invite": TerminalOnly(_OPERATOR_ADMIN),
+    "operator erase": TerminalOnly(_OPERATOR_ADMIN),
     # Spec 098 added this after spec 096 was approved, and named its place.
     "profile split-resume": TerminalOnly(
         "A one-time migration of the stored resume into facts and a framing (spec 098)."

@@ -51,6 +51,7 @@ from harrier.db import connect, schema_version
 from harrier.pgstore import migrate_postgres, postgres_version, target_version
 from harrier.tracker import schema
 from harrier.tracker.schema import (
+    ERASE_FUNCTION,
     GLOBAL_ID_TABLES,
     MIGRATION_10_NEEDS_AUTH,
     MIGRATION_10_OWNED_TABLES,
@@ -63,6 +64,7 @@ from harrier.tracker.schema import (
     POSTGRES_BASELINE_VERSION,
     SCHEDULE_INPUTS_FUNCTION,
     SCHEDULE_READER_ROLE,
+    SERVICE_ROLE,
     SUPABASE_FUNCTIONS_IN_PUBLIC,
     SUPABASE_ROLES,
     TENANT_ROLE,
@@ -140,9 +142,13 @@ TENANT_ATTRIBUTES = (
 )
 
 # The SECURITY DEFINER functions harrier declares in public: a new owner's
-# track 1 (spec 105), and the scheduler's one listing across owners (spec
-# 108). Any other is a catalog problem.
-DECLARED_DEFINER_FUNCTIONS = ("harrier_new_owner", "harrier_schedule_inputs")
+# track 1 (spec 105), the scheduler's one listing across owners (spec 108),
+# and one owner's erasure (spec 111). Any other is a catalog problem.
+DECLARED_DEFINER_FUNCTIONS = (
+    "harrier_new_owner",
+    "harrier_schedule_inputs",
+    "harrier_erase_owner",
+)
 
 # The attributes the schedule reader must not have (spec 108).
 READER_ATTRIBUTES = (
@@ -1114,6 +1120,10 @@ def catalog_problems(conn: PgConnection) -> list[str]:
             # The one function the tenant role executes: owner identity.
             if grantee == TENANT_ROLE and signature == OWNER_ID_FUNCTION:
                 continue
+            # The one function service_role executes: one owner's erasure
+            # (spec 111). It still holds no table or sequence privilege.
+            if grantee == SERVICE_ROLE and signature == ERASE_FUNCTION:
+                continue
             problems.append(f"{name}(): executable by {grantee}")
     # PUBLIC on its own, so the problem names the grant that reaches every
     # role. A function with no ACL has the built-in one: PUBLIC executes it.
@@ -1125,10 +1135,40 @@ def catalog_problems(conn: PgConnection) -> list[str]:
     ).fetchall():
         if str(signature).removeprefix("public.") not in exempt:
             problems.append(f"{name}(): executable by PUBLIC")
+    problems += erase_function_problems(conn)
     problems += owner_identity_problems(conn)
     problems += auth_uid_references(conn)
     problems += schedule_reader_problems(conn, exempt)
     return sorted(problems)
+
+
+def erase_function_problems(conn: PgConnection) -> list[str]:
+    """What breaks spec 111's rules for `harrier_erase_owner(uuid)`: it exists
+    in public, and service_role is the only role other than its owner that
+    holds a grant on it. PUBLIC, the tenant role and the Data API's roles are
+    named by the function rules above; this names any other grantee, and the
+    absence of the one that must hold it."""
+    found = conn.execute(
+        "SELECT pg_get_userbyid(proowner) FROM pg_proc WHERE oid = to_regprocedure(%s)",
+        (f"public.{ERASE_FUNCTION}",),
+    ).fetchone()
+    if found is None:
+        return [f"{ERASE_FUNCTION}: no such function in public"]
+    problems: list[str] = []
+    grantees = {
+        str(grantee)
+        for (grantee,) in conn.execute(
+            "SELECT CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(x.grantee) END "
+            "FROM pg_proc p CROSS JOIN LATERAL aclexplode(p.proacl) x "
+            "WHERE p.oid = to_regprocedure(%s) AND x.privilege_type = 'EXECUTE'",
+            (f"public.{ERASE_FUNCTION}",),
+        ).fetchall()
+    }
+    for grantee in sorted(grantees - {str(found[0]), SERVICE_ROLE}):
+        problems.append(f"harrier_erase_owner(): {grantee} may execute it")
+    if SERVICE_ROLE not in grantees:
+        problems.append(f"harrier_erase_owner(): {SERVICE_ROLE} cannot execute it")
+    return problems
 
 
 def schedule_reader_problems(conn: PgConnection, exempt: set[str]) -> list[str]:
@@ -1428,6 +1468,35 @@ def test_every_table_is_owned_or_declared(store: PgConnection) -> None:
             "SET search_path = '' AS 'SELECT count(*) FROM public.jobs'",
             "peek_owners(): SECURITY DEFINER in public",
         ),
+        # One owner's erasure (spec 111): service_role alone executes it, and
+        # no other definer function stands beside it.
+        (
+            "GRANT EXECUTE ON FUNCTION harrier_erase_owner(uuid) TO harrier_tenant",
+            "harrier_erase_owner(): executable by harrier_tenant",
+        ),
+        (
+            "GRANT EXECUTE ON FUNCTION harrier_erase_owner(uuid) TO authenticated",
+            "harrier_erase_owner(): executable by authenticated",
+        ),
+        (
+            "GRANT EXECUTE ON FUNCTION harrier_erase_owner(uuid) TO PUBLIC",
+            "harrier_erase_owner(): executable by PUBLIC",
+        ),
+        (
+            "GRANT EXECUTE ON FUNCTION harrier_erase_owner(uuid) TO harrier_schedule_reader",
+            "harrier_erase_owner(): harrier_schedule_reader may execute it",
+        ),
+        (
+            "REVOKE EXECUTE ON FUNCTION harrier_erase_owner(uuid) FROM service_role",
+            "harrier_erase_owner(): service_role cannot execute it",
+        ),
+        (
+            "ALTER FUNCTION harrier_erase_owner(uuid) RESET search_path",
+            "harrier_erase_owner(): SECURITY DEFINER without an empty search_path",
+        ),
+        # The erase door is not a table privilege: service_role still holds
+        # none (NO_PRIVILEGE_ROLES is unchanged).
+        ("GRANT SELECT ON jobs TO service_role", "jobs (table): service_role holds"),
         # The reader's attributes and memberships (local test integrity
         # review of PR #309). The role belongs to the server and is created
         # only when absent, so a test server that already has it would not

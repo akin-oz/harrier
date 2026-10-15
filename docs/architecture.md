@@ -232,7 +232,7 @@ tables but `id` (migration 13), so no key a tenant can write into tells one
 owner what another holds
 (`services/api/tests/test_owner_policy.py::test_an_owner_cannot_choose_or_change_an_id`).
 Each owner has their own track 1, and a job or event can reference only its
-own owner's track or job. Migrations 10, 13, 14, 16, 17, 18 and 19 are Postgres only
+own owner's track or job. Migrations 10, 13, 14, 16, 17, 18, 19 and 22 are Postgres only
 (`SINGLE_DIALECT_MIGRATIONS`): SQLite records those versions and changes
 nothing, so the local schema names no tenant. The catalog test,
 `services/api/tests/test_owner_policy.py::test_every_table_is_owned_or_declared`,
@@ -261,7 +261,7 @@ migration 10 refuses a store without the roles and the auth objects.
 
 The hosted API is the one path an owner reaches their rows by (below):
 the CLI admits a Postgres URL only for `harrier store`, for the hosted
-runs the API starts (spec 106) and for `harrier operator` (spec 108),
+runs the API starts (spec 106) and for `harrier operator` (specs 108 and 111),
 until spec 127. A
 role with `BYPASSRLS`, such as Supabase's `service_role`, sees every owner's
 rows
@@ -502,6 +502,59 @@ subcommand declaring its database role
 `services/api/tests/test_operator_class.py::test_every_operator_subcommand_declares_its_role`).
 The scheduler and the API are one image; the machine and its limits are spec
 110's.
+
+Sign-up is by invitation only (spec 111). The Supabase project has public
+sign-up and anonymous sign-ins off and no OAuth provider on; spec 110's
+deploy reads those settings and refuses a project that differs
+(`services/api/tests/test_deploy_checks.py::test_the_deploy_refuses_open_sign_up`).
+A user exists only when the operator runs `harrier operator invite`, which
+reads one address from standard input, creates a confirmed user with no
+password, and prints the user's id. It opens no database connection, prints
+no link and no address, and logs nothing
+(`services/api/tests/test_operator.py::test_invite_creates_a_confirmed_user_and_never_prints_the_address`,
+`services/api/tests/test_operator.py::test_invite_refuses_an_existing_address`).
+The invitee then signs in with the emailed one-time code every sign-in uses
+(spec 114), so an invitation works only where that sender reaches them.
+`harrier operator erase <user id> --confirm <user id>` removes one owner, as
+a login that can act as `service_role`, in this order: ban the auth user,
+check Storage, delete the owner's rows, delete the auth user, check Storage
+again, append the ledger. The rows go in one transaction through
+`harrier_erase_owner(uuid)`, a definer function that only `service_role` may
+execute and that returns one count per owned table
+(`services/api/tests/test_operator.py::test_erase_runs_its_steps_in_order`,
+`services/api/tests/test_owner_erasure.py::test_erase_removes_one_owner_from_every_owned_table`,
+`services/api/tests/test_owner_erasure.py::test_only_service_role_can_erase`).
+The append-only tables and `tracks` refuse a delete as before. The one
+exception is a row-level delete of a row whose owner the transaction-local
+setting `harrier.erase_owner` names, by the role that owns the table, so no
+trigger is dropped or disabled, no table is locked, and another owner's
+writes never wait
+(`services/api/tests/test_owner_erasure.py::test_the_erase_setting_lets_through_only_its_owners_deletes`,
+`services/api/tests/test_owner_erasure.py::test_the_erasure_migration_leaves_every_trigger_in_place`,
+`services/api/tests/test_owner_erasure.py::test_erasing_one_owner_never_waits_for_another`).
+A step that fails exits 1 naming it, and a re-run resumes
+(`services/api/tests/test_operator.py::test_erase_resumes_after_a_failed_step`).
+Until the Storage seam of spec 107 is built the Storage steps only list the
+owner's prefix and refuse when anything is there; nothing here deletes a
+Storage object
+(`services/api/tests/test_operator.py::test_this_build_deletes_no_storage_object`).
+Both commands need the project's secret key in the shell and refuse one
+defined in `.env`
+(`services/api/tests/test_operator.py::test_operator_refusals_name_no_secret`).
+The Supabase dashboard's delete of a user is not the path: it fails on the
+foreign keys, and `harrier operator erase` is the command.
+
+Erasure removes the live copy. Supabase's database backups keep an erased
+owner's rows until they age out, and do not include Storage objects. Each
+run appends one line to `data/hosted/erasures.jsonl` (the user id, the time,
+the steps done; no address, never in git), outside the database so that a
+restore cannot take it back with the rows
+(`services/api/tests/test_operator.py::test_erase_runs_its_steps_in_order`,
+`services/api/tests/test_operator.py::test_erase_resumes_after_a_failed_step`).
+To restore a backup, re-run `harrier operator erase` for every id in the
+ledger erased after the backup's time, before the API serves. That is a
+procedure, not code: nothing enforces that the operator follows it, and the
+ledger is one file on one machine.
 
 Gmail watch is local only (spec 109). A hosted watch would store and
 transmit restricted Gmail data on servers, which Google allows only after

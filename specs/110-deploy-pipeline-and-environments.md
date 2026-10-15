@@ -2045,3 +2045,14 @@ only.
   with custom SMTP on. Staging sends through Google Workspace's SMTP server;
   `docs/deploy.md` step 1 records it. No repository file holds the sender's
   credentials.
+
+## Note (2026-10-15): spec 111's erase function
+
+Spec 111 is built. `harrier store check-deploy`'s data API roles check
+(`services/api/src/harrier/storedeploy.py`, `_check_data_api_roles`) allows
+`service_role`'s `EXECUTE` on `harrier_erase_owner(uuid)` and nothing else
+in `public`. The same function held by `anon`, `authenticated` or `PUBLIC` is
+still a finding, and its passing line says what it allowed
+(`services/api/tests/test_store_deploy.py::test_check_deploy_passes_on_a_migrated_granted_store`,
+`services/api/tests/test_store_deploy.py::test_check_deploy_reads_the_data_api_roles_effective_privileges`).
+Nothing else here changes.

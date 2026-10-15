@@ -932,3 +932,57 @@ criterion above states the guarantee only.
   Behavior ("The run's Storage identity"), and its Amendment
   (2026-10-13), decision 3.
 - Akin's decision in chat on 2026-10-13, relayed by the coordinator.
+
+## Note (2026-10-15): spec 111's operator erase
+
+Spec 111 asked two things of this spec, and its Amendment (2026-10-15) says
+what that spec does until this one is built. Nothing else here changes.
+
+- **The seam can list and delete every object under one owner's prefix for
+  an operator command that holds a secret key, outside any request.** Spec
+  107 as refined sends no secret key and binds a store only to a request's
+  token, so this is a new way to bind it. Spec 111's `harrier operator
+  erase` needs it (its Deletion, steps 2 and 5).
+- **This spec's build replaces spec 111's list-only check.** Until the seam
+  exists, `harrier operator erase` lists the owner's prefix with
+  `POST /storage/v1/object/list/harrier-files` and refuses when anything is
+  there. It deletes no object. When the seam lands, its build replaces that
+  check with the delete spec 111's steps 2 and 5 describe, and updates the
+  test that pins the list-only behavior,
+  `services/api/tests/test_operator.py::test_this_build_deletes_no_storage_object`,
+  in the same change.
+
+## Amendment (2026-10-15): the policy refuses a banned or deleted user
+
+Found by CodeRabbit's review of PR #348 (spec 111's build). Spec 111 bans a
+user, empties the owner's prefix, deletes the auth user, and lists the
+prefix once more for stragglers (its steps 1, 2, 4 and 5). An access token
+issued before the ban stays valid until its `exp`, one hour by default
+(spec 104). The policy above checks only that the first folder of the
+object name is `auth.uid()`, which a still-valid token keeps proving. So the
+token can write a new object under the prefix after step 5 has listed it,
+and nothing then fails or finds it: the auth user is gone, and no later
+step runs. Spec 111's race handling covers rows, which fail a foreign key
+once the user is deleted, but not Storage objects.
+
+**Behavior after the change.** `harrier_files_owner_only` also requires that
+`auth.uid()` names a user who exists in `auth.users` and is not banned
+(`banned_until` is null or in the past), for every command it covers.
+`authenticated` has no grant on `auth.users`, so the check goes through a
+`SECURITY DEFINER` function in `public`, owned by the migrating role,
+executable by `authenticated` only, that returns a boolean and reads
+nothing else. The catalog test's definer allowlist gains it.
+
+**Failure modes.** A token of a banned user gets the policy's refusal on
+read and write alike. A token of a deleted user gets the same. A user whose
+ban has lapsed passes again.
+
+### Acceptance criteria (amendment of 2026-10-15)
+
+- [ ] As `authenticated` with a valid token, a write under the owner's
+      prefix succeeds; after the user is banned it is refused; after the
+      user is deleted it is refused
+      (planned test_the_storage_policy_refuses_a_banned_or_deleted_user).
+- [ ] The definer function is executable by `authenticated` and by no other
+      grantee, and returns only a boolean
+      (planned test_the_storage_policy_function_is_narrow).

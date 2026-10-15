@@ -287,7 +287,7 @@ with the existing status verbs.
   A correction is a new assessment. On Postgres, one owner's erasure
   removes that owner's rows, as it does for `job_events`. An update is
   never allowed, and `TRUNCATE` is refused. (Spec 111's `job_eligibility`
-  amendment, approved 2026-10-11; not built yet.)
+  amendment, approved 2026-10-11, built by spec 111's change.)
 - Index on `(job_id, at)`.
 - On Postgres: `owner_id` defaults to `auth.uid()`, the `owner_only`
   policy, row security enabled and forced, `id` drawn from the global

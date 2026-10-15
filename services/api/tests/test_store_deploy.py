@@ -433,7 +433,8 @@ def test_check_deploy_passes_on_a_migrated_granted_store(
     assert (code, err) == (0, "")
     assert out.splitlines() == [
         f"store version: postgres {target_version()}",
-        "data api roles: anon, authenticated, service_role hold nothing in public",
+        "data api roles: anon, authenticated, service_role hold nothing in public "
+        "but service_role's EXECUTE on harrier_erase_owner(uuid)",
         f"row security: enabled and forced on {len(OWNED_TABLES)} tables",
         f"{api}: member of {TENANT_ROLE}",
         f"{run_login}: member of {TENANT_ROLE}",
@@ -548,6 +549,17 @@ def function_execute(server: Server) -> str:
     return "service_role holds a privilege on function harrier_number_track()"
 
 
+def erase_door_to_authenticated(server: Server) -> str:
+    """Only `service_role` may hold the erase door (spec 111)."""
+    server.migrator("GRANT EXECUTE ON FUNCTION harrier_erase_owner(uuid) TO authenticated")
+    return "authenticated holds a privilege on function harrier_erase_owner()"
+
+
+def erase_door_to_public(server: Server) -> str:
+    server.migrator("GRANT EXECUTE ON FUNCTION harrier_erase_owner(uuid) TO PUBLIC")
+    return "anon holds a privilege on function harrier_erase_owner() (and 1 more)"
+
+
 def sequence_usage(server: Server) -> str:
     server.migrator(
         "CREATE SEQUENCE harrier_probe_seq", "GRANT USAGE ON SEQUENCE harrier_probe_seq TO anon"
@@ -568,6 +580,8 @@ def view_select(server: Server) -> str:
         public_select,
         column_grant,
         function_execute,
+        erase_door_to_authenticated,
+        erase_door_to_public,
         sequence_usage,
         view_select,
         every_table_privilege("INSERT"),
@@ -606,7 +620,10 @@ def test_check_deploy_leaves_supabases_own_event_trigger_function_alone(
     )
     code, out, err = run(bare(server), capsys)
     assert (code, err) == (0, "")
-    assert "data api roles: anon, authenticated, service_role hold nothing in public" in out
+    assert (
+        "data api roles: anon, authenticated, service_role hold nothing in public "
+        "but service_role's EXECUTE on harrier_erase_owner(uuid)"
+    ) in out
 
 
 def test_check_deploy_names_a_login_role_that_reaches_another_role(

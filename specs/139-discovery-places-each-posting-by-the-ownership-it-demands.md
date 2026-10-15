@@ -203,3 +203,13 @@ discovered by the shared run: `harrier discover`".
 
 None for the operator beyond spec 137's setup. Rows that existed before
 stay where they are. Spec 138 moves any that belong in the focused track.
+
+## Note (2026-10-15): spec 111's erasure
+
+Spec 111's erasure migration covers `job_verdicts`. On Postgres one owner's
+erasure removes that owner's rows, as it does for `job_eligibility` and
+`job_events`. The table stays append-only for everyone else: an update is
+never allowed and `TRUNCATE` is refused
+(`services/api/tests/test_owner_erasure.py::test_the_erase_setting_lets_through_only_its_owners_deletes`,
+`services/api/tests/test_owner_erasure.py::test_erase_removes_one_owner_from_every_owned_table`).
+Nothing else here changes.

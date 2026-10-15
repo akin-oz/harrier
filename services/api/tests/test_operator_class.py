@@ -144,30 +144,34 @@ def test_the_operator_class_runs_only_on_postgres(
 def test_every_operator_subcommand_declares_its_role() -> None:
     """Each `harrier operator` subcommand declares a database role or that it
     opens none, a subcommand added without one is found by the walk, and
-    `scheduler` and `schedule-report` each declare `harrier_scheduler`."""
+    `scheduler` and `schedule-report` each declare `harrier_scheduler`, `erase`
+    declares `service_role` and `invite` declares that it opens no database
+    connection (spec 111)."""
     parser = cli.build_parser()
     assert cli.operator_roles(parser) == {
         "scheduler": "harrier_scheduler",
         "schedule-report": "harrier_scheduler",
+        "invite": cli.NO_DATABASE,
+        "erase": "service_role",
     }
     assert cli.undeclared_operator_subcommands(parser) == []
 
     # A subcommand added without a declaration is named.
-    cli.operator_group(parser).add_parser("invite")
-    assert cli.operator_roles(parser)["invite"] is None
-    assert cli.undeclared_operator_subcommands(parser) == ["invite"]
+    cli.operator_group(parser).add_parser("another")
+    assert cli.operator_roles(parser)["another"] is None
+    assert cli.undeclared_operator_subcommands(parser) == ["another"]
 
     # One that declares it opens no database connection is declared.
     declared = cli.build_parser()
     cli._operator_subcommand(  # pyright: ignore[reportPrivateUsage]
         cli.operator_group(declared),
-        "invite",
+        "another",
         role=cli.NO_DATABASE,
         func=lambda _args: 0,
-        help="an invitation",
+        help="another command",
     )
     assert cli.undeclared_operator_subcommands(declared) == []
-    assert cli.operator_roles(declared)["invite"] == cli.NO_DATABASE
+    assert cli.operator_roles(declared)["another"] == cli.NO_DATABASE
 
 
 def test_no_other_command_is_an_operator_command() -> None:
