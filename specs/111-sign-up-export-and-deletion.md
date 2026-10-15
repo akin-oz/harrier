@@ -1528,3 +1528,44 @@ reads `auth.users` as the operator's login:
 `services/api/tests/test_operator_erase_test_owners.py::test_erase_test_owners_erases_owners_the_auth_server_cannot_see`
 proves it, with the fake auth server answering 404 for ids `auth.users`
 holds. The test fails on the code before this change.
+
+## Amendment (2026-10-15): the local refusal names the right reason
+
+Found while reading the output of `harrier operator erase-test-owners` on a
+local store. Spec 111 declared `invite` and `erase` operator commands and
+never wrote down what they say beside SQLite. They said spec 108's sentence
+for the scheduler: "locally the schedule is launchd (harrier schedule)".
+That is true of `scheduler` and `schedule-report`, which launchd stands in
+for locally. It is false of `invite`, `erase` and `erase-test-owners`, which
+have no local counterpart. The sentence sent an operator to the wrong place.
+
+**Behavior after the change.** On a SQLite store (`HARRIER_DATABASE_URL`
+unset or empty), each `harrier operator` subcommand exits 1, prints one
+line to stderr and nothing to stdout, and opens nothing, as before. The
+line is:
+
+- `operator scheduler` and `operator schedule-report`, unchanged (spec 108):
+  `error: harrier operator <command> runs only against a hosted store;
+  locally the schedule is launchd (harrier schedule)`.
+- `operator invite`, `operator erase` and `operator erase-test-owners`:
+  `error: harrier operator <command> runs only against a hosted store;
+  HARRIER_DATABASE_URL selects one`.
+
+`<command>` is the subcommand word only, never an argument (spec 061). The
+line names the variable and no value. The text is built in
+`operator_refusal` in `services/api/src/harrier_cli/main.py`. A new operator
+subcommand gets the second text unless it is listed there as one that
+launchd stands in for.
+
+This narrows the "Operator on SQLite" line of spec 127 and the SQLite
+bullet of spec 108 to the two commands they were written for. Neither spec
+is edited here.
+
+`services/api/tests/test_operator_class.py::test_each_operator_command_refuses_a_local_store_for_its_own_reason`
+proves it, one case per subcommand. The `invite`, `erase` and
+`erase-test-owners` cases fail on the code before this change, which printed
+the launchd text for all three. The two scheduler cases pass before and
+after.
+`services/api/tests/test_operator.py::test_the_operator_group_runs_on_postgres_only`
+holds the `invite` and `erase` text through the whole CLI with a fake
+Supabase beside it.
