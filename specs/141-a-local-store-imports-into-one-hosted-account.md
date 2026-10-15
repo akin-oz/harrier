@@ -1,8 +1,8 @@
 ---
 spec: 141
 title: A local store imports into one hosted account
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [061, 075, 091, 103, 105, 106, 112, 137]
 ---
@@ -202,6 +202,12 @@ synthetic rows only.
    `data/cover-letters` and `data/answers` once spec 107 is built. Their file
    names carry company and role, not job ids, so the new job ids do not
    break them. Also open there: whether `data/resumes-corrected` comes too.
+
+## Decisions taken (2026-10-15)
+
+Akin approved the spec as written, so both open decisions are taken as
+recommended: `--owner` takes the Supabase user id, and artifacts move in a
+follow-up spec once spec 107 is built.
 
 ## Out of scope
 
