@@ -385,10 +385,18 @@ _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 # Not part of a longer host name: no letter, digit, `-` or `.` before it,
 # and after it no letter, digit or `-`, nor a `.` that another such
-# character follows. A letter or digit before it that ends an escape, a
-# written-out backslash escape such as `\n` or a percent escape such as
-# `%40`, is not part of the host (spec 145, amendment).
-_HOST_BEFORE = r"(?:(?<![A-Za-z0-9.-])|(?<=\\[A-Za-z])|(?<=%[0-9A-Fa-f]{2}))"
+# character follows. A letter or digit before it that ends an escape is not
+# part of the host (spec 145, amendment): a backslash escape as `repr` or
+# JSON writes one, `\n`, `\x1b`, `\u200b` or `\U0001f600`, or a percent
+# escape such as `%40`.
+_HOST_BEFORE = (
+    r"(?:(?<![A-Za-z0-9.-])"
+    r"|(?<=\\[A-Za-z])"
+    r"|(?<=\\x[0-9A-Fa-f]{2})"
+    r"|(?<=\\u[0-9A-Fa-f]{4})"
+    r"|(?<=\\U[0-9A-Fa-f]{8})"
+    r"|(?<=%[0-9A-Fa-f]{2}))"
+)
 _HOST_AFTER = r"(?![A-Za-z0-9-])(?!\.[A-Za-z0-9])"
 
 # Where a user name ends after `user=`: at any character that cannot
@@ -426,8 +434,8 @@ def _libpq_reading(url: str) -> dict[str, object] | None:
 
 @functools.lru_cache(maxsize=8)
 def _hosts_and_users_of(url: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """The hosts a store URL names, and its user name as libpq reads it and
-    percent-encoded, as a URL may write it (spec 145).
+    """The hosts a store URL names, and its user name as libpq reads it, as
+    the URL writes it, and percent-encoded (spec 145).
 
     The hosts are every entry of libpq's `host` and `hostaddr`, split at
     commas, or the host `urlsplit` reads when libpq cannot read the URL.
@@ -459,7 +467,13 @@ def _hosts_and_users_of(url: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
             if entry and not entry.startswith("/") and entry.lower() not in _LOOPBACK_HOSTS
         )
     )
-    users = tuple(dict.fromkeys(form for form in (user, quote(user, safe="")) if form))
+    try:
+        # As written, which may encode only some characters, as
+        # `encodeURIComponent` does (privacy review of PR #360).
+        written = urlsplit(url).username or ""
+    except ValueError:
+        written = ""
+    users = tuple(dict.fromkeys(form for form in (user, written, quote(user, safe="")) if form))
     return hosts, users
 
 

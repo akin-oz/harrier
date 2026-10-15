@@ -647,12 +647,16 @@ def test_the_store_user_is_masked_in_a_url_and_at_every_ending(
             DATABASE_URL: _store_url(host, one),
             # A user libpq reads as `harrier@ops`, written percent-encoded.
             IMPORT_URL: _store_url(encoded_host, encoded),
+            # Encoded only in part, as `encodeURIComponent` writes it: the
+            # form as written is neither the decoded nor `quote`'s.
+            ACCOUNT_URL: _store_url(STORES[ACCOUNT_URL][0], "ops%3Ab(c)*"),
         },
     )
     log = logging.getLogger("harrier.tests.users")
 
     log.warning("opening %s", _store_url(host, one))
     log.warning("opening %s", _store_url(encoded_host, encoded))
+    log.warning("opening %s", _store_url(STORES[ACCOUNT_URL][0], "ops%3Ab(c)*"))
     log.warning("json %s", f"postgresql:\\/\\/{one}@{host}")
     log.warning(
         'endings ?user=%s&sslmode=require user=%s; user=%s. user="%s" user=%s.more',
@@ -665,7 +669,7 @@ def test_the_store_user_is_masked_in_a_url_and_at_every_ending(
 
     written = capsys.readouterr().err
     assert "opening postgresql://REDACTED:REDACTED@REDACTED:6543/postgres\n" in written
-    assert written.count("opening postgresql://REDACTED:REDACTED@REDACTED:6543/postgres") == 2
+    assert written.count("opening postgresql://REDACTED:REDACTED@REDACTED:6543/postgres") == 3
     assert "json postgresql:\\/\\/REDACTED@REDACTED\n" in written
     assert (
         "endings ?user=REDACTED&sslmode=require user=REDACTED; user=REDACTED."
@@ -736,10 +740,20 @@ def test_a_host_after_an_escape_is_masked(
 
     log.warning("repr %r", f"connect failed:\n{host} unreachable")
     log.warning("encoded next=postgresql%%3A%%2F%%2Fops%%40%s%%3A6543", host)
+    # Escapes longer than a letter: `\\x1b` (a terminal colour code), `\\xa0`
+    # and `\\u200b` as `repr` writes them, and `\\u00a0` as JSON writes it.
+    log.warning("hex %r", f"x\x1b{host}")
+    log.warning("nbsp %r", f"x\xa0{host}")
+    log.warning("zwsp %r", f"x\u200b{host}")
+    log.warning("json %s", f'"x\\u00a0{host}"')
 
     written = capsys.readouterr().err
     assert "repr 'connect failed:\\nREDACTED unreachable'" in written
     assert "encoded next=postgresql%3A%2F%2Fops%40REDACTED%3A6543" in written
+    assert "hex 'x\\x1bREDACTED'" in written
+    assert "nbsp 'x\\xa0REDACTED'" in written
+    assert "zwsp 'x\\u200bREDACTED'" in written
+    assert 'json "x\\u00a0REDACTED"' in written
     assert host not in written
 
 

@@ -300,6 +300,16 @@ a store's identity through. Akin chose on 2026-10-15 to close all three:
 The spec 133 log assertions read the URL with the user kept; they now
 read `postgresql://REDACTED:REDACTED@REDACTED:5432/tracker`.
 
+A local privacy review of the first build of this amendment found two
+places where the code did less than the text above says. The user was
+masked as libpq reads it and as `quote` encodes it, but not as the URL
+writes it, so a URL encoding only some characters, as
+`encodeURIComponent` does, printed its own user. And only a backslash
+followed by one letter counted as an escape, so a host after `\x1b`,
+`\xa0`, `\u200b` or a JSON `\u00a0` printed. Both are fixed: the user as
+written is masked, and `\xHH`, `\uHHHH` and `\UHHHHHHHH` count as
+escapes.
+
 ## Migration
 
 None.
