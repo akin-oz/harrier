@@ -49,6 +49,7 @@ from harrier.connection import Connection
 from harrier.filestore import artifact_path, files, files_in, join_key, local_file, save_text
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
+from harrier.paths import repo_root
 from harrier.resume.content import (
     forbidden_hits,
     load_forbidden_phrases,
@@ -62,7 +63,9 @@ from harrier.voices import assemble
 
 logger = logging.getLogger(__name__)
 
-TEMPLATE_DIR = Path("templates")
+# Anchored to the repository, not the working directory: a hosted run starts
+# in its owner's run directory (spec 106), where `templates/` does not exist.
+TEMPLATE_DIR = repo_root() / "templates"
 HTML_TEMPLATE = "cover-letter-template.html"
 CSS_TEMPLATE = "cover-letter-template.css"
 
