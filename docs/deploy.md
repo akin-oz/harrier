@@ -82,7 +82,7 @@ is downtime. Nothing checks this rule.
 | `harrier_run`'s URL | Fly secret `HARRIER_RUN_DATABASE_URL` on the API app | GitHub, Vercel, `.env`, git |
 | `HARRIER_CREDENTIALS_KEY` | Fly secret on the API app and on the scheduler app | GitHub, Vercel, `.env`, git |
 | `harrier_scheduler`'s URL | Fly secret `HARRIER_DATABASE_URL` on the scheduler app (with `HARRIER_RUN_DATABASE_URL`, the run login's, the scheduler starts runs with) | GitHub, Vercel, `.env`, git |
-| `HARRIER_STORAGE_SIGNING_KEY`, the private key that mints each scheduled run's Storage token (spec 107) | Fly secret on the scheduler app only, once Akin has taken spec 107's open decision on the key's state | the API app (it refuses to start with it), GitHub, Vercel, `.env`, git |
+| `HARRIER_STORAGE_SIGNING_KEY`, the private key that mints each scheduled run's Storage token (spec 107) | Fly secret on the scheduler app only | the API app (it refuses to start with it), GitHub, Vercel, `.env`, git |
 | A Fly deploy token for the API app | GitHub environment secret `FLY_API_TOKEN` | Fly, Vercel, git |
 | A Fly deploy token for the scheduler app | GitHub environment secret `FLY_SCHEDULER_API_TOKEN` | Fly, Vercel, git |
 | Production only: a Fly deploy token for the staging API app | GitHub `production` environment secret `FLY_STAGING_API_TOKEN` (it reads staging's image) | Fly, Vercel, git |
@@ -271,10 +271,9 @@ that writes files: HARRIER_STORAGE_SIGNING_KEY is not set` on each tick, and
 the report shows the slots unclaimed. Nothing is written anywhere
 (`services/api/tests/test_hosted_scheduler.py::test_a_scheduler_without_a_signing_key_starts_no_file_writing_run`).
 
-Do not set the key yet. Supabase imports a signing key as a private JWK and
-creates it as a standby key, whose tokens its guide does not list as
-accepted; spec 107's Amendment (2026-10-16): PR 3's build leaves which state
-the key sits in to Akin. Once that is decided, the steps are:
+The key is the project's current signing key (spec 107, Decision taken
+(2026-10-16, PR 3)): Supabase imports it as a standby key, and rotating it
+in makes Storage accept the scheduler's tokens. The steps:
 
 1. Make the key on your own machine, outside the repository, as a private
    P-256 JWK with a `kid`:
@@ -285,9 +284,13 @@ the key sits in to Akin. Once that is decided, the steps are:
    ```
 
 2. In the Supabase dashboard, Project Settings, JWT Keys: create a new
-   standby key by importing that JWK (paste the file's one line). Keep the
+   standby key by importing that JWK. Copy the file with
+   `pbcopy < "$HOME/scheduler-signing-key.jwk"` right before you paste it
+   into the dashboard, and copy nothing in between: on this machine the
+   clipboard does not keep what an earlier command put there. Keep the
    `kid` Supabase shows equal to the file's: the scheduler's tokens name it.
-   Then put the key in the state spec 107's decision names.
+   Then click Rotate key to make it the current key. The earlier key becomes
+   previously used, and every session it signed stays valid.
 3. Set it on the scheduler app only, from the file, never typed into a
    command line:
 
@@ -298,6 +301,12 @@ the key sits in to Akin. Once that is decided, the steps are:
 
 4. Delete the file: `rm "$HOME/scheduler-signing-key.jwk"`. Supabase and the
    Fly secret now hold the key; nothing else should.
+5. No sooner than one hour and fifteen minutes after the rotation, revoke
+   the previously used key in the same dashboard page, so sessions it signed
+   can no longer be used.
+
+A later rotation of the scheduler's key repeats steps 1 to 5 with a new
+JWK.
 
 The key goes nowhere else. The API refuses to start with it in its
 environment

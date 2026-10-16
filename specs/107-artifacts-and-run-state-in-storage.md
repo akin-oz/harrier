@@ -1281,8 +1281,8 @@ Written by the change that builds PR 3: the run binding, the request's and
 the scheduler's tokens, the writers, and the lifted kinds. The question the
 amendment above left for Akin is answered by the Decision taken (2026-10-16).
 Each point below is a choice the build made where the text left one open, or
-a place the text was silent. One point needs Akin before the scheduler's key
-is set (Open decision below).
+a place the text was silent. The state the key holds in the project, which
+the build left to Akin, is the Decision taken (2026-10-16, PR 3) below.
 
 ### How a run's process knows it is hosted
 
@@ -1407,27 +1407,36 @@ API: no hosted route serves their files (spec 107)`. The CLI's run class
 file. Spec 106's Note (2026-10-16, spec 107's third pull request) records
 its table.
 
-### Open decision for Akin (amendment of 2026-10-16, PR 3)
+### Decision taken (2026-10-16, PR 3): the key is the project's current key
 
-**Which state the imported key sits in.** The Decision taken (2026-10-16)
-says the key's public half is imported. Supabase's signing keys guide
-(read 2026-10-16) describes importing a private key only, as a JWK, which
-Supabase then holds too, and it creates the imported key as a standby key.
-Its table of accepted signatures trusts only the current key, and a
-previously used one during a rotation; a standby key's tokens are not
-listed as accepted. So for Storage to accept the scheduler's tokens the
-key must be:
+**The question.** The Decision taken (2026-10-16) says the key's public half
+is imported. Supabase's signing keys guide (read 2026-10-16) describes
+importing a private key only, as a JWK, which Supabase then holds too, and
+creates the imported key as a standby key. Its table trusts the current key,
+and a previously used one until it is revoked; a standby key's tokens are not
+listed as accepted. Its flow for minting your own tokens imports the key and
+then rotates it in. The guide gives no time limit for a previously used key
+and advises revoking it.
 
-- rotated in as the current key, after which Supabase Auth signs every
-  session with it too; or
-- moved to previously used, which the guide shows only as a step on the way
-  to revoked, not as a state to stay in.
+**Akin chose in chat on 2026-10-16:** the imported key is rotated in as the
+project's current key. Supabase Auth then signs every session with it too.
+That widens nothing: any key the project trusts can sign a token it accepts,
+so the scheduler's key could already act as any owner in Storage and in the
+API (Decision taken (2026-10-16)). The other way, rotating the original key
+back so the scheduler's sits in previously used, rests on a state the guide
+does not promise to keep.
 
-Neither is what the decision's text describes, and neither is confirmed on
-a project. The build does not choose. Until Akin does, `docs/deploy.md`
-says not to set `HARRIER_STORAGE_SIGNING_KEY`; without it the scheduler
-starts no file-writing run, which is safe and visible in the report. Spec
-110's staging check confirms whichever is chosen.
+**What the rotation does.** The project's earlier key becomes previously
+used, and every session it signed stays valid until that key is revoked.
+The hosted API fetches the project's keys again when a token names a key id
+it has not seen (`services/api/src/harrier_api/hostedauth.py`, the key set's
+refresh on an unknown `kid`), so sessions signed with the new key verify
+without a restart. The earlier key is revoked no sooner than one hour and
+fifteen minutes after the rotation, the guide's margin for one-hour access
+tokens. A later rotation of the scheduler's key is the same steps with a new
+JWK: import, rotate in, set the new Fly secret, revoke the old key after the
+margin. Spec 110's staging check confirms that Storage accepts a scheduled
+run's token after the rotation.
 
 ### Acceptance criteria (amendment of 2026-10-16, PR 3)
 
@@ -1461,9 +1470,9 @@ starts no file-writing run, which is safe and visible in the report. Spec
       `services/api/tests/test_run_owner.py::test_a_kind_not_offered_hosted_answers_501_naming_its_spec`).
 - [ ] The run's environment is the allowlist with the two Storage names
       (`services/api/tests/test_hosted_runs.py::test_the_child_environment_holds_only_the_allowlist_and_its_owners_values`).
-- [ ] `docs/deploy.md` carries the key's generation, its Fly secret, the
-      scheduler machine's two Storage variables, the import step pending the
-      Open decision above, and the rotation.
+- [ ] `docs/deploy.md` carries the key's generation, its import and rotation
+      to the project's current key, its Fly secret, the scheduler machine's
+      two Storage variables, and a later rotation.
 
 ### Honest limitations (amendment of 2026-10-16, PR 3)
 
