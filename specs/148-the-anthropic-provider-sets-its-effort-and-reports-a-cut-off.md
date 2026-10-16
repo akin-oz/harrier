@@ -152,8 +152,8 @@ Tests stub the HTTP call; no test reaches the Anthropic API.
 
 - The effort of `openai-api` (the Responses API's reasoning effort),
   `claude-cli` and `codex-cli`. Each is its own change.
-- Changing the default model (`claude-sonnet-4-5`). Open decision 1.
-- Per-owner effort on a hosted account. Open decision 2.
+- Changing the default model (`claude-sonnet-4-5`). Decision 1.
+- Per-owner effort on a hosted account. Decision 2.
 - `xhigh` and `max`: not every model in the table accepts them, and short
   generation does not need them.
 - Streaming the request, prompt caching, and the Anthropic SDK in place of
@@ -174,17 +174,17 @@ Tests stub the HTTP call; no test reaches the Anthropic API.
   judge every answer; a lower effort that produces more refusals costs
   retries, and that would show in the runs.
 
-## Open decisions for Akin
+## Decisions
 
-1. **The default model.** Recommended: keep `claude-sonnet-4-5` in this
-   spec, and change it in its own spec once a few resumes and letters on
-   `claude-sonnet-5-5` have been compared. Alternative: make
-   `claude-sonnet-5-5` the default here, which every local `auto` user with
-   an Anthropic key would get at once.
-2. **Effort per owner.** Recommended: one server-wide value, as
-   `ANTHROPIC_MAX_TOKENS` is. Alternative: an optional effort field on the
-   AI credential, beside the model, which changes spec 116's credential
-   shape and the Settings page.
+Akin agreed both on 2026-10-16.
+
+1. **The default model stays `claude-sonnet-4-5`.** A change to
+   `claude-sonnet-5-5` is its own spec, written after a few resumes and
+   letters on it have been compared. This spec does not touch
+   `DEFAULT_ANTHROPIC_MODEL`.
+2. **Effort is one server-wide value.** `ANTHROPIC_EFFORT` is read from the
+   environment, as `ANTHROPIC_MAX_TOKENS` is. The AI credential keeps its
+   shape (spec 116); the Settings page does not change.
 
 ## Migration
 
