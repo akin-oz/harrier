@@ -488,10 +488,15 @@ The command's tests are in `services/api/tests/test_import_local.py`.
 
 After an import, the browser still cannot add a focused track, store a
 track's documents or move a job. `harrier --owner <user id> <command>` runs
-six commands against one hosted account instead of the local store
-(spec 144): `tracks add`, `tracks list`, `profile put`, `profile list`,
-`profile check` and `move`. Any other command given `--owner` is refused
-before anything opens.
+eight commands against one hosted account instead of the local store:
+`tracks add`, `tracks list`, `profile put`, `profile list`, `profile check`
+and `move` (spec 144), and, until spec 107's PR 3 lets the hosted API run
+them, `tailor` and `cover-letter` (spec 147). The last two read the account
+but write their files under the local `data/`, where the hosted web app does
+not see them; spec 146's import copies them up. Give a job found by hosted
+discovery its description with `--jd-file`. Any other command given `--owner`
+is refused before anything opens. The two interim commands' tests are in
+`services/api/tests/test_interim_account_tailor.py`.
 
 1. Find the account's user id on the Supabase dashboard's Users page, as for
    the import.

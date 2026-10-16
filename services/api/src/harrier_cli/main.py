@@ -744,7 +744,7 @@ def _cmd_tailor(args: argparse.Namespace) -> int:
             print(f"tailor failed: cannot read --jd-file: {error}", file=sys.stderr)
             return 1
 
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         # An unknown job raises here as it did inside run_tailor; `main`
         # reports it.
@@ -792,7 +792,7 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
         except (OSError, UnicodeError) as error:
             print(f"cover letter failed: cannot read --notes-file: {error}", file=sys.stderr)
             return 1
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         try:
             row = get_job(conn, scope, args.job_id)
