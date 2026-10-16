@@ -254,10 +254,11 @@ class PosterStaging:
 
     def __init__(self, conn: Connection, jobs: list[NormalizedJob]) -> None:
         self._conn = conn
-        # The first item per URL, as screening's dedupe keeps the first job:
-        # a later repeat must not replace the payload of the row it added.
+        # Read from the jobs screening's own dedupe keeps (by external id,
+        # then URL), so a row's poster is the payload of the job that made
+        # it, never a dropped repeat's (reviews of PR #381).
         self._items: dict[str, object] = {}
-        for job in jobs:
+        for job in dedupe_normalized_jobs(jobs):
             url = job["url"].strip()
             if url:
                 self._items.setdefault(url, job["raw_payload"])

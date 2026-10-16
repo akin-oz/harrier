@@ -1007,3 +1007,29 @@ def test_a_repeated_url_keeps_the_poster_of_the_item_screening_kept(
 
     staged = _staged("Exampleco1")
     assert [candidate["person_name"] for candidate in staged] == ["Sam Sample"]
+
+
+def test_a_repeated_job_id_keeps_the_poster_of_the_item_screening_kept(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Screening drops a repeat by job id before its URL is seen, so the
+    poster of the next job at that URL is its own (review of PR #381)."""
+    first = _apify_item(1)
+    # The same job id at another URL: dropped by screening.
+    dropped = _apify_item(
+        2,
+        id=first["id"],
+        jobPosterName="Dropped Poster",
+        jobPosterProfileUrl="https://www.linkedin.com/in/dropped-poster",
+    )
+    kept = _apify_item(
+        3,
+        link=dropped["link"],
+        companyName="Exampleco2",
+        jobPosterName="Kept Poster",
+        jobPosterProfileUrl="https://www.linkedin.com/in/kept-poster",
+    )
+
+    _run_apify(monkeypatch, [first, dropped, kept])
+
+    assert [candidate["person_name"] for candidate in _staged("Exampleco2")] == ["Kept Poster"]

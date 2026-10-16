@@ -47,6 +47,19 @@ def _key(url: str, name: str) -> str:
     return normalize(profile_url(url) or url or name)
 
 
+def _stored_profile_url(url: str) -> str:
+    """The canonical form of a contact's stored link, read leniently.
+
+    A contact typed by hand can lack the scheme or use http. That is not a
+    link to stage, but it still names the person, so for comparison it is
+    read as https (review of PR #381)."""
+    if url.lower().startswith("http://"):
+        url = "https://" + url[len("http://") :]
+    elif "://" not in url:
+        url = "https://" + url
+    return profile_url(url)
+
+
 def contact_url_keys(conn: Connection) -> set[str]:
     """The profile URLs already in the contacts table, in both their stored
     and their canonical form."""
@@ -55,7 +68,7 @@ def contact_url_keys(conn: Connection) -> set[str]:
         url = (contact.get("linkedin_url") or "").strip()
         if url:
             keys.add(normalize(url))
-            canonical = profile_url(url)
+            canonical = _stored_profile_url(url)
             if canonical:
                 keys.add(normalize(canonical))
     return keys
