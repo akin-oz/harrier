@@ -48,6 +48,8 @@ from harrier.llm.config import DEBUG_VARIABLES, debug_value_on
 if TYPE_CHECKING:
     from jwt import PyJWK
 
+    from harrier.filestore import FileStore
+
 logger = logging.getLogger(__name__)
 
 # --- configuration ---
@@ -61,6 +63,9 @@ CREDENTIALS_KEY_VARIABLE = "HARRIER_CREDENTIALS_KEY"
 # The run login's URL: a second login role, which a hosted run receives as
 # its `HARRIER_DATABASE_URL` (spec 106). The name is `harrier_api.runenv`'s.
 RUN_DATABASE_URL_VARIABLE = "HARRIER_RUN_DATABASE_URL"
+# The `apikey` header of every Storage request (spec 107, Configuration).
+PUBLISHABLE_KEY_VARIABLE = "HARRIER_SUPABASE_PUBLISHABLE_KEY"
+PUBLISHABLE_KEY_PREFIX = "sb_publishable_"
 HOSTED_AUTH = "supabase"
 
 # A service credential on a request path is the service role on a request
@@ -110,6 +115,13 @@ RUN_DATABASE_URL_REFUSAL = (
     f"{AUTH_VARIABLE}={HOSTED_AUTH} needs {RUN_DATABASE_URL_VARIABLE}, "
     "a postgresql:// URL for the run login role"
 )
+# One text for a key that is absent, empty, a legacy JWT or anything else not
+# beginning `sb_publishable_`: it names the variable and the form, never the
+# value (spec 107, Failure modes). A legacy service_role key has the shape of
+# a legacy anon key, so no legacy key is accepted.
+PUBLISHABLE_KEY_REFUSAL = (
+    f"hosted mode needs {PUBLISHABLE_KEY_VARIABLE}, a key beginning {PUBLISHABLE_KEY_PREFIX}"
+)
 
 # A host name as the trusted-host middleware compares it: the Host header's
 # text before the first colon. A port or a wildcard would make an entry that
@@ -133,6 +145,9 @@ class HostedConfig:
     # The run login's URL, password included: kept out of the repr (spec
     # 106). Its role is checked when the store opens.
     run_database_url: str = field(repr=False)
+    # Public by design (the SPA's bundle holds it), and still kept out of
+    # the repr, as every key here is (spec 107).
+    publishable_key: str = field(repr=False, default="")
 
     @property
     def issuer(self) -> str:
@@ -187,6 +202,7 @@ def hosted_config(environ: Mapping[str, str]) -> HostedConfig | None:
         cors_origins=_cors_origins(environ.get(CORS_ORIGINS_VARIABLE, "")),
         credentials_key=_credentials_key(environ.get(CREDENTIALS_KEY_VARIABLE, "")),
         run_database_url=_run_database_url(environ.get(RUN_DATABASE_URL_VARIABLE, "")),
+        publishable_key=_publishable_key(environ.get(PUBLISHABLE_KEY_VARIABLE, "")),
     )
     _refuse_a_service_credential(environ)
     _refuse_prompt_logging(environ)
@@ -208,6 +224,15 @@ def _run_database_url(raw: str) -> str:
     return raw
 
 
+def _publishable_key(raw: str) -> str:
+    """The key when it begins `sb_publishable_` and has more after it;
+    otherwise refused with one text that never quotes it."""
+    key = raw.strip()
+    if not key.startswith(PUBLISHABLE_KEY_PREFIX) or key == PUBLISHABLE_KEY_PREFIX:
+        raise HostedConfigError(PUBLISHABLE_KEY_REFUSAL)
+    return key
+
+
 def _credentials_key(raw: str) -> CredentialsKey:
     key = parse_key(raw)
     if key is None:
@@ -218,6 +243,7 @@ def _credentials_key(raw: str) -> CredentialsKey:
 def _hosted_group_installed() -> bool:
     try:
         import cryptography  # noqa: F401  # pyright: ignore[reportUnusedImport]
+        import httpx  # noqa: F401  # pyright: ignore[reportUnusedImport]
         import jwt  # noqa: F401  # pyright: ignore[reportUnusedImport]
     except ImportError:
         return False
@@ -664,6 +690,24 @@ def _is_uuid(value: object) -> bool:
 # --- the middleware ---
 
 
+# What binds a verified request's file store: its `sub` and its bearer
+# token in, the store out (spec 107, "Binding a request").
+StoreBinder = Callable[[str, str], "FileStore"]
+
+
+def storage_binder(config: HostedConfig) -> StoreBinder:
+    """The request's `SupabaseFileStore`: its owner, its own token, the
+    project's URL and the publishable key."""
+    from harrier.filestore import SupabaseFileStore
+
+    def bind(owner: str, token: str) -> FileStore:
+        return SupabaseFileStore.for_request(
+            owner, token, origin=config.supabase_url, publishable_key=config.publishable_key
+        )
+
+    return bind
+
+
 class HostedAuthMiddleware:
     """Refuses before routing (spec 104, Scope item 4).
 
@@ -672,11 +716,19 @@ class HostedAuthMiddleware:
     header; no other place a token could travel is read. A refused request
     is logged with its reason, method and path, never its header or claims.
     The verified payload, as signed, is the request's `claims` state.
+
+    Once the token verifies, the request's file store is bound for the rest
+    of the request and reset when its response ends (spec 107). Bound here,
+    before routing, so a synchronous route that runs in the thread pool
+    inherits it.
     """
 
-    def __init__(self, app: ASGIApp, verifier: TokenVerifier) -> None:
+    def __init__(
+        self, app: ASGIApp, verifier: TokenVerifier, binder: StoreBinder | None = None
+    ) -> None:
         self.app = app
         self.verifier = verifier
+        self.binder = binder
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "websocket":
@@ -709,4 +761,16 @@ class HostedAuthMiddleware:
             await refusal_response(refused.reason)(scope, receive, send)
             return
         state = cast(dict[str, Any], scope.get("state") or {})
-        await self.app({**scope, "state": {**state, "claims": claims}}, receive, send)
+        forwarded: Scope = {**scope, "state": {**state, "claims": claims}}
+        if self.binder is None:
+            # Only spec 104's and spec 132's tests build the middleware
+            # without a binder: files() then refuses, as unbound.
+            await self.app(forwarded, receive, send)
+            return
+        from harrier.filestore import bind_files
+
+        # The verifier proved both: a string `sub` that is a UUID, and the
+        # token it came in.
+        store = self.binder(str(claims["sub"]), _bearer_token(authorization))
+        with bind_files(store):
+            await self.app(forwarded, receive, send)

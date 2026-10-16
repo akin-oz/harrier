@@ -164,11 +164,13 @@ def test_a_telegram_failure_log_never_holds_the_token(
 
 
 def test_hosted_mail_routes_answer_501(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("HARRIER_AUTH", "supabase")
     # An archive the read would serve, and a watch the run would start.
+    # Written before the process is hosted: hosted, the seam names no local
+    # file (spec 107).
     path = events_path()
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"kind": "interview_invite", "company": "Example Co"}) + "\n")
+    monkeypatch.setenv("HARRIER_AUTH", "supabase")
     read: list[int | None] = []
 
     def read_events(limit: int | None = None) -> None:

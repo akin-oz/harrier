@@ -34,6 +34,7 @@ from pg_support import open_owner_store
 from test_hosted_auth import (
     API_HOST,
     CREDENTIALS_KEY_TEXT,
+    PUBLISHABLE_KEY,
     RUN_DATABASE_URL,
     SPA_ORIGIN,
     SUPABASE_URL,
@@ -57,10 +58,11 @@ import harrier.logredact
 from harrier import logsetup
 from harrier.connection import URL_VARIABLE, Connection, StoreDatabaseError, StoreIntegrityError
 from harrier.db import connect
+from harrier.filestore import SupabaseFileStore
 from harrier.llm.config import DEBUG_VARIABLES
 from harrier.logredact import IdentityRedactionFilter
 from harrier.logsetup import HOSTED_NOTE, SECRET_SCRUB, UVICORN_LOGGERS, configure_logging
-from harrier.outreach.discovery import candidates_output_path
+from harrier.outreach.discovery import candidates_key
 from harrier.tracker.store import add_job
 from harrier.tracks import default_scope
 from harrier_api.app import create_app
@@ -378,13 +380,16 @@ COMPANY = "Northwind Labs"
 TITLE = "Senior Frontend Engineer"
 
 
-def stage_candidate(marker: str) -> str:
-    """One invented candidate, written where discovery writes them, whose
-    name and profile URL carry `marker`."""
+def stage_candidate(marker: str, owner: str) -> str:
+    """One invented candidate, written where discovery writes them for
+    `owner`: hosted, the owner's prefix in Storage (spec 107), here the
+    suite's fake. Its name and profile URL carry `marker`."""
     linkedin_url = f"https://www.linkedin.com/in/invented-{marker}"
-    path = candidates_output_path(COMPANY, TITLE)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
+    store = SupabaseFileStore.for_request(
+        owner, "synthetic-token", origin=SUPABASE_URL, publishable_key=PUBLISHABLE_KEY
+    )
+    store.put(
+        candidates_key(COMPANY, TITLE),
         json.dumps(
             {
                 "company": COMPANY,
@@ -400,8 +405,8 @@ def stage_candidate(marker: str) -> str:
                     }
                 ],
             }
-        ),
-        encoding="utf-8",
+        ).encode("utf-8"),
+        atomic=False,
     )
     return linkedin_url
 
@@ -426,7 +431,7 @@ def test_contact_routes_log_no_identity_value_hosted(
     finally:
         conn.close()
     marker = uuid.uuid4().hex
-    linkedin_url = stage_candidate(marker)
+    linkedin_url = stage_candidate(marker, owner)
     with serving(monkeypatch, server.login_role().url) as hosted:
         buffer = into_buffer()
         logging.getLogger().setLevel(logging.DEBUG)
@@ -474,6 +479,8 @@ def test_a_hosted_start_refuses_prompt_logging(
         HARRIER_CREDENTIALS_KEY=CREDENTIALS_KEY_TEXT,
         # Required since spec 106, for the same reason.
         HARRIER_RUN_DATABASE_URL=RUN_DATABASE_URL,
+        # Required since spec 107, for the same reason.
+        HARRIER_SUPABASE_PUBLISHABLE_KEY=PUBLISHABLE_KEY,
         CLAUDE_CLI_DEBUG=" Yes ",
     )
     started = start_api(environ, tmp_path)

@@ -2744,6 +2744,26 @@
         "title": "StatusChangeIn",
         "type": "object"
       },
+      "StorageUnavailableOut": {
+        "description": "The hosted file store did not answer, or answered with a server\nerror (spec 107). A fixed sentence: never a key, an object name or what\nStorage sent. The local API never sends it.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "reason": {
+            "const": "storage_unavailable",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail",
+          "reason"
+        ],
+        "title": "StorageUnavailableOut",
+        "type": "object"
+      },
       "SuccessRecordOut": {
         "description": "One last-success record. `overdue` is the domain's rule: no success,\nan unreadable one, or one older than twice the job's longest gap.",
         "properties": {
@@ -3362,13 +3382,16 @@
                     },
                     {
                       "$ref": "#/components/schemas/AuthRefusalOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/StorageUnavailableOut"
                     }
                   ],
                   "title": "Response 503 Listartifacts"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104); or Storage is unavailable (hosted, spec 107)"
           }
         },
         "security": [
@@ -3498,13 +3521,16 @@
                     },
                     {
                       "$ref": "#/components/schemas/AuthRefusalOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/StorageUnavailableOut"
                     }
                   ],
                   "title": "Response 503 Readartifact"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104); or Storage is unavailable (hosted, spec 107)"
           }
         },
         "security": [
@@ -8821,13 +8847,16 @@
                     },
                     {
                       "$ref": "#/components/schemas/AuthRefusalOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/StorageUnavailableOut"
                     }
                   ],
                   "title": "Response 503 Approvecandidate"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104); or Storage is unavailable (hosted, spec 107)"
           }
         },
         "security": [
@@ -8960,13 +8989,16 @@
                     },
                     {
                       "$ref": "#/components/schemas/AuthRefusalOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/StorageUnavailableOut"
                     }
                   ],
                   "title": "Response 503 Rejectcandidate"
                 }
               }
             },
-            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104); or Storage is unavailable (hosted, spec 107)"
           }
         },
         "security": [

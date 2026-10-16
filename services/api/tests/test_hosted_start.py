@@ -30,6 +30,7 @@ from pg_support import fresh_database
 from test_hosted_auth import (
     API_HOST,
     CREDENTIALS_KEY_TEXT,
+    PUBLISHABLE_KEY,
     SPA_ORIGIN,
     child_environment,
     start_api,
@@ -469,6 +470,7 @@ def start_as_a_process(login: LoginRole, tmp_path: Path) -> tuple[int, str, str]
             HARRIER_DATABASE_URL=login.url,
             HARRIER_CREDENTIALS_KEY=CREDENTIALS_KEY_TEXT,
             HARRIER_RUN_DATABASE_URL=run_url,
+            HARRIER_SUPABASE_PUBLISHABLE_KEY=PUBLISHABLE_KEY,
         )
         started = start_api(environ, tmp_path)
     return started.returncode, started.stdout + started.stderr, started.stderr.strip()

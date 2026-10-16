@@ -2754,6 +2754,21 @@ export interface components {
             verb: string;
         };
         /**
+         * StorageUnavailableOut
+         * @description The hosted file store did not answer, or answered with a server
+         *     error (spec 107). A fixed sentence: never a key, an object name or what
+         *     Storage sent. The local API never sends it.
+         */
+        StorageUnavailableOut: {
+            /** Detail */
+            detail: string;
+            /**
+             * Reason
+             * @constant
+             */
+            reason: "storage_unavailable";
+        };
+        /**
          * SuccessRecordOut
          * @description One last-success record. `overdue` is the domain's rule: no success,
          *     an unreadable one, or one older than twice the job's longest gap.
@@ -3078,13 +3093,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104); or Storage is unavailable (hosted, spec 107) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"] | components["schemas"]["StorageUnavailableOut"];
                 };
             };
         };
@@ -3158,13 +3173,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104); or Storage is unavailable (hosted, spec 107) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"] | components["schemas"]["StorageUnavailableOut"];
                 };
             };
         };
@@ -6713,13 +6728,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104); or Storage is unavailable (hosted, spec 107) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"] | components["schemas"]["StorageUnavailableOut"];
                 };
             };
         };
@@ -6796,13 +6811,13 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104); or Storage is unavailable (hosted, spec 107) */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"] | components["schemas"]["StorageUnavailableOut"];
                 };
             };
         };
