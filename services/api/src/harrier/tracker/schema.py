@@ -1968,11 +1968,15 @@ POSTGRES_STORAGE: list[str] = [
         IF EXISTS (
             SELECT 1 FROM storage.buckets b
             WHERE b.id = {_sql_text(MIGRATION_23_BUCKET)}
-                AND NOT (
+                -- A NULL setting makes the match NULL, which COALESCE reads
+                -- as another setting: a bucket with no type list is not ours
+                -- (data-integrity review of PR #363).
+                AND NOT COALESCE(
                     b.public IS FALSE
                     AND b.file_size_limit IS NOT DISTINCT FROM {MIGRATION_23_SIZE_LIMIT}
                     AND b.allowed_mime_types @> ARRAY[{_MIGRATION_23_TYPES}]::text[]
-                    AND b.allowed_mime_types <@ ARRAY[{_MIGRATION_23_TYPES}]::text[]
+                    AND b.allowed_mime_types <@ ARRAY[{_MIGRATION_23_TYPES}]::text[],
+                    FALSE
                 )
         ) THEN
             RAISE EXCEPTION {_sql_text(MIGRATION_23_OTHER_BUCKET)};

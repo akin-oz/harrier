@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import uuid
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, LiteralString
 
 import pytest
 from pg_support import (
@@ -145,6 +145,38 @@ def test_a_bucket_with_other_settings_is_refused(monkeypatch: pytest.MonkeyPatch
                 (MIGRATION_23_SIZE_LIMIT, list(reversed(MIGRATION_23_MIME_TYPES))),
             )
         assert migrate_postgres(url) == (22, target_version())
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        "public = false, file_size_limit = 6000000, allowed_mime_types = NULL",
+        "public = false, file_size_limit = NULL",
+        "public = NULL, file_size_limit = 6000000",
+    ],
+)
+def test_a_bucket_with_a_missing_setting_is_refused(settings: LiteralString) -> None:
+    """A NULL setting is another setting: a hand-made bucket with no type
+    list, no size limit or no public flag is refused, not adopted
+    (data-integrity review of PR #363)."""
+    import psycopg
+
+    from harrier.connection import StoreMigrationRefused
+
+    with fresh_database() as url:
+        with psycopg.connect(url, autocommit=True) as conn:
+            conn.execute(
+                "INSERT INTO storage.buckets (id, name, public, file_size_limit, "
+                "allowed_mime_types) VALUES ('harrier-files', 'harrier-files', false, "
+                "%s, %s)",
+                (MIGRATION_23_SIZE_LIMIT, list(MIGRATION_23_MIME_TYPES)),
+            )
+            conn.execute("UPDATE storage.buckets SET " + settings)
+        with pytest.raises(StoreMigrationRefused) as refused:
+            migrate_postgres(url)
+        assert str(refused.value) == MIGRATION_23_OTHER_BUCKET
+        with psycopg.connect(url, autocommit=True) as conn:
+            assert conn.execute("SELECT max(version) FROM schema_version").fetchone() == (22,)
 
 
 def test_storage_objects_carries_only_the_harrier_policy(store: PgConnection) -> None:

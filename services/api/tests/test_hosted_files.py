@@ -531,6 +531,38 @@ def test_an_artifact_route_answers_503_when_storage_is_unavailable(
         assert "StorageUnavailableOut" in refs, path
 
 
+def test_approve_and_reject_answer_503_when_storage_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch, storage: FakeStorage
+) -> None:
+    """An outage while reading the staged candidates is the declared 503,
+    and a denied read a 500, on approve and reject alike: never a 404 that
+    calls a staged candidate unknown (data-integrity review of PR #363)."""
+    from harrier.outreach.discovery import candidates_key
+
+    hosted = build(monkeypatch)
+    job_id = _job()
+    staged = {"candidates": [{"linkedin_url": "https://www.linkedin.com/in/example-person"}]}
+    store_for().put(
+        candidates_key("Example Co", "Senior Frontend Engineer"),
+        json.dumps(staged).encode("utf-8"),
+        atomic=False,
+    )
+    token = bearer(hosted.token(sub=OWNER_A))
+    body = {"linkedin_url": "https://www.linkedin.com/in/example-person"}
+    for route in ("approve", "reject"):
+        storage.failures["download"] = [503]
+        answer = hosted.client.post(
+            f"/outreach/{job_id}/candidates/{route}", headers=token, json=body
+        )
+        assert answer.status_code == 503, (route, answer.json())
+        assert answer.json()["reason"] == "storage_unavailable"
+        storage.failures["download"] = [403]
+        denied = hosted.client.post(
+            f"/outreach/{job_id}/candidates/{route}", headers=token, json=body
+        )
+        assert denied.status_code == 500, (route, denied.json())
+
+
 # --- reads keep their rules --------------------------------------------------------------
 
 
