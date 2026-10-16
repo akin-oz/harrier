@@ -1,7 +1,7 @@
 ---
 spec: 150
 title: Discovery stages the Apify job poster as a contact candidate
-status: accepted
+status: shipped
 approved: yes
 milestone: M6
 depends: [009, 011, 016]
@@ -84,6 +84,13 @@ candidate with the same URL, or with the same name when neither has a URL.
 It is not staged when the contacts table already holds that profile URL.
 Both checks are the ones `backfill-posters` already makes.
 
+**Amendment (review of PR #381).** Both checks compare profile URLs in
+their canonical form, for both callers. So `backfill-posters` also stops
+staging a poster already staged, or already a contact, under another
+subdomain. Before, it compared the URL as the guest page gave it. A
+contact's stored link is read leniently for this comparison only: one
+typed with http or with no scheme still names the person.
+
 ### What the run reports
 
 The run logs one line per run: `apify posters staged: <n>`. The line
@@ -100,35 +107,43 @@ carries no name, title or URL. The per-source summary does not change.
 | The name is present and the URL is a company page, or not `https` | Staged by name, with no URL. |
 | Reading or writing the candidates artifact fails | Logged by error class only. That job's poster is not staged. The run continues and the job stays added. |
 | The same poster posted several jobs in one run | Staged once per job, because candidates are kept per job. Approval links the one contact to each job (spec 036). |
+| Two items with one URL, or one job id at two URLs | The poster of the item screening kept: the payload lookup reads the jobs its dedupe keeps (reviews of PR #381). |
 | A dataset-file replay (`--dataset-file`) | Stages as a live run does. It is not a dry run. |
 | A focused-track placement (spec 139) | Staged against the job on the track it was placed in. |
 | Hosted run | The artifact goes through `files()`, the owner's Storage (spec 107). |
 
 ## Acceptance criteria
 
-- [ ] An Apify item with `jobPosterName`, `jobPosterTitle` and
+- [x] An Apify item with `jobPosterName`, `jobPosterTitle` and
       `jobPosterProfileUrl` on a `uk.linkedin.com/in/` link, run through
       discovery and added to the tracker, leaves one pending candidate with
       that name and title and `https://www.linkedin.com/in/<slug>`
-      (planned test_discovery_stages_the_apify_poster).
-- [ ] The same run as a dry run stages nothing
-      (planned test_a_dry_run_stages_no_poster).
-- [ ] An item that screening rejects, or that is a tracker duplicate,
-      stages nothing (planned test_only_added_rows_stage_a_poster).
-- [ ] An item with no poster keys stages nothing, and an item whose URL is
+      (`services/api/tests/test_discovery.py::test_discovery_stages_the_apify_poster`).
+- [x] The same run as a dry run stages nothing
+      (`services/api/tests/test_discovery.py::test_a_dry_run_stages_no_poster`).
+- [x] An item that screening rejects, or that is a tracker duplicate,
+      stages nothing (`services/api/tests/test_discovery.py::test_only_added_rows_stage_a_poster`).
+- [x] An item with no poster keys stages nothing, and an item whose URL is
       not an `https` LinkedIn `/in/` link stages the name with no URL
-      (planned test_an_unusable_poster_url_is_dropped).
-- [ ] A poster already staged for the job, or already in the contacts
+      (`services/api/tests/test_discovery.py::test_an_unusable_poster_url_is_dropped`).
+- [x] A poster already staged for the job, or already in the contacts
       table, is not staged again
-      (planned test_a_known_poster_is_not_staged_twice).
-- [ ] A candidates artifact write that raises leaves the job added and the
-      run finished (planned test_a_staging_failure_does_not_fail_the_run).
-- [ ] No contact row is written by discovery (the same tests read the
+      (`services/api/tests/test_discovery.py::test_a_known_poster_is_not_staged_twice`).
+- [x] A candidates artifact write that raises leaves the job added and the
+      run finished (`services/api/tests/test_discovery.py::test_a_staging_failure_does_not_fail_the_run`).
+- [x] No contact row is written by discovery (the same tests read the
       contacts table).
-- [ ] `extract_publisher_contact` reads `jobPosterProfileUrl`
-      (an added case in `test_extract_publisher_contact_flat_and_nested`).
-- [ ] `backfill-posters` behaves as before
-      (the existing tests in `services/api/tests/test_outreach.py`).
+- [x] `extract_publisher_contact` reads `jobPosterProfileUrl`
+      (an added case in `services/api/tests/test_apify_linkedin.py::test_extract_publisher_contact_flat_and_nested`).
+- [x] The poster staged is the one of the item screening kept
+      (`services/api/tests/test_discovery.py::test_a_repeated_url_keeps_the_poster_of_the_item_screening_kept`,
+      `services/api/tests/test_discovery.py::test_a_repeated_job_id_keeps_the_poster_of_the_item_screening_kept`).
+- [x] A contact typed without https still matches its poster
+      (`services/api/tests/test_outreach.py::test_a_contact_typed_without_https_still_matches_its_poster`).
+- [x] `backfill-posters` behaves as before, except that it compares
+      profile URLs in canonical form
+      (`services/api/tests/test_outreach.py::test_backfill_stages_posters_without_writing_contacts`,
+      `services/api/tests/test_outreach.py::test_backfill_skips_a_poster_already_a_contact_under_another_subdomain`).
 
 ## Proof / origin
 

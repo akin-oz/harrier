@@ -223,6 +223,20 @@ def test_extract_publisher_contact_flat_and_nested() -> None:
     assert nested["name"] == "Ada Example"
     assert nested["title"] == "Recruiter"
 
+    # The key curious_coder/linkedin-jobs-scraper uses (spec 150).
+    actor = extract_publisher_contact(
+        {
+            "jobPosterName": "Sam Sample",
+            "jobPosterTitle": "Recruiter",
+            "jobPosterProfileUrl": "https://uk.linkedin.com/in/sam",
+        }
+    )
+    assert actor == {
+        "name": "Sam Sample",
+        "linkedin_url": "https://uk.linkedin.com/in/sam",
+        "title": "Recruiter",
+    }
+
     assert extract_publisher_contact({"Title": "no poster info"}) == {}
 
 

@@ -15,12 +15,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from harrier.connection import Connection
 from harrier.demo import is_demo_mode, resolve_config_path
 from harrier.filestore import save_json
 from harrier.notify import build_telegram_message, send_telegram_message
+from harrier.outreach.contacts import normalize
+from harrier.outreach.posters import contact_url_keys, profile_url, stage_poster
 from harrier.runoutcome import DISCOVERY_JOB, classify_run, record_success
 from harrier.screening import (
     build_tracker_indexes,
@@ -29,6 +31,7 @@ from harrier.screening import (
 )
 from harrier.screening.config import load_candidate_config
 from harrier.screening.descriptions import cache_job_descriptions
+from harrier.screening.linkedin import extract_publisher_contact
 from harrier.screening.normalized import NormalizedJob
 from harrier.screening.pipeline import FocusedGates
 from harrier.screening.seen import load_seen, save_seen
@@ -170,12 +173,14 @@ def _run_source(
     dry_run: bool,
     extra: dict[str, object],
     focused: SharedRun | None = None,
+    after_add: Callable[[dict[str, str]], None] | None = None,
 ) -> dict[str, object]:
     """The old run_source_import, against the new store: screen, persist,
     save seen state, write the per-source summary. Dry runs mutate nothing.
 
     `focused` makes the run shared (spec 139): each new row goes to the
-    track it was placed in, with the other track's verdict."""
+    track it was placed in, with the other track's verdict. `after_add` sees
+    each row once it is stored, and never on a dry run (spec 150)."""
     candidate_cfg = load_candidate_config(conn)
     hold_companies = load_hold_companies(conn)
     # Dedupe sees every track: url and external_key are unique across the
@@ -209,6 +214,9 @@ def _run_source(
                 # The screen already deduped; a race with a concurrent add is
                 # the only path here. Count it as a tracker duplicate.
                 result.skipped_tracker_duplicate += 1
+                continue
+            if after_add is not None:
+                after_add(row)
         save_seen(source_name, source_seen)
 
     summary: dict[str, object] = {
@@ -233,6 +241,58 @@ def _run_source(
     if not dry_run:
         save_json(f"{INCOMING}/{source_name}_latest.json", summary, atomic=False)
     return summary
+
+
+class PosterStaging:
+    """Stages the poster of each Apify LinkedIn job the run adds (spec 150).
+
+    The actor returns the person who posted a job when LinkedIn shows one.
+    Each becomes a pending candidate on its job, as the guest backfill
+    stages one; nothing here writes a contact. A failure skips that poster
+    and never the run: the job is already stored.
+    """
+
+    def __init__(self, conn: Connection, jobs: list[NormalizedJob]) -> None:
+        self._conn = conn
+        # Read from the jobs screening's own dedupe keeps (by external id,
+        # then URL), so a row's poster is the payload of the job that made
+        # it, never a dropped repeat's (reviews of PR #381).
+        self._items: dict[str, object] = {}
+        for job in dedupe_normalized_jobs(jobs):
+            url = job["url"].strip()
+            if url:
+                self._items.setdefault(url, job["raw_payload"])
+        self._contact_keys: set[str] | None = None
+        self.staged = 0
+
+    def __call__(self, row: dict[str, str]) -> None:
+        item = self._items.get((row.get("url") or "").strip())
+        if not isinstance(item, dict):
+            return
+        poster = extract_publisher_contact(cast("dict[str, Any]", item))
+        name = poster.get("name", "")
+        url = profile_url(poster.get("linkedin_url", ""))
+        if not name and not url:
+            return
+        try:
+            if self._contact_keys is None:
+                self._contact_keys = contact_url_keys(self._conn)
+            if url and normalize(url) in self._contact_keys:
+                return
+            staged = stage_poster(
+                row.get("company", ""),
+                row.get("title", ""),
+                row.get("url", ""),
+                {"name": name, "linkedin_url": url, "title": poster.get("title", "")},
+                source="apify_linkedin",
+                raw_query="apify_discovery",
+            )
+        except Exception as error:
+            # The class only: the message can carry the poster or the job.
+            logger.warning("apify poster not staged: %s", type(error).__name__)
+            return
+        if staged:
+            self.staged += 1
 
 
 @dataclass(frozen=True)
@@ -427,6 +487,7 @@ def run_discovery(
                     cached = cache_job_descriptions(apify_jobs)
                     if cached:
                         logger.info("description cache populated: %d items", cached)
+                posters = PosterStaging(conn, apify_jobs)
                 summaries.append(
                     _run_source(
                         conn,
@@ -437,8 +498,13 @@ def run_discovery(
                         dry_run=options.dry_run,
                         focused=focused,
                         extra={"count": count, "dataset_files": options.dataset_files},
+                        after_add=posters,
                     )
                 )
+                if not options.dry_run:
+                    # A count only: a poster's name, title and link are
+                    # contact identity and stay out of the log (spec 150).
+                    logger.info("apify posters staged: %d", posters.staged)
             report("apify_linkedin", "done")
         else:
             # Recorded, not just logged. A paid source silently not running is

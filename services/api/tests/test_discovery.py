@@ -783,3 +783,253 @@ def test_a_duplicate_board_is_fetched_once(
     outcome = cast("dict[str, Any]", aggregate["outcome"])
     assert outcome["failed"] == []
     assert outcome["attempted"] == ["greenhouse"]
+
+
+# --- the Apify job poster (spec 150) ---
+
+APIFY_POSTER_URL = "https://uk.linkedin.com/in/sam-sample-0a1b2c"
+APIFY_POSTER_CANONICAL = "https://www.linkedin.com/in/sam-sample-0a1b2c"
+
+
+def _apify_item(index: int, **overrides: Any) -> dict[str, Any]:
+    """An item in the shape curious_coder/linkedin-jobs-scraper returns.
+    Synthetic: no real company posting or person."""
+    item: dict[str, Any] = {
+        "id": f"40000000{index}",
+        "title": "Senior Frontend Engineer",
+        "companyName": f"Exampleco{index}",
+        "location": "Remote, Europe",
+        "link": f"https://example.com/apify/{index}",
+        "descriptionText": (
+            "TypeScript React ownership testing ci/cd strong engineering culture remote Europe."
+        ),
+        "jobPosterName": "Sam Sample",
+        "jobPosterTitle": "Senior Technical Recruiter",
+        "jobPosterProfileUrl": APIFY_POSTER_URL,
+        "jobPosterPhoto": "https://example.com/photo.jpg",
+    }
+    item.update(overrides)
+    return item
+
+
+def _run_apify(
+    monkeypatch: pytest.MonkeyPatch, items: list[dict[str, Any]], *, dry_run: bool = False
+) -> dict[str, object]:
+    from harrier.sources.apify_linkedin import normalize_apify_job
+
+    def fake_apify(**kwargs: Any) -> list[NormalizedJob]:
+        return [normalize_apify_job(item) for item in items]
+
+    monkeypatch.setattr(discovery_module, "fetch_apify_linkedin_jobs", fake_apify)
+    conn = connect()
+    return run_discovery(
+        conn,
+        default_scope(conn),
+        DiscoveryOptions(dry_run=dry_run, notify=False, only_sources=frozenset({"apify_linkedin"})),
+    )
+
+
+def _staged(company: str) -> list[dict[str, str]]:
+    from harrier.outreach import load_candidates_artifact
+
+    artifact = load_candidates_artifact(company, "Senior Frontend Engineer")
+    if artifact is None:
+        return []
+    return cast("list[dict[str, str]]", artifact["candidates"])
+
+
+def test_discovery_stages_the_apify_poster(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from harrier.tracker import list_contacts
+
+    _run_apify(monkeypatch, [_apify_item(1)])
+
+    conn = connect()
+    assert len(list_jobs(conn, default_scope(conn))) == 1
+    staged = _staged("Exampleco1")
+    assert len(staged) == 1
+    candidate = staged[0]
+    assert candidate["person_name"] == "Sam Sample"
+    assert candidate["person_title"] == "Senior Technical Recruiter"
+    assert candidate["linkedin_url"] == APIFY_POSTER_CANONICAL
+    assert candidate["review_status"] == "pending"
+    assert candidate["source"] == "apify_linkedin"
+    assert candidate["raw_query"] == "apify_discovery"
+    assert candidate["job_url"] == "https://example.com/apify/1"
+    # Staged, never written: only an approval writes a contact.
+    assert list_contacts(conn) == []
+
+
+def test_a_dry_run_stages_no_poster(discovery_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _run_apify(monkeypatch, [_apify_item(1)], dry_run=True)
+    assert _staged("Exampleco1") == []
+
+
+def test_only_added_rows_stage_a_poster(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from harrier.tracker import add_job
+
+    conn = connect()
+    # Already tracked: a duplicate, so no row is added and no poster staged.
+    add_job(
+        conn,
+        {
+            "company": "Exampleco2",
+            "title": "Senior Frontend Engineer",
+            "url": "https://example.com/apify/2",
+            "source": "manual",
+            "status": "prospect",
+        },
+        scope=default_scope(conn),
+    )
+    # Rejected by the shared location gate.
+    rejected = _apify_item(3, location="On-site, Berlin, Germany")
+
+    _run_apify(monkeypatch, [_apify_item(1), _apify_item(2), rejected])
+
+    assert len(_staged("Exampleco1")) == 1
+    assert _staged("Exampleco2") == []
+    assert _staged("Exampleco3") == []
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "http://uk.linkedin.com/in/sam-sample-0a1b2c",
+        "https://www.linkedin.com/company/exampleco",
+        "https://linkedin.com.example.net/in/sam",
+        "https://user@www.linkedin.com/in/sam",
+        "javascript:alert(1)",
+    ],
+)
+def test_an_unusable_poster_url_is_dropped(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch, bad_url: str
+) -> None:
+    no_poster = _apify_item(2)
+    for key in ("jobPosterName", "jobPosterTitle", "jobPosterProfileUrl", "jobPosterPhoto"):
+        del no_poster[key]
+
+    _run_apify(monkeypatch, [_apify_item(1, jobPosterProfileUrl=bad_url), no_poster])
+
+    staged = _staged("Exampleco1")
+    assert len(staged) == 1
+    assert staged[0]["person_name"] == "Sam Sample"
+    assert staged[0]["linkedin_url"] == ""
+    assert _staged("Exampleco2") == []
+
+
+def test_a_known_poster_is_not_staged_twice(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from harrier.outreach import upsert_contact, write_candidates_artifact
+    from harrier.tracker import list_contacts
+
+    # Item 1's poster is already staged on its job, under another subdomain.
+    write_candidates_artifact(
+        "Exampleco1",
+        "Senior Frontend Engineer",
+        {
+            "company": "Exampleco1",
+            "role": "Senior Frontend Engineer",
+            "job_url": "https://example.com/apify/1",
+            "candidates": [
+                {
+                    "person_name": "Sam Sample",
+                    "linkedin_url": "https://linkedin.com/in/sam-sample-0a1b2c/",
+                    "review_status": "pending",
+                }
+            ],
+        },
+    )
+    # Item 2's poster is already a contact.
+    conn = connect()
+    upsert_contact(
+        conn,
+        default_scope(conn),
+        company="Elsewhere",
+        role="Engineer",
+        job_url="https://example.com/elsewhere",
+        person_name="Riley Example",
+        person_title="Engineering Manager",
+        linkedin_url="https://www.linkedin.com/in/riley-example",
+        source="manual",
+    )
+
+    _run_apify(
+        monkeypatch,
+        [
+            _apify_item(1),
+            _apify_item(
+                2,
+                jobPosterName="Riley Example",
+                jobPosterProfileUrl="https://de.linkedin.com/in/riley-example",
+            ),
+        ],
+    )
+
+    assert len(_staged("Exampleco1")) == 1
+    assert _staged("Exampleco2") == []
+    assert len(list_contacts(connect())) == 1
+
+
+def test_a_staging_failure_does_not_fail_the_run(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken_stage(*args: object, **kwargs: object) -> bool:
+        raise RuntimeError("Sam Sample https://uk.linkedin.com/in/sam-sample-0a1b2c")
+
+    monkeypatch.setattr(discovery_module, "stage_poster", broken_stage)
+    with caplog.at_level("INFO", logger="harrier.discovery"):
+        aggregate = _run_apify(monkeypatch, [_apify_item(1)])
+
+    conn = connect()
+    assert aggregate["new_prospects"] == 1
+    assert len(list_jobs(conn, default_scope(conn))) == 1
+    assert "apify poster not staged: RuntimeError" in caplog.text
+    assert "apify posters staged: 0" in caplog.text
+    # The poster's identity never reaches the log.
+    assert "Sam Sample" not in caplog.text
+    assert "sam-sample" not in caplog.text
+
+
+def test_a_repeated_url_keeps_the_poster_of_the_item_screening_kept(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Screening keeps the first of two items with one URL, so the poster
+    is read from the first too (review of PR #381)."""
+    repeat = _apify_item(1, id="400000009")
+    for key in ("jobPosterName", "jobPosterTitle", "jobPosterProfileUrl", "jobPosterPhoto"):
+        del repeat[key]
+
+    _run_apify(monkeypatch, [_apify_item(1), repeat])
+
+    staged = _staged("Exampleco1")
+    assert [candidate["person_name"] for candidate in staged] == ["Sam Sample"]
+
+
+def test_a_repeated_job_id_keeps_the_poster_of_the_item_screening_kept(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Screening drops a repeat by job id before its URL is seen, so the
+    poster of the next job at that URL is its own (review of PR #381)."""
+    first = _apify_item(1)
+    # The same job id at another URL: dropped by screening.
+    dropped = _apify_item(
+        2,
+        id=first["id"],
+        jobPosterName="Dropped Poster",
+        jobPosterProfileUrl="https://www.linkedin.com/in/dropped-poster",
+    )
+    kept = _apify_item(
+        3,
+        link=dropped["link"],
+        companyName="Exampleco2",
+        jobPosterName="Kept Poster",
+        jobPosterProfileUrl="https://www.linkedin.com/in/kept-poster",
+    )
+
+    _run_apify(monkeypatch, [first, dropped, kept])
+
+    assert [candidate["person_name"] for candidate in _staged("Exampleco2")] == ["Kept Poster"]

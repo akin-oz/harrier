@@ -28,6 +28,7 @@ from harrier.outreach import (
     upsert_contact,
     write_candidates_artifact,
 )
+from harrier.outreach.contacts import normalize
 from harrier.outreach.discovery import DEFAULT_ACTOR
 from harrier.tracker import list_contacts
 from harrier.tracks import default_scope
@@ -505,6 +506,87 @@ def test_backfill_stages_posters_without_writing_contacts(
     )
     assert approved is not None
     assert len(list_contacts(db)) == 1
+
+
+def test_backfill_skips_a_poster_already_a_contact_under_another_subdomain(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A contact stored under www. is the poster the guest page links on a
+    country subdomain (review of PR #381, spec 150)."""
+    import harrier.outreach.backfill as backfill_module
+    from harrier.outreach import backfill_posters
+    from harrier.tracker import add_job
+
+    scope = default_scope(db)
+    job_url = "https://www.linkedin.com/jobs/view/12345"
+    add_job(
+        db,
+        {
+            "company": "Acme",
+            "title": "Senior Frontend Engineer",
+            "url": job_url,
+            "source": "apify_linkedin",
+            "status": "applied",
+        },
+        scope=scope,
+    )
+    upsert_contact(
+        db,
+        scope,
+        company="Acme",
+        role="Senior Frontend Engineer",
+        job_url=job_url,
+        person_name="Poster Person",
+        person_title="Engineering Manager",
+        linkedin_url="https://www.linkedin.com/in/poster-person",
+        source="manual",
+    )
+
+    def fake_details(urls: list[str], **kwargs: object) -> dict[str, dict[str, object]]:
+        return {
+            url: {
+                "poster": {
+                    "name": "Poster Person",
+                    "linkedin_url": "https://uk.linkedin.com/in/poster-person",
+                    "title": "Engineering Manager",
+                }
+            }
+            for url in urls
+        }
+
+    monkeypatch.setattr(backfill_module, "fetch_linkedin_job_details", fake_details)
+    summary = backfill_posters(db, scope)
+    assert summary.staged == 0
+    assert summary.skipped_existing == 1
+    assert load_candidates_artifact("Acme", "Senior Frontend Engineer") is None
+
+
+@pytest.mark.parametrize(
+    "stored",
+    ["http://www.linkedin.com/in/poster-person", "linkedin.com/in/poster-person/"],
+)
+def test_a_contact_typed_without_https_still_matches_its_poster(
+    db: Connection, stored: str
+) -> None:
+    """A hand-typed contact link without https names the same person
+    (review of PR #381, spec 150)."""
+    from harrier.outreach.posters import contact_url_keys, profile_url
+
+    upsert_contact(
+        db,
+        default_scope(db),
+        company="Acme",
+        role="Senior Frontend Engineer",
+        job_url="https://www.linkedin.com/jobs/view/12345",
+        person_name="Poster Person",
+        person_title="Engineering Manager",
+        linkedin_url=stored,
+        source="manual",
+    )
+    poster = profile_url("https://uk.linkedin.com/in/poster-person")
+    assert normalize(poster) in contact_url_keys(db)
+    # Read leniently for comparison only: it is still not a link to stage.
+    assert profile_url(stored) == ""
 
 
 def test_hunter_functions_require_api_key(monkeypatch: pytest.MonkeyPatch) -> None:

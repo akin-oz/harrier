@@ -69,6 +69,7 @@ PUBLISHER_URL_KEYS = (
     "recruiterProfileUrl",
     "hiringManagerUrl",
     "posterLinkedinUrl",
+    "jobPosterProfileUrl",
 )
 PUBLISHER_TITLE_KEYS = (
     "posterTitle",
