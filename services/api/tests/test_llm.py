@@ -33,6 +33,7 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "CODEX_CLI_PATH",
         "CLAUDE_CLI_PATH",
         "ANTHROPIC_MAX_TOKENS",
+        "ANTHROPIC_EFFORT",
         "AI_DEBUG",
         "OPENAI_DEBUG",
         "ANTHROPIC_DEBUG",
@@ -356,3 +357,119 @@ def test_empty_response_twice_raises_the_same_error_as_before(
     with pytest.raises(LLMClientError, match="claude-cli returned an empty response"):
         generate_text("system", "user", provider="claude-cli")
     assert len(attempts) == 2
+
+
+# --- spec 148: the Anthropic provider's effort and stop reason ---
+
+
+class FakeAnthropic:
+    """Stands in for the Messages API: records each request body and
+    answers with `response`."""
+
+    def __init__(self, response: dict[str, object]) -> None:
+        self.response = response
+        self.bodies: list[dict[str, object]] = []
+
+    def __call__(
+        self, url: str, headers: dict[str, str], body: dict[str, object], timeout: int
+    ) -> object:
+        self.bodies.append(body)
+        return self.response
+
+
+def answered(text: str, stop_reason: str = "end_turn") -> dict[str, object]:
+    return {"content": [{"type": "text", "text": text}], "stop_reason": stop_reason}
+
+
+def anthropic_request(monkeypatch: pytest.MonkeyPatch, model: str) -> dict[str, object]:
+    fake = FakeAnthropic(answered("ok"))
+    monkeypatch.setattr(llm_providers, "_post_json", fake)
+    config = LLMConfig(provider="anthropic-api", model=model, api_key="key")
+    assert llm_providers.generate_with_config("system", "user", config, 30) == "ok"
+    (body,) = fake.bodies
+    return body
+
+
+def test_the_anthropic_request_carries_effort_only_for_models_that_take_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = anthropic_request(monkeypatch, "claude-sonnet-5-5")
+    assert body["output_config"] == {"effort": "medium"}
+    monkeypatch.setenv("ANTHROPIC_EFFORT", " HIGH ")
+    body = anthropic_request(monkeypatch, "claude-sonnet-5-5")
+    assert body["output_config"] == {"effort": "high"}
+    monkeypatch.setenv("ANTHROPIC_EFFORT", "low")
+    assert anthropic_request(monkeypatch, "claude-opus-5-5")["output_config"] == {"effort": "low"}
+    # Models that reject the field, and ids the table does not name, get
+    # today's request.
+    for model in ("claude-sonnet-4-5", "claude-haiku-4-5", "some-future-model"):
+        assert "output_config" not in anthropic_request(monkeypatch, model)
+
+
+def test_an_invalid_anthropic_effort_raises_before_any_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeAnthropic(answered("ok"))
+    monkeypatch.setattr(llm_providers, "_post_json", fake)
+    for model in ("claude-sonnet-5-5", "claude-sonnet-4-5"):
+        config = LLMConfig(provider="anthropic-api", model=model, api_key="key")
+        for value in ("extreme", "xhigh", "max"):
+            monkeypatch.setenv("ANTHROPIC_EFFORT", value)
+            with pytest.raises(
+                LLMClientError, match="ANTHROPIC_EFFORT must be one of low, medium, high"
+            ):
+                llm_providers.generate_with_config("system", "user", config, 30)
+    assert fake.bodies == []
+
+
+def test_the_default_anthropic_output_cap_is_16000(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert anthropic_request(monkeypatch, "claude-sonnet-4-5")["max_tokens"] == 16000
+    monkeypatch.setenv("ANTHROPIC_MAX_TOKENS", "2048")
+    assert anthropic_request(monkeypatch, "claude-sonnet-5-5")["max_tokens"] == 2048
+
+
+def test_a_cut_off_or_refused_anthropic_answer_raises_and_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AI_PROVIDER", "anthropic-api")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+    partial = "A partial resume that stops mid"
+    cases: list[tuple[dict[str, object], str]] = [
+        (
+            answered(partial, "max_tokens"),
+            r"cut off at max_tokens \(16000\); "
+            "raise ANTHROPIC_MAX_TOKENS or lower ANTHROPIC_EFFORT",
+        ),
+        (
+            {**answered(""), "stop_reason": "refusal", "stop_details": {"category": "cyber"}},
+            r"model declined the request \(cyber\)",
+        ),
+        (answered("", "refusal"), r"model declined the request \(unspecified\)"),
+        (answered(partial, "pause_turn"), "ended with stop_reason 'pause_turn'"),
+    ]
+    for response, message in cases:
+        fake = FakeAnthropic(response)
+        monkeypatch.setattr(llm_providers, "_post_json", fake)
+        with pytest.raises(LLMClientError, match=message) as raised:
+            generate_text("system", "user")
+        assert not isinstance(raised.value, LLMTransientError)
+        assert partial not in str(raised.value)
+        assert len(fake.bodies) == 1
+
+
+def test_a_thinking_block_is_ignored_and_the_text_returned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeAnthropic(
+        {
+            "content": [
+                {"type": "thinking", "thinking": "Weighing the posting.", "signature": "sig"},
+                {"type": "text", "text": "The answer."},
+            ],
+            "stop_reason": "end_turn",
+        }
+    )
+    monkeypatch.setattr(llm_providers, "_post_json", fake)
+    config = LLMConfig(provider="anthropic-api", model="claude-sonnet-5-5", api_key="key")
+    assert llm_providers.generate_with_config("system", "user", config, 30) == "The answer."

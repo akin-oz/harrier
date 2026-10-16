@@ -54,6 +54,7 @@ from harrier_api.runenv import (
     ExtraVariableRefused,
     RunCredentialMissing,
     bind_run,
+    build_run_env,
 )
 from harrier_api.runs import (
     HOSTED_RUN_KINDS,
@@ -478,11 +479,21 @@ SPEC_COPIED = (
     "APIFY_ACADEMIC_ACTOR",
     "APIFY_ACADEMIC_PORTALS",
     "ANTHROPIC_MAX_TOKENS",
+    # Spec 148: the Anthropic effort, one value for every owner.
+    "ANTHROPIC_EFFORT",
     # Spec 106's Note (2026-10-16, spec 107's third pull request): where a
     # run's Storage requests go, and the key they carry.
     "HARRIER_SUPABASE_URL",
     "HARRIER_SUPABASE_PUBLISHABLE_KEY",
 )
+
+
+def test_the_run_environment_carries_the_anthropic_effort(tmp_path: Path) -> None:
+    server = {"HARRIER_RUN_DATABASE_URL": RUN_DATABASE_URL}
+    owner = str(uuid.uuid4())
+    env = build_run_env({**server, "ANTHROPIC_EFFORT": "high"}, owner, tmp_path, {})
+    assert env["ANTHROPIC_EFFORT"] == "high"
+    assert "ANTHROPIC_EFFORT" not in build_run_env(server, owner, tmp_path, {})
 
 
 def test_the_child_environment_holds_only_the_allowlist_and_its_owners_values(

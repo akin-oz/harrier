@@ -38,6 +38,25 @@ logger = logging.getLogger(__name__)
 ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 
+ANTHROPIC_EFFORTS = ("low", "medium", "high")
+DEFAULT_ANTHROPIC_EFFORT = "medium"
+DEFAULT_ANTHROPIC_MAX_TOKENS = 16000
+# Model id prefixes whose Messages API takes `output_config.effort`
+# (spec 148). Hand-kept: an id not named here gets no effort and today's
+# request, rather than a 400 for a field the model refuses.
+EFFORT_MODEL_PREFIXES = (
+    "claude-fable-",
+    "claude-mythos-",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-opus-4-5",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+    "claude-haiku-5",
+)
+
 
 def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
@@ -311,7 +330,7 @@ def _generate_openai_api(
 def _anthropic_max_tokens() -> int:
     """Validated so a bad value raises LLMClientError, which the auto chain
     catches and aggregates instead of dying on ValueError."""
-    raw = os.getenv("ANTHROPIC_MAX_TOKENS", "4096").strip()
+    raw = os.getenv("ANTHROPIC_MAX_TOKENS", str(DEFAULT_ANTHROPIC_MAX_TOKENS)).strip()
     try:
         value = int(raw)
     except ValueError as exc:
@@ -321,23 +340,70 @@ def _anthropic_max_tokens() -> int:
     return value
 
 
+def _anthropic_effort() -> str:
+    """Validated for every model, before any request, as the cap is: a bad
+    value is a configuration error whichever model it would reach."""
+    raw = os.getenv("ANTHROPIC_EFFORT", "").strip()
+    if not raw:
+        return DEFAULT_ANTHROPIC_EFFORT
+    value = raw.lower()
+    if value not in ANTHROPIC_EFFORTS:
+        raise LLMClientError(
+            f"ANTHROPIC_EFFORT must be one of {', '.join(ANTHROPIC_EFFORTS)}, got {raw!r}"
+        )
+    return value
+
+
+def _takes_effort(model: str) -> bool:
+    return model.startswith(EFFORT_MODEL_PREFIXES)
+
+
+def _anthropic_stop_problem(data: dict[str, object], max_tokens: int) -> str | None:
+    """Why an answer that ended this way is not the whole answer, or None.
+
+    None of these is transient: the same request ends the same way, so the
+    one retry (spec 058) would only spend it twice. The message carries
+    neither the prompt nor the answer."""
+    stop_reason = data.get("stop_reason")
+    if stop_reason in (None, "end_turn", "stop_sequence"):
+        return None
+    if stop_reason == "max_tokens":
+        return (
+            f"the anthropic-api answer was cut off at max_tokens ({max_tokens}); "
+            "raise ANTHROPIC_MAX_TOKENS or lower ANTHROPIC_EFFORT"
+        )
+    if stop_reason == "refusal":
+        category: object = None
+        details = data.get("stop_details")
+        if isinstance(details, dict):
+            category = cast("dict[str, object]", details).get("category")
+        if not isinstance(category, str) or not category:
+            category = "unspecified"
+        return f"the anthropic-api model declined the request ({category[:100]})"
+    return f"the anthropic-api answer ended with stop_reason {str(stop_reason)[:100]!r}"
+
+
 def _generate_anthropic_api(
     system_prompt: str, user_input: str, config: LLMConfig, timeout: int
 ) -> str:
     if not config.api_key:
         raise LLMClientError("ANTHROPIC_API_KEY is required when AI_PROVIDER=anthropic-api")
     max_tokens = _anthropic_max_tokens()
+    effort = _anthropic_effort()
+    body: dict[str, object] = {
+        "model": config.model,
+        "max_tokens": max_tokens,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_input}],
+    }
+    if _takes_effort(config.model):
+        body["output_config"] = {"effort": effort}
     started = _now_iso()
     try:
         data = _post_json(
             ANTHROPIC_MESSAGES_URL,
             {"x-api-key": config.api_key, "anthropic-version": "2023-06-01"},
-            {
-                "model": config.model,
-                "max_tokens": max_tokens,
-                "system": system_prompt,
-                "messages": [{"role": "user", "content": user_input}],
-            },
+            body,
             timeout,
         )
     except LLMClientError as exc:
@@ -347,7 +413,16 @@ def _generate_anthropic_api(
         raise
     chunks: list[str] = []
     if isinstance(data, dict):
-        content = cast("dict[str, object]", data).get("content")
+        payload = cast("dict[str, object]", data)
+        problem = _anthropic_stop_problem(payload, max_tokens)
+        if problem:
+            _api_debug_log(
+                config, started, ANTHROPIC_MESSAGES_URL, system_prompt, user_input, error=problem
+            )
+            raise LLMClientError(problem)
+        # Text blocks only: a thinking block is the model's working, not
+        # its answer (spec 148).
+        content = payload.get("content")
         if isinstance(content, list):
             for item in cast("list[object]", content):
                 if isinstance(item, dict):

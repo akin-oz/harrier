@@ -68,6 +68,7 @@ COPIED_VARIABLES: tuple[str, ...] = (
     "APIFY_ACADEMIC_ACTOR",
     "APIFY_ACADEMIC_PORTALS",
     "ANTHROPIC_MAX_TOKENS",
+    "ANTHROPIC_EFFORT",
     # Where the run's Storage requests go, and the key they carry in
     # `apikey`: the project's origin and its publishable key, both public
     # (spec 107, Amendment (2026-10-16): PR 3's build).

@@ -121,30 +121,26 @@ owner. The model stays the owner's choice, through the AI credential.
 
 ## Acceptance criteria
 
-- [ ] With `ANTHROPIC_EFFORT` unset and the model `claude-sonnet-5-5`, the
+- [x] With `ANTHROPIC_EFFORT` unset and the model `claude-sonnet-5-5`, the
       request body carries `"output_config": {"effort": "medium"}`; with
       `high` it carries `high`; with the model `claude-sonnet-4-5` it
-      carries no `output_config` (planned
-      test_the_anthropic_request_carries_effort_only_for_models_that_take_it).
-- [ ] An `ANTHROPIC_EFFORT` outside `low`, `medium`, `high` raises
-      `LLMClientError` naming the variable, before any request (planned
-      test_an_invalid_anthropic_effort_raises_before_any_request).
-- [ ] With `ANTHROPIC_MAX_TOKENS` unset the request's `max_tokens` is
-      16,000 (planned test_the_default_anthropic_output_cap_is_16000).
-- [ ] A response with `stop_reason: "max_tokens"` raises `LLMClientError`
+      carries no `output_config` (`services/api/tests/test_llm.py::test_the_anthropic_request_carries_effort_only_for_models_that_take_it`).
+- [x] An `ANTHROPIC_EFFORT` outside `low`, `medium`, `high` raises
+      `LLMClientError` naming the variable, before any request (`services/api/tests/test_llm.py::test_an_invalid_anthropic_effort_raises_before_any_request`).
+- [x] With `ANTHROPIC_MAX_TOKENS` unset the request's `max_tokens` is
+      16,000 (`services/api/tests/test_llm.py::test_the_default_anthropic_output_cap_is_16000`).
+- [x] A response with `stop_reason: "max_tokens"` raises `LLMClientError`
       naming the cap, returns no text and is not retried; one with
-      `"refusal"` raises naming the category (planned
-      test_a_cut_off_or_refused_anthropic_answer_raises_and_is_not_retried).
-- [ ] A response with `stop_reason: "end_turn"` and a `thinking` block
-      before its text returns the text alone, as today (planned
-      test_a_thinking_block_is_ignored_and_the_text_returned).
-- [ ] A hosted run's environment carries `ANTHROPIC_EFFORT` when the API's
+      `"refusal"` raises naming the category (`services/api/tests/test_llm.py::test_a_cut_off_or_refused_anthropic_answer_raises_and_is_not_retried`).
+- [x] A response with `stop_reason: "end_turn"` and a `thinking` block
+      before its text returns the text alone, as today (`services/api/tests/test_llm.py::test_a_thinking_block_is_ignored_and_the_text_returned`).
+- [x] A hosted run's environment carries `ANTHROPIC_EFFORT` when the API's
       environment does, and the copied-variables list test names it
-      (planned test_the_run_environment_carries_the_anthropic_effort).
-- [ ] Spec 012's line for `anthropic-api` names the effort and the new
+      (`services/api/tests/test_hosted_runs.py::test_the_run_environment_carries_the_anthropic_effort`).
+- [x] Spec 012's line for `anthropic-api` names the effort and the new
       default cap, and `.env.example` documents `ANTHROPIC_EFFORT`,
       commented, with its default.
-- [ ] `just check` passes.
+- [x] `just check` passes.
 
 Tests stub the HTTP call; no test reaches the Anthropic API.
 
