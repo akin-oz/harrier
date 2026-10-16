@@ -945,3 +945,83 @@ def test_a_hosted_store_writes_nothing_under_the_data_directory(
     assert all(
         name.startswith(f"{OWNER_A}/") for operation, name in sent if operation != "remove" and name
     )
+
+
+def test_a_hosted_render_tool_inherits_no_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    """In a hosted run, Chromium and `pdfinfo` start with only the names a
+    render needs: not the run login's URL, not the owner's AI key. Locally
+    both still inherit the process's environment (security review of
+    PR #368)."""
+    import subprocess
+    import sys
+    import types
+    from contextlib import contextmanager
+
+    from harrier.resume import pdf as pdf_module
+
+    seen: dict[str, dict[str, str] | None] = {}
+
+    @contextmanager
+    def fake_playwright() -> Any:
+        seen["chromium"] = dict(os.environ)
+
+        class Page:
+            def set_content(self, *_args: object, **_kwargs: object) -> None: ...
+            def emulate_media(self, *_args: object, **_kwargs: object) -> None: ...
+            def pdf(self, *, path: str, **_kwargs: object) -> None:
+                Path(path).write_bytes(b"%PDF-1.4")
+
+        class Browser:
+            def new_page(self) -> Page:
+                return Page()
+
+            def close(self) -> None: ...
+
+        class Chromium:
+            def launch(self) -> Browser:
+                return Browser()
+
+        yield types.SimpleNamespace(chromium=Chromium())
+
+    module = types.ModuleType("playwright.sync_api")
+    module.sync_playwright = fake_playwright  # type: ignore[attr-defined]
+    module.Error = RuntimeError  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "playwright", types.ModuleType("playwright"))
+    monkeypatch.setitem(sys.modules, "playwright.sync_api", module)
+
+    def fake_run(*_args: object, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        seen["pdfinfo"] = kwargs.get("env")
+        return subprocess.CompletedProcess([], 0, stdout="Pages: 1\n", stderr="")
+
+    monkeypatch.setattr(pdf_module.subprocess, "run", fake_run)
+    secret_url = "postgresql://harrier_run.example:synthetic-password@db.example.test:5432/x"
+    monkeypatch.setenv("HARRIER_DATABASE_URL", secret_url)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-ai-key")
+    monkeypatch.setenv("PATH", os.environ.get("PATH", "/usr/bin"))
+
+    for hosted in (True, False):
+        if hosted:
+            monkeypatch.setenv("HARRIER_RUN_OWNER", str(uuid.uuid4()))
+        else:
+            monkeypatch.delenv("HARRIER_RUN_OWNER", raising=False)
+            monkeypatch.delenv("HARRIER_AUTH", raising=False)
+        target = data_dir() / f"render-{hosted}.pdf"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        pdf_module.render_pdf("<p>x</p>", target)
+        pdf_module.validate_rendered_pdf(target, "<p>x</p>", allowed_pages=(1,))
+        chromium = seen["chromium"]
+        assert chromium is not None
+        if hosted:
+            assert chromium["HARRIER_DATABASE_URL"] == ""
+            assert "ANTHROPIC_API_KEY" not in chromium
+            assert "PATH" in chromium
+            pdfinfo = seen["pdfinfo"]
+            assert pdfinfo is not None
+            assert pdfinfo["HARRIER_DATABASE_URL"] == ""
+            assert "ANTHROPIC_API_KEY" not in pdfinfo
+            assert set(pdfinfo) <= {*pdf_module.RENDER_ENVIRONMENT, "HARRIER_DATABASE_URL"}
+            # The run's own environment is back after the render.
+            assert os.environ["HARRIER_DATABASE_URL"] == secret_url
+        else:
+            assert chromium["HARRIER_DATABASE_URL"] == secret_url
+            assert seen["pdfinfo"] is None

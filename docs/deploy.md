@@ -291,12 +291,14 @@ in makes Storage accept the scheduler's tokens. The steps:
    `kid` Supabase shows equal to the file's: the scheduler's tokens name it.
    Then click Rotate key to make it the current key. The earlier key becomes
    previously used, and every session it signed stays valid.
-3. Set it on the scheduler app only, from the file, never typed into a
-   command line:
+3. Set it on the scheduler app only, from the file, through standard input,
+   so the key is in no process's arguments (`ps` would show
+   `fly secrets set "NAME=$(cat ...)"` whole). `printf` is a shell builtin,
+   so it starts no process either:
 
    ```
-   fly secrets set --stage --app harrier-scheduler-staging \
-     "HARRIER_STORAGE_SIGNING_KEY=$(cat "$HOME/scheduler-signing-key.jwk")"
+   printf 'HARRIER_STORAGE_SIGNING_KEY=%s\n' "$(cat "$HOME/scheduler-signing-key.jwk")" \
+     | fly secrets import --stage --app harrier-scheduler-staging
    ```
 
 4. Delete the file: `rm "$HOME/scheduler-signing-key.jwk"`. Supabase and the
@@ -620,7 +622,7 @@ it; deploy forward again.
 | The migrator's URL | Reset the `postgres` role's password in the Supabase dashboard (database settings); update `HARRIER_MIGRATE_DATABASE_URL`. |
 | A login role's password | As the migrator, set a new one from a shell variable as in step 2 (`ALTER ROLE ... PASSWORD` with the verifier); end its pooled sessions first (`pg_terminate_backend`); `fly secrets set` the new URL; the machines restart. |
 | `HARRIER_CREDENTIALS_KEY` | Rotation is spec 116's, not this pipeline's; setting a new one makes stored credentials unreadable until they are re-entered. |
-| `HARRIER_STORAGE_SIGNING_KEY` | Make a new key and import it as above; set it on the scheduler app (`fly secrets set`); after the next tick, move the old key to revoked in the dashboard's JWT Keys, which ends every token it signed. A leaked key is revoked first: scheduled runs then fail at their first file until the new key is set. |
+| `HARRIER_STORAGE_SIGNING_KEY` | Make a new key, import it and rotate it in as above; set it on the scheduler app through standard input (`fly secrets import`, step 3 above). The old key also signed every session while it was current, so revoke it no sooner than one hour and fifteen minutes after the rotation, or every user signs in again. A leaked key is revoked at once: every session it signed ends, and scheduled runs fail at their first file until the new key is set. |
 | A Vercel token | Delete it in the account's tokens; make a new one; update `VERCEL_TOKEN`. |
 | The publishable key | It is public by design; rotate it in the project's API keys, then update the GitHub variable and the Vercel variable. |
 

@@ -1438,6 +1438,22 @@ JWK: import, rotate in, set the new Fly secret, revoke the old key after the
 margin. Spec 110's staging check confirms that Storage accepts a scheduled
 run's token after the rotation.
 
+### The render tools inherit no secret
+
+`tailor` and `cover-letter` are the first hosted kinds that render a PDF, so
+Chromium and `pdfinfo` now start inside a hosted run, whose environment holds
+the run login's URL and the owner's credentials. The run's Storage token is
+taken out before any tool starts (`run_store` in
+`services/api/src/harrier/filestore.py`); the rest was not, and Chromium runs
+without its sandbox by default. In a hosted process both tools now start with
+only the names a render needs (`RENDER_ENVIRONMENT` in
+`services/api/src/harrier/resume/pdf.py`) and the store's URL variable empty.
+Playwright's driver copies the process environment and ignores
+`launch(env=...)` for itself, so the render narrows the process's environment
+for its block and restores it after; a run is one thread. Locally both tools
+inherit the process's environment, as before. Found by the security review of
+PR #368.
+
 ### Acceptance criteria (amendment of 2026-10-16, PR 3)
 
 - [ ] A hosted run binds its owner's store from its environment before any
@@ -1462,6 +1478,10 @@ run's token after the rotation.
       (`services/api/tests/test_hosted_scheduler.py::test_a_scheduler_without_a_signing_key_starts_no_file_writing_run`);
       a key it cannot use refuses the start
       (`services/api/tests/test_hosted_scheduler.py::test_a_signing_key_the_scheduler_cannot_use_refuses_the_start`).
+- [ ] In a hosted run, Chromium and `pdfinfo` start with no secret of the
+      run's: not the run login's URL, not the owner's credentials; locally
+      both inherit as before
+      (`services/api/tests/test_hosted_files.py::test_a_hosted_render_tool_inherits_no_secret`).
 - [ ] The hosted API refuses to start with the key in its environment
       (`services/api/tests/test_hosted_auth.py::test_the_api_refuses_the_storage_signing_key`).
 - [ ] The kinds table above, with each lifted kind's needs, and the CLI's
