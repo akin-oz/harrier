@@ -12,12 +12,15 @@ import re
 from pathlib import Path
 from typing import cast
 
+from harrier.paths import repo_root
 from harrier.resume.content import ResumeBundle
 from harrier.resume.heading import RoleHeadingError, split_role_heading
 from harrier.resume.markdown import normalize_visible_url_text
 from harrier.tracks import AI_CV_SECTION, rules_for
 
-TEMPLATE_DIR = Path("templates")
+# Anchored to the repository, not the working directory: a hosted run starts
+# in its owner's run directory (spec 106), where `templates/` does not exist.
+TEMPLATE_DIR = repo_root() / "templates"
 CSS_TEMPLATE = "resume-template.css"
 
 
