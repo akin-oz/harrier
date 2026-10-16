@@ -265,7 +265,7 @@ def _supabase_url(raw: str) -> str:
     # The issuer is this URL plus /auth/v1, compared exactly, so anything
     # but a host (credentials, a path, a query) would make an issuer no
     # token carries.
-    origin = _https_origin(raw.removesuffix("/"))
+    origin = https_origin(raw.removesuffix("/"))
     if origin is None:
         raise HostedConfigError(SUPABASE_URL_REFUSAL)
     return origin
@@ -294,10 +294,10 @@ def _is_exact_origin(origin: str) -> bool:
     The comparison is exact, so a path or a pattern could never match, and
     a wildcard is refused rather than read as a host (spec 104, Open
     decision 7)."""
-    return "*" not in origin and _https_origin(origin) == origin
+    return "*" not in origin and https_origin(origin) == origin
 
 
-def _https_origin(text: str) -> str | None:
+def https_origin(text: str) -> str | None:
     """The text as `https://host[:port]`, or None when it is anything else."""
     try:
         parts = urlsplit(text)

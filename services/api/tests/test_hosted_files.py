@@ -1025,3 +1025,84 @@ def test_a_hosted_render_tool_inherits_no_secret(monkeypatch: pytest.MonkeyPatch
         else:
             assert chromium["HARRIER_DATABASE_URL"] == secret_url
             assert seen["pdfinfo"] is None
+
+
+# --- the data-integrity review of PR #368 --------------------------------------
+
+
+def test_backfill_never_rewrites_the_candidates_on_a_read_error(storage: FakeStorage) -> None:
+    """A Storage error while `backfill-posters` reads the staged candidates
+    ends that poster: it never reads as "nothing staged" and uploads a fresh
+    list over the candidates and their reviews."""
+    from harrier.outreach.backfill import _stage_poster  # pyright: ignore[reportPrivateUsage]
+    from harrier.outreach.discovery import candidates_key
+
+    store = store_for()
+    key = candidates_key("Example Co", "Senior Frontend Engineer")
+    staged = {
+        "candidates": [
+            {"person_name": "Example Approved", "review_status": "approved"},
+            {"person_name": "Example Pending", "review_status": "pending"},
+        ]
+    }
+    store.put(key, json.dumps(staged).encode("utf-8"), atomic=False)
+    row = {"company": "Example Co", "title": "Senior Frontend Engineer"}
+    poster = {
+        "name": "Example Poster",
+        "linkedin_url": "https://www.linkedin.com/in/example-poster",
+    }
+
+    with bind_files(store):
+        storage.failures["download"] = [503]
+        with pytest.raises(FileStoreError):
+            _stage_poster(row, "https://jobs.example.com/example-co", poster)
+
+    stored = store.read(key)
+    assert stored is not None
+    assert json.loads(stored) == staged
+
+
+def test_an_unreadable_description_is_logged_and_reads_as_empty(
+    storage: FakeStorage, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The description cache reads an unavailable Storage as no description,
+    as spec 079 requires, and logs it by class and family only: never the
+    posting's URL or the key."""
+    from harrier.screening.descriptions import load_cached_description
+
+    url = "https://jobs.example.com/example-co/senior-frontend-engineer"
+    caplog.set_level(logging.WARNING)
+    with bind_files(store_for()):
+        storage.failures["download"] = [503]
+        assert load_cached_description(url) == ""
+    assert "description cache read as empty: FileStoreUnavailable on descriptions" in caplog.text
+    assert url not in caplog.text
+    assert OWNER_A not in caplog.text
+
+
+def test_a_real_command_without_a_store_refuses_in_one_line(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A real verb, not a stub: `tailor` in a hosted run with no token stops
+    at its first file with exit 1, one line naming the refusal, and nothing
+    on the machine's disk. The command words the line itself
+    (`tailor failed: ...`), as spec 107's PR 3 amendment allows."""
+    from resume_support import example_documents, store_documents
+
+    from harrier_cli import main as cli
+
+    with closing(connect()) as conn:
+        store_documents(conn, *example_documents())
+    job_id = _job()
+    before = sorted(str(path) for path in data_dir().rglob("*") if path.is_file())
+    monkeypatch.setenv("HARRIER_RUN_OWNER", OWNER_A)
+    monkeypatch.delenv(STORAGE_TOKEN_VARIABLE, raising=False)
+    monkeypatch.setattr(cli, "_open_store", connect)
+    args = cli.build_parser().parse_args(["tailor", "--job-id", str(job_id), "--no-ai"])
+
+    assert cli._cmd_tailor(args) == 1  # pyright: ignore[reportPrivateUsage]
+
+    last = capsys.readouterr().err.strip().splitlines()[-1]
+    assert last == f"tailor failed: {UNBOUND_TEXT}"
+    after = sorted(str(path) for path in data_dir().rglob("*") if path.is_file())
+    assert after == before

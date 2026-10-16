@@ -1454,6 +1454,34 @@ for its block and restores it after; a run is one thread. Locally both tools
 inherit the process's environment, as before. Found by the security review of
 PR #368.
 
+### Found by the data-integrity review of PR #368
+
+- **`backfill-posters` reads the staged candidates strictly.** It read
+  them leniently, so a Storage error read as nothing staged and the run
+  uploaded a fresh list over the candidates and their reviews. It now reads
+  as approve and reject do (`load_candidates_artifact(..., strict=True)` in
+  `services/api/src/harrier/outreach/backfill.py`): the error ends that
+  poster and is counted among the run's errors, and nothing is written.
+- **The description cache logs what it reads as empty.** The table under
+  "Callers keep their rules on read failure" says "empty, logged"; it was
+  empty and silent. `load_cached_description`
+  (`services/api/src/harrier/screening/descriptions.py`) logs one warning
+  naming the error's class and the family, never the posting's URL or the
+  key. It still never refuses a decision (spec 079).
+- **The scheduler reads the project URL as the API does.** It accepted any
+  text beginning `https://`, so a path, credentials or a query became the
+  minted token's issuer and the Storage base. It now uses the API's own
+  check, `https_origin` in `services/api/src/harrier_api/hostedauth.py`.
+- **A command words the unbound refusal itself.** "Without a token refuses
+  its first file in one line" holds, but a command that catches
+  `RuntimeError` (`tailor`, `cover-letter`, `answers` and others) prints its
+  own prefix, `tailor failed: <the refusal>`, where the hosted entry prints
+  `error: <the refusal>`. Either is one line on stderr, exit 1, with nothing
+  on the machine's disk.
+- **Every hosted job is a file-writing job.** `FILE_WRITING_JOBS` and
+  `HOSTED_JOBS` (`services/api/src/harrier/hostedschedule.py`) are tied by a
+  test, so a new hosted job cannot start without a minted token.
+
 ### Acceptance criteria (amendment of 2026-10-16, PR 3)
 
 - [ ] A hosted run binds its owner's store from its environment before any
@@ -1482,6 +1510,16 @@ PR #368.
       run's: not the run login's URL, not the owner's credentials; locally
       both inherit as before
       (`services/api/tests/test_hosted_files.py::test_a_hosted_render_tool_inherits_no_secret`).
+- [ ] A Storage error while `backfill-posters` reads the staged
+      candidates leaves them unchanged
+      (`services/api/tests/test_hosted_files.py::test_backfill_never_rewrites_the_candidates_on_a_read_error`);
+      an unreadable description reads as empty and is logged by class and
+      family only
+      (`services/api/tests/test_hosted_files.py::test_an_unreadable_description_is_logged_and_reads_as_empty`);
+      a real `tailor` with no token refuses in one line with nothing on disk
+      (`services/api/tests/test_hosted_files.py::test_a_real_command_without_a_store_refuses_in_one_line`);
+      every hosted job is a file-writing job
+      (`services/api/tests/test_hosted_scheduler.py::test_every_hosted_job_is_known_to_write_files`).
 - [ ] The hosted API refuses to start with the key in its environment
       (`services/api/tests/test_hosted_auth.py::test_the_api_refuses_the_storage_signing_key`).
 - [ ] The kinds table above, with each lifted kind's needs, and the CLI's

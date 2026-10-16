@@ -88,6 +88,7 @@ from harrier_api.hostedauth import (
     SERVICE_ROLE_KEY_VARIABLE,
     STORAGE_SIGNING_KEY_VARIABLE,
     SUPABASE_URL_VARIABLE,
+    https_origin,
 )
 from harrier_api.hostedstore import HostedStartRefused, check_run_login_role
 from harrier_api.runenv import BoundRun, ExtraVariableRefused, RunCredentialMissing, bind_run
@@ -269,11 +270,14 @@ def read_signer(environ: Mapping[str, str]) -> StorageSigner | None:
     text = environ.get(STORAGE_SIGNING_KEY_VARIABLE)
     if text is None:
         return None
-    origin = environ.get(SUPABASE_URL_VARIABLE, "").strip().removesuffix("/")
-    if not origin.startswith("https://") or origin == "https://":
+    # The API's own reading of the project URL: an https origin and nothing
+    # else, so a path, credentials or a query can never become the minted
+    # token's issuer or the Storage base (data-integrity review of PR #368).
+    origin = https_origin(environ.get(SUPABASE_URL_VARIABLE, "").strip().removesuffix("/"))
+    if origin is None:
         raise StartRefused(
             f"{STORAGE_SIGNING_KEY_VARIABLE} is set but {SUPABASE_URL_VARIABLE} is missing "
-            "or not an https:// URL; a scheduled run reaches Storage there"
+            "or not an https:// origin; a scheduled run reaches Storage there"
         )
     publishable = environ.get(PUBLISHABLE_KEY_VARIABLE, "").strip()
     if not publishable.startswith(PUBLISHABLE_KEY_PREFIX) or publishable == PUBLISHABLE_KEY_PREFIX:

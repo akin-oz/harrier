@@ -2119,6 +2119,11 @@ def test_a_signing_key_the_scheduler_cannot_use_refuses_the_start(rig: Rig) -> N
         {STORAGE_SIGNING_KEY_VARIABLE: json.dumps({**jwk, "crv": "P-384"})},
         {SUPABASE_URL_VARIABLE: None},
         {SUPABASE_URL_VARIABLE: "http://project-ref.supabase.co"},
+        # An https URL that is not an origin (data-integrity review of
+        # PR #368): a path, credentials, a query.
+        {SUPABASE_URL_VARIABLE: "https://project-ref.supabase.co/rest/v1"},
+        {SUPABASE_URL_VARIABLE: "https://user:pw@project-ref.supabase.co"},
+        {SUPABASE_URL_VARIABLE: "https://project-ref.supabase.co?x=1"},
         {PUBLISHABLE_KEY_VARIABLE: None},
     ):
         with pytest.raises(hostedscheduler.StartRefused) as refused:
@@ -2128,3 +2133,13 @@ def test_a_signing_key_the_scheduler_cannot_use_refuses_the_start(rig: Rig) -> N
     assert read_settings(rig.environ()).signer is not None
     assert read_settings(rig.environ(**{STORAGE_SIGNING_KEY_VARIABLE: None})).signer is None
     assert jwk["d"] not in repr(read_settings(rig.environ()))
+
+
+def test_every_hosted_job_is_known_to_write_files() -> None:
+    """Every job the hosted schedule offers is in `FILE_WRITING_JOBS`, so a
+    new hosted job cannot start without a minted token and fail at its first
+    file (data-integrity review of PR #368). A job that writes no file joins
+    by changing this test with its reason."""
+    from harrier.hostedschedule import FILE_WRITING_JOBS, HOSTED_JOBS
+
+    assert set(HOSTED_JOBS) <= FILE_WRITING_JOBS

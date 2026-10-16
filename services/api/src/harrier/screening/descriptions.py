@@ -87,11 +87,14 @@ def load_cached_description(url: str) -> str:
         if raw is None:
             return ""
         parsed: object = json.loads(raw.decode("utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError) as error:
         # ValueError covers malformed JSON and bytes that are not UTF-8, as a
         # write cut off mid-character leaves them. A damaged entry reads as
         # missing; it must never refuse the status change that hashes it
-        # (spec 079 amendment).
+        # (spec 079 amendment). It is logged, by its class and the family
+        # only, never the URL or the key (spec 107, "Callers keep their
+        # rules on read failure"; data-integrity review of PR #368).
+        logger.warning("description cache read as empty: %s on descriptions", type(error).__name__)
         return ""
     if isinstance(parsed, dict):
         description = str(parsed.get("description", ""))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
