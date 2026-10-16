@@ -88,14 +88,20 @@ test("no stored description shows the paste box, and saving shows the stored tex
   expect(save.hasAttribute("disabled")).toBe(true);
 
   await user.click(screen.getByLabelText("Paste the job description"));
-  await user.paste(POSTING);
+  await user.paste(`  ${POSTING}\n`);
   await user.click(save);
 
+  // What the server stored, trimmed, not what was pasted.
   expect((await screen.findByLabelText("Stored description")).textContent).toBe(POSTING);
   expect(screen.queryByLabelText("Paste the job description")).toBeNull();
+  expect(screen.getByRole("status").textContent).toBe(
+    "Saved. Every operation reads this description.",
+  );
+  // Focus lands on a control that still exists, not on the page.
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Replace" }));
   const put = calls.find((call) => call.method === "PUT");
   expect(put?.url).toBe("/api/apply/3/description");
-  expect(put?.body).toEqual({ text: POSTING });
+  expect(put?.body).toEqual({ text: `  ${POSTING}\n` });
 });
 
 test("replace opens the box with the stored text, and cancel closes it", async () => {
@@ -104,10 +110,13 @@ test("replace opens the box with the stored text, and cancel closes it", async (
   renderPanel();
 
   await user.click(await screen.findByRole("button", { name: "Replace" }));
-  expect(screen.getByLabelText("Paste the job description")).toHaveProperty("value", POSTING);
+  const box = screen.getByLabelText("Paste the job description");
+  expect(box).toHaveProperty("value", POSTING);
+  expect(document.activeElement).toBe(box);
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   expect(screen.queryByLabelText("Paste the job description")).toBeNull();
   expect(screen.getByLabelText("Stored description").textContent).toBe(POSTING);
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "Replace" }));
 });
 
 test("show all expands the stored text", async () => {
@@ -116,11 +125,18 @@ test("show all expands the stored text", async () => {
   renderPanel();
 
   const toggle = await screen.findByRole("button", { name: "Show all" });
+  const text = screen.getByLabelText("Stored description");
   expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(text.classList.contains("description-panel__text--collapsed")).toBe(true);
   await user.click(toggle);
   expect(screen.getByRole("button", { name: "Show less" }).getAttribute("aria-expanded")).toBe(
     "true",
   );
+  expect(
+    screen
+      .getByLabelText("Stored description")
+      .classList.contains("description-panel__text--collapsed"),
+  ).toBe(false);
 });
 
 test("a refusal is shown in the API's words and the pasted text is kept", async () => {

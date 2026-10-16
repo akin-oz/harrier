@@ -11,6 +11,7 @@ and answers refuse when there is none, from the CLI and the browser alike.
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -101,9 +102,19 @@ def test_the_description_route_stores_and_replaces(job_id: int, client: TestClie
     ("text", "status", "detail"),
     [
         ("   \n", 400, "the description is empty"),
-        ("x" * (MAX_DESCRIPTION_BYTES + 1), 400, f"longer than {MAX_DESCRIPTION_BYTES} bytes"),
-        ("a\x00b", 400, "NUL"),
-        ("a\ud800b", 400, "not text UTF-8 can encode"),
+        (
+            "x" * (MAX_DESCRIPTION_BYTES + 1),
+            400,
+            f"the description is longer than {MAX_DESCRIPTION_BYTES} bytes in UTF-8",
+        ),
+        # Under the limit in characters, over it in bytes: the limit is bytes.
+        (
+            "\u00e9" * (MAX_DESCRIPTION_BYTES // 2 + 1),
+            400,
+            f"the description is longer than {MAX_DESCRIPTION_BYTES} bytes in UTF-8",
+        ),
+        ("a\x00b", 400, "the description holds a NUL character"),
+        ("a\ud800b", 400, "the description is not text UTF-8 can encode"),
     ],
 )
 def test_the_description_route_refuses_what_it_cannot_store(
@@ -118,11 +129,17 @@ def test_the_description_route_refuses_what_it_cannot_store(
         headers={**auth(), "Content-Type": "application/json"},
     )
     assert response.status_code == status
-    assert detail in response.json()["detail"]
-    # The refused text is never quoted back.
-    assert text.strip() == "" or text not in response.text
+    # The exact sentence: the refused text is never quoted back.
+    assert response.json() == {"detail": detail}
     # Nothing was stored: the previous entry stands.
     assert load_cached_description(URL) == POSTING
+
+
+def test_a_description_of_exactly_the_limit_is_stored(job_id: int, client: TestClient) -> None:
+    text = "x" * MAX_DESCRIPTION_BYTES
+    response = client.put(f"/apply/{job_id}/description", json={"text": text}, headers=auth())
+    assert response.status_code == 200
+    assert load_cached_description(URL) == text
 
 
 def test_a_job_with_no_url_takes_no_description(env: Path, client: TestClient) -> None:
@@ -147,6 +164,7 @@ def test_an_unknown_job_is_not_found(env: Path, client: TestClient) -> None:
     ("argv", "domain", "prefix"),
     [
         (["tailor"], "harrier.resume.tailor.run_tailor", "tailor failed"),
+        (["tailor", "--no-ai"], "harrier.resume.tailor.run_tailor", "tailor failed"),
         (["cover-letter"], "harrier.apply.generate_cover_letter", "cover letter failed"),
         (
             ["answers", "--question", "Why us?"],
@@ -177,12 +195,32 @@ def test_an_operation_without_a_description_refuses(
         conn.close()
 
 
-def test_a_stored_description_reaches_the_operation(job_id: int) -> None:
+@pytest.mark.parametrize(
+    ("argv", "domain"),
+    [
+        (["cover-letter"], "harrier.apply.generate_cover_letter"),
+        (["answers", "--question", "Why us?"], "harrier.apply.generate_answer_set"),
+    ],
+)
+def test_a_stored_description_reaches_the_operation(
+    job_id: int, argv: list[str], domain: str
+) -> None:
+    save_description_cache(URL, POSTING)
+    with patch(domain) as generate, suppress(Exception):
+        main([argv[0], "--job-id", str(job_id), *argv[1:]])
+    assert generate.call_args is not None
+    assert generate.call_args.kwargs["jd_text"] == POSTING
+
+
+def test_tailor_leaves_the_stored_description_to_run_tailor(job_id: int) -> None:
+    """Checked, not passed: run_tailor reads the stored description itself,
+    so its sidecar records `cache` rather than a given text (local review of
+    PR #383; the sidecar itself is pinned in test_resume.py)."""
     save_description_cache(URL, POSTING)
     with patch("harrier.resume.tailor.run_tailor") as tailor:
         main(["tailor", "--job-id", str(job_id)])
     assert tailor.call_args is not None
-    assert tailor.call_args.kwargs["jd_text"] == POSTING
+    assert tailor.call_args.kwargs["jd_text"] is None
 
 
 def _manager_that_records(env: Path) -> tuple[RunManager, list[str]]:

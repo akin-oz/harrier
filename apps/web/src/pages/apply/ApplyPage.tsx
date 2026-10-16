@@ -210,7 +210,9 @@ export function ApplyPage({ job, track, onBack }: { job: Job; track: Track; onBa
         <StatusPill status={job.status} label={statusLabel(track, job.status)} />
       </div>
 
-      <DescriptionPanel jobId={job.id} />
+      {/* Keyed by job, so a half-pasted description never carries over to
+          another job's page. */}
+      <DescriptionPanel key={job.id} jobId={job.id} />
 
       <div className="apply-page__layout">
         {/* A single choice, so radios rather than four buttons. As buttons

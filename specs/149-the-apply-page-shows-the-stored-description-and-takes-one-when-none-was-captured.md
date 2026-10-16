@@ -117,7 +117,9 @@ given no text and none is stored for the job's URL:
   No run is started and no run input file is written.
 
 Both use one check in the domain. `tailor --no-ai` refuses the same way:
-its content plan also ranks by the description.
+its content plan also ranks by the description. The check does not hand
+the stored text to `run_tailor`; it reads the text itself, so the CV's
+sidecar still records `jd_source: "cache"` (local review of PR #383).
 
 `evaluate` does not refuse. It evaluates a recorded offer, and it already
 runs without a description today.
@@ -151,10 +153,15 @@ No log line carries the description text.
 - [x] The write route refuses empty text, text over the limit, and a job
       with no URL, and stores nothing in each case
       (`services/api/tests/test_stored_description.py::test_the_description_route_refuses_what_it_cannot_store`,
-      `services/api/tests/test_stored_description.py::test_a_job_with_no_url_takes_no_description`).
+      `services/api/tests/test_stored_description.py::test_a_job_with_no_url_takes_no_description`;
+      the limit itself: `services/api/tests/test_stored_description.py::test_a_description_of_exactly_the_limit_is_stored`).
 - [x] `tailor`, `cover-letter` and `answers` with no text and no stored
       description exit 1 with the message above and write no artifact and
-      no tracker change (`services/api/tests/test_stored_description.py::test_an_operation_without_a_description_refuses`).
+      no tracker change (`services/api/tests/test_stored_description.py::test_an_operation_without_a_description_refuses`);
+      with one stored, it reaches the operation
+      (`services/api/tests/test_stored_description.py::test_a_stored_description_reaches_the_operation`,
+      `services/api/tests/test_stored_description.py::test_tailor_leaves_the_stored_description_to_run_tailor`,
+      `services/api/tests/test_resume.py::test_a_stored_description_is_recorded_as_the_cache`).
 - [x] The resume, cover-letter and answers routes answer 409 with the
       detail above and start no run when no description is stored
       (`services/api/tests/test_stored_description.py::test_an_apply_route_without_a_description_starts_no_run`).

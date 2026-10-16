@@ -775,8 +775,9 @@ def _cmd_tailor(args: argparse.Namespace) -> int:
         _warn_if_deadline_passed(row)
         try:
             # No description, given or stored, refuses: a CV tailored to an
-            # empty posting is not tailored (spec 149).
-            jd_text = require_description(args.job_id, row.get("url", ""), jd_text)
+            # empty posting is not tailored (spec 149). Checked only: run_tailor
+            # reads the stored one itself, so its sidecar says `cache`.
+            require_description(args.job_id, row.get("url", ""), jd_text)
             result = run_tailor(conn, scope, args.job_id, jd_text=jd_text, no_ai=args.no_ai)
         except (ResumeBundleError, ValueError, RuntimeError) as error:
             print(f"tailor failed: {error}", file=sys.stderr)

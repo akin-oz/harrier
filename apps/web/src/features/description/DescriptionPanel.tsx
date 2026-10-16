@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { components } from "@harrier/contract";
 
@@ -38,6 +38,17 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
   // the operator does not paste again.
   const [draft, setDraft] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [saved, setSaved] = useState(false);
+  // Where focus goes when the box opens or closes: the control that opened
+  // or replaced it is unmounted, and focus must not fall to the page.
+  const box = useRef<HTMLTextAreaElement>(null);
+  const replace = useRef<HTMLButtonElement>(null);
+  const [focusTarget, setFocusTarget] = useState<"box" | "replace" | null>(null);
+  useEffect(() => {
+    if (focusTarget === "box") box.current?.focus();
+    if (focusTarget === "replace") replace.current?.focus();
+    if (focusTarget !== null) setFocusTarget(null);
+  }, [focusTarget]);
 
   const save = useMutation({
     mutationFn: async (text: string): Promise<Description> => {
@@ -54,6 +65,8 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
       queryClient.setQueryData(key, data);
       setDraft(null);
       setShowAll(false);
+      setSaved(true);
+      setFocusTarget("replace");
     },
   });
 
@@ -90,7 +103,8 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
 
       {stored.data.stored && draft === null && (
         <>
-          <p
+          <div
+            role="group"
             className={
               showAll
                 ? "description-panel__text"
@@ -99,7 +113,12 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
             aria-label="Stored description"
           >
             {stored.data.text}
-          </p>
+          </div>
+          {saved && (
+            <p role="status" className="description-panel__note">
+              Saved. Every operation reads this description.
+            </p>
+          )}
           <div className="description-panel__actions">
             <button
               type="button"
@@ -111,9 +130,12 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
               {showAll ? "Show less" : "Show all"}
             </button>
             <button
+              ref={replace}
               type="button"
               onClick={() => {
                 setDraft(stored.data.text);
+                setSaved(false);
+                setFocusTarget("box");
               }}
             >
               Replace
@@ -133,6 +155,7 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
           <label className="description-panel__field">
             <span>Paste the job description</span>
             <textarea
+              ref={box}
               rows={8}
               value={draft ?? ""}
               onChange={(event) => {
@@ -159,6 +182,7 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
                 onClick={() => {
                   setDraft(null);
                   save.reset();
+                  setFocusTarget("replace");
                 }}
               >
                 Cancel
