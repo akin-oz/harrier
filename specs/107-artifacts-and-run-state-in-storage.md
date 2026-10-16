@@ -550,8 +550,8 @@ PR 2 (hosted):
       route sees it (`services/api/tests/test_hosted_files.py::test_a_request_binds_its_owner_for_sync_routes`).
 - [ ] With a fake Storage server, every writer in the first table run
       hosted writes nothing under `data_dir()` and uploads only under
-      `<owner>/` (planned
-      test_a_hosted_store_writes_nothing_under_the_data_directory).
+      `<owner>/`
+      (`services/api/tests/test_hosted_files.py::test_a_hosted_store_writes_nothing_under_the_data_directory`).
 - [ ] Object names hash every non-listed family and keep listed families
       plain, and the downloaded file name is the key's last segment
       (`services/api/tests/test_hosted_files.py::test_object_names_never_carry_a_person`).
@@ -899,8 +899,8 @@ Received from spec 106, unchanged:
 
 - [ ] In a hosted run, `files()` is bound to the run's owner before any
       domain code runs, writes only under that owner's prefix, and never
-      returns this spec's local store (decision D3; planned
-      test_a_hosted_run_binds_its_owners_storage).
+      returns this spec's local store (decision D3;
+      `services/api/tests/test_hosted_files.py::test_a_hosted_run_binds_its_owners_storage`).
 
 ### Open decision for Akin (amendment of 2026-10-13)
 
@@ -983,12 +983,12 @@ private key on the scheduler.
 algorithm, the key's format in the variable, how the public key is imported
 (a dashboard step, written into `docs/deploy.md`), and the tests:
 a scheduled run binds its owner's store with a minted token whose `sub` is
-that owner and whose `exp` is within the run's timeout (planned
-test_a_scheduled_run_binds_a_minted_token); the API refuses to start with
-the signing key in its environment (planned
-test_the_api_refuses_the_storage_signing_key); with no key the scheduler
-starts no file-writing run (planned
-test_a_scheduler_without_a_signing_key_starts_no_file_writing_run).
+that owner and whose `exp` is within the run's timeout
+(`services/api/tests/test_hosted_scheduler.py::test_a_scheduled_run_binds_a_minted_token`); the API refuses to start with
+the signing key in its environment
+(`services/api/tests/test_hosted_auth.py::test_the_api_refuses_the_storage_signing_key`); with no key the scheduler
+starts no file-writing run
+(`services/api/tests/test_hosted_scheduler.py::test_a_scheduler_without_a_signing_key_starts_no_file_writing_run`).
 
 ### Proof / origin (amendment of 2026-10-13)
 
@@ -1147,16 +1147,16 @@ theirs, and spec 108's waits for PR 3 (below).
 ### What PR 3 builds
 
 - The run binding of the Amendment (2026-10-13) and the Decision taken
-  (2026-10-15), with its criterion (planned
-  test_a_hosted_run_binds_its_owners_storage), and the answer to the
+  (2026-10-15), with its criterion
+  (`services/api/tests/test_hosted_files.py::test_a_hosted_run_binds_its_owners_storage`), and the answer to the
   question above.
 - The writers that return a local path (`run_tailor`,
   `write_cover_letter_artifacts`, `write_output`, `evaluate_offer`,
   `save_dataset`, and the outreach and scoring writers, which call
   `local_file`) made to run on a store with no local files, and the
   criterion that every writer run hosted writes nothing under the data
-  directory (planned
-  test_a_hosted_store_writes_nothing_under_the_data_directory).
+  directory
+  (`services/api/tests/test_hosted_files.py::test_a_hosted_store_writes_nothing_under_the_data_directory`).
 - Lifting spec 106's refusals. **No kind is lifted in PR 2.** All eight
   kinds spec 106 marks "501 until spec 107" (`tailor`, `cover-letter`,
   `answers`, `evaluate`, `outreach-draft`, `find-contacts`,
@@ -1274,3 +1274,216 @@ theirs, and spec 108's waits for PR 3 (below).
 
 - [ ] PR 3 builds the run binding, the writers and the lifted kinds above,
       after Akin answers the question on scheduled runs.
+
+## Amendment (2026-10-16): PR 3's build
+
+Written by the change that builds PR 3: the run binding, the request's and
+the scheduler's tokens, the writers, and the lifted kinds. The question the
+amendment above left for Akin is answered by the Decision taken (2026-10-16).
+Each point below is a choice the build made where the text left one open, or
+a place the text was silent. One point needs Akin before the scheduler's key
+is set (Open decision below).
+
+### How a run's process knows it is hosted
+
+By `HARRIER_RUN_OWNER`, the variable spec 106 already makes the mark of a
+hosted run (spec 106, "The run's Storage identity"). A run's environment
+carries no `HARRIER_AUTH`, and gains none: `hosted_files()` in
+`services/api/src/harrier/filestore.py` now reads a process as hosted when it
+holds `HARRIER_AUTH=supabase` or `HARRIER_RUN_OWNER`. So in a run, as in the
+API, `files()` with nothing bound raises `FileStoreUnbound` and never returns
+the local store.
+
+### The binding
+
+- **The run's environment.** `build_run_env` (`services/api/src/harrier_api/runenv.py`)
+  sets `HARRIER_STORAGE_TOKEN` to the token the run was given, and
+  `COPIED_VARIABLES` gains `HARRIER_SUPABASE_URL` and
+  `HARRIER_SUPABASE_PUBLISHABLE_KEY`, both public. Spec 106 named
+  `HARRIER_SUPABASE_URL` among the names a run never holds; its Note
+  (2026-10-16, spec 107's third pull request) records the change. The token
+  joins the run's scrub set, so a line the run prints with it reaches the
+  stream as `REDACTED`.
+- **The run's start.** `_run_hosted` in `services/api/src/harrier_cli/main.py`,
+  after its owner and store checks and before logging is set up or any
+  command runs, calls `run_store` (`harrier.filestore`), which takes
+  `HARRIER_STORAGE_TOKEN` out of the process environment and returns
+  `SupabaseFileStore.for_request` for `HARRIER_RUN_OWNER` with that token,
+  the origin and the publishable key. The command runs inside
+  `bind_files` of it. Tools the run starts (Chromium, `pdfinfo`) never see
+  the token.
+- **No token.** A run started without one, or without the origin or the
+  key beside it, binds nothing. Its first file raises `FileStoreUnbound`; a
+  run that touches no file (`demo`) still runs.
+- **A failed file in a run.** `FileStoreError` (a denied write, an
+  unavailable Storage) and `FileStoreUnbound` end the run with one line,
+  `error: <message>`, exit 1. The message names the operation and the
+  family only (Behavior, "The hosted store").
+- **The run's directory stays.** Spec 106 says this spec removes the owner's
+  run directory. It stays: it is the run's working directory, its `HOME`
+  and the place of its log file, which are spec 110's. It holds no domain
+  file once runs are bound
+  (`services/api/tests/test_hosted_runs.py::test_a_hosted_run_works_in_its_owners_directory`).
+
+### The request's token
+
+`OwnedRuns` (`services/api/src/harrier_api/runmodels.py`) carries the bearer
+token of the request, read from its `Authorization` header only when spec
+104's middleware attached verified claims, and passes it to
+`RunManager.start` as `storage_token`. The manager hands it to
+`HostedRuns.begin`, which gives it to `bind_run`. It is never part of the
+command, the run's signature, its `run_records` row, its repr, or a journal
+(a hosted run writes none). A run that outlives the token gets
+`FileStoreDenied` at its next Storage request and fails as above.
+
+### The scheduler's token
+
+- **Algorithm and format.** `ES256`, which Supabase's signing keys and spec
+  104's verifier both accept. `HARRIER_STORAGE_SIGNING_KEY` holds a private
+  JSON Web Key on the P-256 curve (`kty` `EC`, `crv` `P-256`, `x`, `y`, `d`)
+  with a non-empty `kid`: the form Supabase's dashboard imports, and the
+  `kid` its key set then lists, so Storage finds the key by the token's
+  header. `pyjwt[crypto]`, already in the `hosted` group for spec 104, signs
+  it; no dependency is added
+  (`services/api/src/harrier_api/storagetoken.py`).
+- **The claims.** `sub` the owner, `role` and `aud` `authenticated`, `iss`
+  the project's Auth issuer (`<HARRIER_SUPABASE_URL>/auth/v1`, which spec
+  104's verifier checks), `iat` the start, `exp` the start plus
+  `HARRIER_SCHEDULED_RUN_TIMEOUT_SECONDS` plus 60, and `is_anonymous`
+  false. The header carries `alg`, `kid` and `typ`. One token per started
+  run, minted as the slot is bound.
+- **The start checks.** With the key set, the scheduler refuses to start
+  when the key is not such a JWK, or when `HARRIER_SUPABASE_URL` is not an
+  `https://` URL or `HARRIER_SUPABASE_PUBLISHABLE_KEY` does not begin
+  `sb_publishable_`: a token minted there would reach no Storage. Each
+  refusal names the variable, never a value.
+- **No key.** `FILE_WRITING_JOBS` (`services/api/src/harrier/hostedschedule.py`)
+  names the jobs whose runs write files, which today is both hosted jobs.
+  Without the key the tick drops their due slots before claiming any, logs
+  one line, `scheduler starts no run that writes files:
+  HARRIER_STORAGE_SIGNING_KEY is not set`, and binds, spawns and writes
+  nothing. The slots stay unclaimed, so the operator's report shows each as
+  unclaimed after `UNCLAIMED_AFTER`, a problem (spec 108).
+- **The API refuses the key.** Hosted, `hosted_config` refuses a start whose
+  environment holds `HARRIER_STORAGE_SIGNING_KEY`, set or empty, with `the
+  hosted API must not hold HARRIER_STORAGE_SIGNING_KEY; only the scheduler
+  mints tokens (spec 107)`, never printing the value. Local mode reads no
+  hosted variable, as before. A run never holds the key: it is not in the
+  allowlist.
+
+### The writers
+
+Each writer that returned `local_file(key)` after writing now returns
+`artifact_path(key)` (`harrier.filestore`): the local file, as before, or,
+for a store with no local files, the key's last segment, the name a person
+sees on download. The form is for showing only. The writers: `run_tailor`,
+`write_cover_letter_artifacts` (whose draft names itself in its review
+section), `write_output`, `evaluate_offer`, `save_dataset`,
+`write_candidates_artifact`, `write_outreach_draft`, `save_generated_bundle`,
+`export_features`, and the trainer's model and report. The answers command
+names its own file through `answers_review_path`
+(`services/api/src/harrier/apply/answers.py`). The path helpers that only
+name a local file (`resume_paths_for`, `report_path_for` and the like) keep
+`local_file`, as PR 1's amendment says. Locally every result is the path it
+was (`services/api/tests/test_filestore.py::test_the_local_store_writes_what_it_wrote_before`).
+
+### The kinds
+
+| Kind | Hosted after PR 3 | Needs |
+|---|---|---|
+| `tailor` | runs | `ai`, unless `--no-ai` |
+| `cover-letter` | runs | `ai` |
+| `answers` | runs | `ai` |
+| `evaluate` | runs | `ai` |
+| `find-contacts` | runs | `apify`: the profile search is Apify only (`services/api/src/harrier/outreach/discovery.py`, `missing APIFY_TOKEN`) |
+| `backfill-posters` | runs | none: the poster comes from LinkedIn's guest page |
+| `outreach-draft` | 501 | refused: its draft files are read by nothing, so no hosted route serves them |
+| `scoring-export` | 501 | refused: its export is read only by training, which does not run hosted (Honest limitations), and no route serves the file |
+
+The two refused kinds answer `<kind> runs are not available on the hosted
+API: no hosted route serves their files (spec 107)`. The CLI's run class
+(`RUN_CLASS`) gains the six verbs, and each of them opens the run's store
+(`_open_store`) where it opened the local file; locally that is the same
+file. Spec 106's Note (2026-10-16, spec 107's third pull request) records
+its table.
+
+### Open decision for Akin (amendment of 2026-10-16, PR 3)
+
+**Which state the imported key sits in.** The Decision taken (2026-10-16)
+says the key's public half is imported. Supabase's signing keys guide
+(read 2026-10-16) describes importing a private key only, as a JWK, which
+Supabase then holds too, and it creates the imported key as a standby key.
+Its table of accepted signatures trusts only the current key, and a
+previously used one during a rotation; a standby key's tokens are not
+listed as accepted. So for Storage to accept the scheduler's tokens the
+key must be:
+
+- rotated in as the current key, after which Supabase Auth signs every
+  session with it too; or
+- moved to previously used, which the guide shows only as a step on the way
+  to revoked, not as a state to stay in.
+
+Neither is what the decision's text describes, and neither is confirmed on
+a project. The build does not choose. Until Akin does, `docs/deploy.md`
+says not to set `HARRIER_STORAGE_SIGNING_KEY`; without it the scheduler
+starts no file-writing run, which is safe and visible in the report. Spec
+110's staging check confirms whichever is chosen.
+
+### Acceptance criteria (amendment of 2026-10-16, PR 3)
+
+- [ ] A hosted run binds its owner's store from its environment before any
+      domain code runs, removes the token from its environment, writes only
+      under the owner's prefix, and without a token refuses its first file
+      in one line with nothing on disk
+      (`services/api/tests/test_hosted_files.py::test_a_hosted_run_binds_its_owners_storage`).
+- [ ] A request-started run carries the starting request's token in its
+      environment only: not its arguments, its repr or a journal, and a
+      printed token reaches the stream redacted
+      (`services/api/tests/test_hosted_runs.py::test_a_request_started_run_carries_its_token_in_its_environment_only`);
+      a route that starts a run passes the request's own token
+      (`services/api/tests/test_run_owner.py::test_a_kind_offered_hosted_reaches_its_start`).
+- [ ] Every writer in the first table run hosted writes nothing under
+      `data_dir()` and uploads only under `<owner>/`
+      (`services/api/tests/test_hosted_files.py::test_a_hosted_store_writes_nothing_under_the_data_directory`).
+- [ ] A scheduled run carries a token minted for its owner with the claims
+      above, which binds its owner's store, and the key never reaches the
+      run (`services/api/tests/test_hosted_scheduler.py::test_a_scheduled_run_binds_a_minted_token`).
+- [ ] Without the key the scheduler starts no file-writing run and logs one
+      line naming the variable
+      (`services/api/tests/test_hosted_scheduler.py::test_a_scheduler_without_a_signing_key_starts_no_file_writing_run`);
+      a key it cannot use refuses the start
+      (`services/api/tests/test_hosted_scheduler.py::test_a_signing_key_the_scheduler_cannot_use_refuses_the_start`).
+- [ ] The hosted API refuses to start with the key in its environment
+      (`services/api/tests/test_hosted_auth.py::test_the_api_refuses_the_storage_signing_key`).
+- [ ] The kinds table above, with each lifted kind's needs, and the CLI's
+      run class equal to the verbs of the kinds that run
+      (`services/api/tests/test_hosted_runs.py::test_every_run_kind_declares_its_hosted_answer`,
+      `services/api/tests/test_run_owner.py::test_a_kind_not_offered_hosted_answers_501_naming_its_spec`).
+- [ ] The run's environment is the allowlist with the two Storage names
+      (`services/api/tests/test_hosted_runs.py::test_the_child_environment_holds_only_the_allowlist_and_its_owners_values`).
+- [ ] `docs/deploy.md` carries the key's generation, its Fly secret, the
+      scheduler machine's two Storage variables, the import step pending the
+      Open decision above, and the rotation.
+
+### Honest limitations (amendment of 2026-10-16, PR 3)
+
+- **The lifted kinds are not run end to end hosted.** The writers run hosted
+  against the fake Storage on the local SQLite store, and the CLI's binding
+  runs against a stand-in command. No test runs `tailor` as a hosted run on
+  Postgres with Storage; spec 110's staging check is the first.
+- **A request-started run has an hour.** The session token expires an hour
+  after it was issued (spec 104), and a run is not given a fresh one.
+- **The scheduler's token is accepted as its owner by the API too**, until
+  it expires, as the Decision taken (2026-10-16) states.
+- **Without the key every scheduled slot is unclaimed**, so a deployment
+  that has not imported a key shows every chosen job as a problem after
+  three hours.
+
+### Written into other specs (amendment of 2026-10-16, PR 3)
+
+- **Spec 104:** a Note: the hosted start also refuses
+  `HARRIER_STORAGE_SIGNING_KEY`.
+- **Spec 106:** a Note: the run environment's two Storage names and its
+  token, and the kinds table.
+- **Spec 108:** the line under "Changes to approved specs", now that the
+  Decision taken (2026-10-16) answers it, as a Note.

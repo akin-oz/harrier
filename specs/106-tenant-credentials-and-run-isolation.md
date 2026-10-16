@@ -1144,8 +1144,9 @@ this spec changes.
 3. **Open decision 8 moves to spec 107.** Taken later the same day, once
    this amendment had named it as the open item before the build. This
    spec is built without Storage. The criterion that binds a hosted run's
-   `files()` to its owner, with planned
-   test_a_hosted_run_binds_its_owners_storage, and the choice of the
+   `files()` to its owner, with its test
+   (`services/api/tests/test_hosted_files.py::test_a_hosted_run_binds_its_owners_storage`,
+   built by spec 107's third pull request), and the choice of the
    run's Storage token both move to spec 107, to be decided when spec 107
    is built (spec 107, Amendment (2026-10-13)). Where Scope item 12,
    Behavior ("The run's Storage identity"), Honest limitations ("The
@@ -1471,3 +1472,31 @@ it; its Storage identity part moved to spec 107 (its Amendment
   hold an owner's free text on the machine's disk, in the API's
   `data_dir()/runs/inputs`, until the run that consumes them ends. Hosted,
   the run journal is not written; its rows are `run_records`.
+
+## Note (2026-10-16): spec 107's third pull request
+
+Spec 107 binds hosted runs to their owner's Storage (its Amendment
+(2026-10-16): PR 3's build). Two parts of this spec change with it. Nothing
+else in this spec changes.
+
+- **The child's environment.** "Copied from the server's environment when
+  set" also names `HARRIER_SUPABASE_URL` and
+  `HARRIER_SUPABASE_PUBLISHABLE_KEY`, both public, where a run's Storage
+  requests go and the key they carry; `HARRIER_SUPABASE_URL` leaves the list
+  of names a run never holds. The run manager also sets
+  `HARRIER_STORAGE_TOKEN`, the token the run reaches Storage with, which
+  joins the run's scrub set and which the run takes out of its environment
+  when it binds its store. `HARRIER_STORAGE_SIGNING_KEY` joins the names a
+  run never holds
+  (`services/api/tests/test_hosted_runs.py::test_the_child_environment_holds_only_the_allowlist_and_its_owners_values`).
+- **Which kinds run hosted.** Of the eight kinds marked "501 until spec
+  107", `tailor` (needs `ai`, unless `--no-ai`), `cover-letter`, `answers`
+  and `evaluate` (each needs `ai`), `find-contacts` (needs `apify`) and
+  `backfill-posters` (needs none) run. `outreach-draft` and `scoring-export`
+  stay refused, with the detail `<kind> runs are not available on the hosted
+  API: no hosted route serves their files (spec 107)`
+  (`services/api/tests/test_hosted_runs.py::test_every_run_kind_declares_its_hosted_answer`,
+  `services/api/tests/test_run_owner.py::test_a_kind_not_offered_hosted_answers_501_naming_its_spec`).
+- **The owner's run directory** stays, as the run's working directory, its
+  `HOME` and its log file's place; it holds no domain file once runs are
+  bound (spec 107's amendment says why).

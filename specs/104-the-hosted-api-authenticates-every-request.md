@@ -1533,3 +1533,14 @@ it, and its PR 2 builds it. Nothing else in this spec changes.
   request's `SupabaseFileStore` (spec 107, Behavior, "Which store a call
   uses";
   `services/api/tests/test_hosted_files.py::test_a_request_binds_its_owner_for_sync_routes`).
+
+## Note (2026-10-16): spec 107's third pull request
+
+Spec 107's Decision taken (2026-10-16) asks this of spec 104's start-up, and
+its third pull request builds it. Nothing else in this spec changes.
+
+- Hosted start-up also refuses an environment that holds
+  `HARRIER_STORAGE_SIGNING_KEY`, set or empty, as it refuses a secret key,
+  with `the hosted API must not hold HARRIER_STORAGE_SIGNING_KEY; only the
+  scheduler mints tokens (spec 107)`, and never prints the value
+  (`services/api/tests/test_hosted_auth.py::test_the_api_refuses_the_storage_signing_key`).

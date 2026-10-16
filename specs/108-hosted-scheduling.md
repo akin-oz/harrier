@@ -1922,3 +1922,18 @@ proves it was run. The list, with each result, is in the pull request.
   from a running deployment supports or refutes it yet.
 - **The operator class is built for two subcommands.** Spec 111's `invite`
   and `erase` join it with their own declarations.
+
+## Note (2026-10-16): spec 107's line
+
+Spec 107's "Changes to approved specs" asks this of spec 108, and its
+Decision taken (2026-10-16) settles how; its third pull request builds it.
+Nothing else in this spec changes.
+
+- A scheduled run binds its owner's Storage store before any domain code
+  runs, with a token the scheduler mints for that run's owner from
+  `HARRIER_STORAGE_SIGNING_KEY`, which only the scheduler holds. Without the
+  key the scheduler starts no run of a job that writes files, which today is
+  both hosted jobs, and logs one line naming the variable; their slots stay
+  unclaimed
+  (`services/api/tests/test_hosted_scheduler.py::test_a_scheduled_run_binds_a_minted_token`,
+  `services/api/tests/test_hosted_scheduler.py::test_a_scheduler_without_a_signing_key_starts_no_file_writing_run`).
