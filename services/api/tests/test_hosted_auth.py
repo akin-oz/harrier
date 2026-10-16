@@ -56,6 +56,7 @@ from harrier_api.hostedauth import (
     CORS_ORIGINS_REFUSAL,
     DEMO_REFUSAL,
     GROUP_REFUSAL,
+    PUBLISHABLE_KEY_REFUSAL,
     SUPABASE_URL_REFUSAL,
     HostedAuthMiddleware,
     HostedConfig,
@@ -71,6 +72,9 @@ ISSUER = f"{SUPABASE_URL}/auth/v1"
 API_HOST = "api.example.test"
 SPA_ORIGIN = "https://app.example.test"
 KID = "current-key"
+# A synthetic key of the publishable form (spec 107): public by design, and
+# no project's.
+PUBLISHABLE_KEY = "sb_publishable_" + "synthetic"
 CONTRACT = repo_root() / "packages" / "contract" / "openapi.json"
 
 
@@ -200,6 +204,7 @@ CONFIG = HostedConfig(
     cors_origins=(SPA_ORIGIN,),
     credentials_key=credentials_key(),
     run_database_url=RUN_DATABASE_URL,
+    publishable_key=PUBLISHABLE_KEY,
 )
 
 
@@ -423,6 +428,7 @@ def complete_hosted_environment() -> dict[str, str]:
         "HARRIER_DATABASE_URL": f"postgresql://harrier_api:{PASSWORD}@127.0.0.1:1/postgres",
         "HARRIER_CREDENTIALS_KEY": CREDENTIALS_KEY_TEXT,
         "HARRIER_RUN_DATABASE_URL": RUN_DATABASE_URL,
+        "HARRIER_SUPABASE_PUBLISHABLE_KEY": PUBLISHABLE_KEY,
     }
 
 
@@ -448,6 +454,49 @@ def test_hosted_start_refuses_incomplete_configuration(case: str, tmp_path: Path
     for value in (PASSWORD, SECRET, SUPABASE_URL, "postgresql://", "project-ref"):
         assert value not in printed, (case, value)
     assert not (tmp_path / "data").exists()
+
+
+# What spec 107's Failure modes writes out, written out here too, so a changed
+# constant fails.
+PUBLISHABLE_KEY_TEXT = (
+    "hosted mode needs HARRIER_SUPABASE_PUBLISHABLE_KEY, a key beginning sb_publishable_"
+)
+
+
+def test_hosted_mode_needs_a_publishable_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec 107, Configuration: absent, empty, the bare prefix, a legacy key
+    (a JWT, which a legacy service_role key also is) and a secret key in its
+    place each refuse the start, exit 1, with the one text, and the value is
+    never printed. Local mode ignores the variable."""
+    legacy = f"eyJhbGciOiJIUzI1NiJ9.{SECRET}.signature"
+    for value in (None, "", "sb_publishable_", legacy, f"sb_secret_{SECRET}"):
+        environ = child_environment(tmp_path, **complete_hosted_environment())
+        if value is None:
+            environ.pop("HARRIER_SUPABASE_PUBLISHABLE_KEY")
+        else:
+            environ["HARRIER_SUPABASE_PUBLISHABLE_KEY"] = value
+        started = start_api(environ, tmp_path)
+        assert started.returncode == 1, (value, started.stderr)
+        last_line = started.stderr.strip().splitlines()[-1]
+        assert last_line == f"harrier_api.hostedauth.HostedConfigError: {PUBLISHABLE_KEY_TEXT}"
+        printed = started.stdout + started.stderr
+        assert SECRET not in printed, value
+        assert not (tmp_path / "data").exists()
+    assert PUBLISHABLE_KEY_REFUSAL == PUBLISHABLE_KEY_TEXT
+
+    # A good key passes this check: the start goes on to the store, which
+    # names a closed port, so it fails later and for another reason.
+    started = start_api(child_environment(tmp_path, **complete_hosted_environment()), tmp_path)
+    assert PUBLISHABLE_KEY_TEXT not in started.stderr
+    assert PUBLISHABLE_KEY not in started.stdout + started.stderr
+
+    # Locally the variable is never read, whatever it holds.
+    monkeypatch.delenv("HARRIER_AUTH", raising=False)
+    monkeypatch.setenv("HARRIER_SUPABASE_PUBLISHABLE_KEY", "not a key at all")
+    assert hosted_config({"HARRIER_SUPABASE_PUBLISHABLE_KEY": "not a key"}) is None
+    create_app()
 
 
 # --- tokens ---

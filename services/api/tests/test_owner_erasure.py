@@ -154,7 +154,8 @@ def test_the_erasure_migration_is_postgres_only(
     reaches the target. On SQLite the version is recorded and nothing else
     changes."""
     real = list(MIGRATIONS)
-    assert target_version() == ERASURE_VERSION
+    # Later migrations follow it (spec 107's is 23).
+    assert target_version() >= ERASURE_VERSION
     assert SINGLE_DIALECT_MIGRATIONS[ERASURE_VERSION][0] == "postgres"
     assert SINGLE_DIALECT_MIGRATIONS[ERASURE_VERSION][1].strip()
     assert dict(MIGRATIONS)[ERASURE_VERSION] == []
@@ -166,7 +167,7 @@ def test_the_erasure_migration_is_postgres_only(
         assert main(["store", "migrate"]) == 0
         captured = capsys.readouterr()
         assert (captured.out, captured.err) == (
-            f"postgres {ERASURE_VERSION - 1} -> {ERASURE_VERSION}\n",
+            f"postgres {ERASURE_VERSION - 1} -> {target_version()}\n",
             "",
         )
     with fresh_database() as url:
@@ -178,7 +179,7 @@ def test_the_erasure_migration_is_postgres_only(
     with closing(connect(before)) as conn:
         assert postgres_free_version(conn) == ERASURE_VERSION - 1
         shape = conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY name").fetchall()
-    monkeypatch.setattr(schema, "MIGRATIONS", real)
+    monkeypatch.setattr(schema, "MIGRATIONS", [m for m in real if m[0] <= ERASURE_VERSION])
     with closing(connect(before)) as conn:
         assert postgres_free_version(conn) == ERASURE_VERSION
         after = conn.execute("SELECT type, name, sql FROM sqlite_master ORDER BY name").fetchall()

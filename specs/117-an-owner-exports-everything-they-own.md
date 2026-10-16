@@ -71,3 +71,10 @@ listed by kind, never exported by value. The SPA's control for it is spec
 - Importing an export into another store or into the local product.
 - The local `harrier export`, which does not change.
 - Exporting stored credential values.
+
+## Note (2026-10-16): spec 107's line
+
+Spec 107 ("Written into other specs") adds this line, and nothing else:
+
+- **Spec 117:** export covers every object under `<owner>/` in
+  `harrier-files`.

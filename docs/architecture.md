@@ -370,6 +370,39 @@ The access line drops the query
 and the start refuses prompt logging
 (`services/api/tests/test_hosted_logs.py::test_a_hosted_start_refuses_prompt_logging`).
 
+Files go through one seam, `harrier.filestore` (spec 107): every module
+names a file by a key relative to the data directory and asks `files()`
+for the store that holds it. Locally that is `LocalFileStore`, the files
+under `data_dir()` as before
+(`services/api/tests/test_filestore.py::test_the_local_store_writes_what_it_wrote_before`).
+Hosted there is no local default: spec 104's middleware, once a token
+verifies, binds a `SupabaseFileStore` for that owner and that request's
+token, and with nothing bound `files()` raises `FileStoreUnbound`
+(`services/api/tests/test_hosted_files.py::test_a_request_binds_its_owner_for_sync_routes`,
+`services/api/tests/test_hosted_files.py::test_an_unbound_hosted_store_refuses`).
+The hosted store keeps each owner's files in the private bucket
+`harrier-files` under `<owner>/`, sends the request's token and the
+publishable key (`HARRIER_SUPABASE_PUBLISHABLE_KEY`, required hosted), and
+hashes every object name but the listed families', so a candidate's or a
+contact's name never reaches Storage
+(`services/api/tests/test_hosted_files.py::test_object_names_never_carry_a_person`).
+Its errors name the operation and the key's first segment only, and an
+unavailable Storage is a declared 503 on the routes that use the seam
+(`services/api/tests/test_hosted_files.py::test_storage_errors_name_the_family_only`,
+`services/api/tests/test_hosted_files.py::test_an_artifact_route_answers_503_when_storage_is_unavailable`).
+Migration 23, Postgres only, creates the bucket and its one policy on
+`storage.objects`, `harrier_files_owner_only`, `FOR ALL TO authenticated`:
+the bucket, an object name whose first segment is the caller's
+`auth.uid()`, and a user who exists and is not banned, read through the
+definer function `harrier_storage_user_active()`. The role is
+`authenticated`, not `harrier_tenant`, because Storage runs a request as
+the role in its token (ADR-013 decision 6, as amended by spec 107;
+`services/api/tests/test_storage_policy.py::test_the_bucket_policy_confines_an_owner_to_their_prefix`,
+`services/api/tests/test_storage_policy.py::test_the_storage_policy_refuses_a_banned_or_deleted_user`).
+Hosted runs do not bind Storage yet: their files stay in the owner's run
+directory until spec 107's third pull request (its Amendment of
+2026-10-16).
+
 Each owner's credentials (an AI key, an Apify token, a Hunter key, a
 Telegram bot) are stored encrypted (spec 116,
 `services/api/src/harrier/credentials.py`). The `credentials` table is
@@ -517,8 +550,8 @@ The invitee then signs in with the emailed one-time code every sign-in uses
 (spec 114), so an invitation works only where that sender reaches them.
 `harrier operator erase <user id> --confirm <user id>` removes one owner, as
 a login that can act as `service_role`, in this order: ban the auth user,
-check Storage, delete the owner's rows, delete the auth user, check Storage
-again, append the ledger. The rows go in one transaction through
+delete the owner's Storage objects, delete the owner's rows, delete the auth
+user, delete any Storage object written since, append the ledger. The rows go in one transaction through
 `harrier_erase_owner(uuid)`, a definer function that only `service_role` may
 execute and that returns one count per owned table
 (`services/api/tests/test_operator.py::test_erase_runs_its_steps_in_order`,
@@ -534,10 +567,10 @@ writes never wait
 `services/api/tests/test_owner_erasure.py::test_erasing_one_owner_never_waits_for_another`).
 A step that fails exits 1 naming it, and a re-run resumes
 (`services/api/tests/test_operator.py::test_erase_resumes_after_a_failed_step`).
-Until the Storage seam of spec 107 is built the Storage steps only list the
-owner's prefix and refuse when anything is there; nothing here deletes a
-Storage object
-(`services/api/tests/test_operator.py::test_this_build_deletes_no_storage_object`).
+The two Storage steps delete every object under the owner's prefix, at any
+depth, through the file seam's operator binding and Storage's list and
+remove routes, never with SQL, and touch no other owner's objects (spec 107,
+`services/api/tests/test_operator.py::test_this_build_deletes_no_storage_object`).
 Both commands need the project's secret key in the shell and refuse one
 defined in `.env`
 (`services/api/tests/test_operator.py::test_operator_refusals_name_no_secret`).

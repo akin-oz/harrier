@@ -1520,3 +1520,16 @@ built)" left to it.
   alone (spec 114, item 4).
 
 Nothing else in this spec changes.
+
+## Note (2026-10-16): spec 107's changes
+
+Spec 107's "Changes to approved specs" asks this of spec 104, approved with
+it, and its PR 2 builds it. Nothing else in this spec changes.
+
+- Hosted start-up also requires `HARRIER_SUPABASE_PUBLISHABLE_KEY`,
+  beginning `sb_publishable_` (spec 107, Behavior, "Configuration";
+  `services/api/tests/test_hosted_auth.py::test_hosted_mode_needs_a_publishable_key`),
+  and the authentication middleware, once a token verifies, binds the
+  request's `SupabaseFileStore` (spec 107, Behavior, "Which store a call
+  uses";
+  `services/api/tests/test_hosted_files.py::test_a_request_binds_its_owner_for_sync_routes`).

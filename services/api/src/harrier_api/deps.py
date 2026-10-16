@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import Depends, HTTPException, Query, params
 from fastapi.dependencies.models import Dependant
@@ -244,6 +244,77 @@ EITHER_503_RESPONSES: dict[int | str, dict[str, Any]] = {
 BEARER_SECURITY: list[dict[str, list[str]]] = [{BEARER_SCHEME_NAME: []}]
 
 
+# --- the 503 while Storage is unavailable (spec 107) ---
+
+STORAGE_UNAVAILABLE_DETAIL = "Storage cannot be reached now. Try again shortly."
+STORAGE_UNAVAILABLE_DESCRIPTION = "Storage is unavailable (hosted, spec 107)"
+
+
+class StorageUnavailableOut(BaseModel):
+    """The hosted file store did not answer, or answered with a server
+    error (spec 107). A fixed sentence: never a key, an object name or what
+    Storage sent. The local API never sends it."""
+
+    detail: str
+    reason: Literal["storage_unavailable"]
+
+
+def uses_storage() -> None:
+    """A route that reads or writes through the file seam and can meet an
+    unavailable Storage hosted declares this dependency. It does nothing at
+    request time; the route class reads it and widens the route's 503 to
+    admit `StorageUnavailableOut` (spec 107, Scope item 14)."""
+
+
+def _uses_storage(dependant: Dependant) -> bool:
+    if dependant.call is uses_storage:
+        return True
+    return any(_uses_storage(child) for child in dependant.dependencies)
+
+
+def depends_on_storage(
+    path: str, endpoint: Callable[..., Any], dependencies: Sequence[params.Depends] | None
+) -> bool:
+    """Whether a route declares `uses_storage`, directly or through a
+    dependency."""
+    if _uses_storage(get_dependant(path=path, call=endpoint)):
+        return True
+    return any(
+        dependency.dependency is uses_storage
+        or (
+            dependency.dependency is not None
+            and _uses_storage(get_dependant(path=path, call=dependency.dependency))
+        )
+        for dependency in dependencies or ()
+    )
+
+
+def with_storage_503(
+    declared: Mapping[int | str, Mapping[str, Any]],
+) -> dict[int | str, dict[str, Any]]:
+    """`declared` with its 503 admitting the Storage body as well: one
+    status, one declaration, every body it can carry (as
+    `EITHER_503_RESPONSES` joins the database's and the keys')."""
+    result: dict[int | str, dict[str, Any]] = {
+        status: dict(entry) for status, entry in declared.items()
+    }
+    first = result.get(503)
+    if first is None:
+        result[503] = {
+            "model": StorageUnavailableOut,
+            "description": STORAGE_UNAVAILABLE_DESCRIPTION,
+        }
+        return result
+    model = first.get("model")
+    causes = [part for part in str(first.get("description", "")).split(CAUSE_JOIN) if part]
+    result[503] = {
+        **first,
+        "model": StorageUnavailableOut if model is None else model | StorageUnavailableOut,
+        "description": CAUSE_JOIN.join([*causes, STORAGE_UNAVAILABLE_DESCRIPTION]),
+    }
+    return result
+
+
 def declare_403(own: Mapping[str, Any] | None) -> dict[str, Any]:
     """The one 403 of a route the hosted API serves with a token (spec 114).
 
@@ -317,6 +388,8 @@ class DatabaseRoute(APIRoute):
             kwargs["openapi_extra"] = extra
         elif opens_database:
             declared.update(DATABASE_HELD_RESPONSES)
+        if depends_on_storage(path, endpoint, kwargs.get("dependencies")):
+            declared = with_storage_503(declared)
         operation = _track_operation(get_dependant(path=path, call=endpoint))
         if operation is not None:
             # Joined per status: the route's own causes and the track's are

@@ -20,10 +20,12 @@ steps for each, one owner at a time (see `run_erase_test_owners`).
 Nothing here prints an address, a key, a URL's password or a row's content.
 An error names a step and, for the auth server, an HTTP status.
 
-Until spec 107's Storage seam exists, the two Storage steps only list the
-owner's prefix and refuse when anything is there (spec 111, Amendment
-(2026-10-15)). Nothing in this module deletes a Storage object, and nothing
-deletes a row from the Storage objects table with SQL.
+The two Storage steps delete every object under the owner's prefix through
+spec 107's seam (`harrier.filestore.SupabaseFileStore.for_operator`), which
+calls the Storage API with the operator's secret key: the delete spec 111's
+steps 2 and 5 describe, replacing the list-only check of its Amendment
+(2026-10-15) (spec 107, Note (2026-10-15)). Nothing here deletes a row from
+the Storage objects table with SQL, which leaves the files behind.
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ import httpx
 from harrier.connection import Connection, StoreDatabaseError, StoreError
 from harrier.db import data_dir
 from harrier.envfile import SECRET_KEY_VARIABLE
+from harrier.filestore import BUCKET as FILES_BUCKET
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -54,8 +57,8 @@ if TYPE_CHECKING:
 SUPABASE_URL_VARIABLE = "HARRIER_SUPABASE_URL"
 DATABASE_URL_VARIABLE = "HARRIER_DATABASE_URL"
 
-# The private bucket of ADR-013 decision 6.
-BUCKET = "harrier-files"
+# The private bucket of ADR-013 decision 6, as the seam names it.
+BUCKET = FILES_BUCKET
 
 # The duration Supabase's updateUserById reference uses as its example: 100
 # years, so a banned user signs in no more.
@@ -78,10 +81,6 @@ ROLE_DID_NOT_HOLD = "the erase transaction did not run as service_role"
 LATE_ROWS = "rows were written after the erase; run it again after the user's last token expires"
 SUPABASE_URL_REFUSAL = (
     f"{SUPABASE_URL_VARIABLE} must be an https:// URL that names a host and nothing else"
-)
-OBJECTS_REMAIN = (
-    "objects exist under the owner's prefix that this build cannot delete "
-    "(spec 111, Amendment (2026-10-15)); nothing was deleted here"
 )
 
 
@@ -159,7 +158,8 @@ def supabase_origin(raw: str) -> str | None:
 @dataclass
 class AdminClient:
     """The Supabase admin calls this module makes: create, read, ban and
-    delete an auth user, and list a prefix of the private bucket.
+    delete an auth user. Storage is reached through the seam
+    (`clear_storage`), on the same client and key.
 
     The secret key goes in the `apikey` header, which is where Supabase's API
     keys guide says a secret key belongs, and in no URL, body, log or error.
@@ -243,25 +243,25 @@ class AdminClient:
             ok=(200, 404),
         )
 
-    def objects_under(self, user_id: str, *, step: str) -> bool:
-        """Whether anything is listed under the owner's prefix in the private
-        bucket. Read only: `POST /storage/v1/object/list/{bucket}` with the
-        owner's id as the prefix and a limit of one (spec 111, Amendment
-        (2026-10-15)). A folder entry counts: Storage shows one only when an
-        object is under it."""
-        response = self._call(
-            step,
-            "POST",
-            f"/storage/v1/object/list/{BUCKET}",
-            {"prefix": user_id, "limit": 1, "offset": 0},
+    def clear_storage(self, user_id: str, *, step: str) -> int:
+        """Delete every object under the owner's prefix in the private bucket
+        and return how many there were: steps 2 and 5 of spec 111's
+        Deletion. Through spec 107's seam, bound to this one owner with the
+        operator's secret key, outside any request; it lists the prefix at
+        every depth and removes what it found through the Storage API, never
+        with SQL. A failure names the step and the HTTP status, as every
+        other call here does, and never the owner or an object name."""
+        from harrier.filestore import FileStoreError, SupabaseFileStore
+
+        store = SupabaseFileStore.for_operator(
+            user_id, origin=self.origin, secret_key=self.secret_key, http=self.http
         )
         try:
-            listed: object = response.json()
-        except ValueError:
-            listed = None
-        if not isinstance(listed, list):
-            raise OperatorError("the Storage answer is not a list", step=step)
-        return bool(cast("list[object]", listed))
+            return store.delete_everything()
+        except FileStoreError as error:
+            if error.status is not None:
+                raise OperatorError(f"the server answered {error.status}", step=step) from None
+            raise OperatorError(f"the call failed ({type(error).__name__})", step=step) from None
 
 
 def _error_code(response: httpx.Response) -> str | None:
@@ -466,8 +466,8 @@ def erase_owner(
     status: 0 when every step completed, 1 naming the step otherwise.
 
     1. Ban, so the user signs in no more.
-    2. Storage: the owner's prefix is listed, and any object stops the erase
-       (the amendment of 2026-10-15; nothing here deletes one).
+    2. Storage: every object under the owner's prefix is deleted through
+       spec 107's seam.
     3. Rows: `harrier_erase_owner`, one transaction as `service_role`.
     4. The auth user, hard deleted.
     5. Storage again, for objects written since step 2.
@@ -502,9 +502,8 @@ def erase_owner(
             say("step 1 ban: skipped, no auth user with that id")
         completed.append("ban")
 
-        if admin.objects_under(user_id, step="storage"):
-            raise OperatorError(OBJECTS_REMAIN, step="storage")
-        say("step 2 storage: no objects under the owner's prefix")
+        deleted = admin.clear_storage(user_id, step="storage")
+        say(f"step 2 storage: {deleted} objects deleted")
         completed.append("storage")
 
         if exists:
@@ -532,9 +531,8 @@ def erase_owner(
             say("step 4 auth user: skipped, no auth user with that id")
         completed.append("auth")
 
-        if admin.objects_under(user_id, step="stragglers"):
-            raise OperatorError(OBJECTS_REMAIN, step="stragglers")
-        say("step 5 stragglers: no objects under the owner's prefix")
+        stragglers = admin.clear_storage(user_id, step="stragglers")
+        say(f"step 5 stragglers: {stragglers} objects deleted")
         completed.append("stragglers")
 
         try:

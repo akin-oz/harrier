@@ -11,13 +11,19 @@ from __future__ import annotations
 # absent in the base environment.
 # pyright: reportMissingImports=false, reportUnknownVariableType=false
 # pyright: reportUnknownMemberType=false
+import os
 import re
 import secrets
+import shutil
 import subprocess
+import tempfile
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
-from harrier.filestore import FileStoreError, LocalFileStore, bind_files, files
+from harrier.filestore import FileStore, LocalFileStore, bind_files, files
+
+# The private directory a hosted render uses (spec 107, "PDF rendering").
+HOSTED_RENDER_DIRECTORY_MODE = 0o700
 
 
 def render_pdf(html_text: str, pdf_path: Path, margin_mm: int = 10) -> None:
@@ -119,7 +125,8 @@ def render_validated_pdf(
     The earlier PDF goes first, the render lands on a hidden temporary name
     in the same directory, and a rename moves it in, which is atomic within
     one filesystem. Returns the gate's errors; on any error or exception
-    nothing is left at either path.
+    nothing is left at either path. A store with no local files renders in
+    a private directory instead and uploads only a passing PDF (spec 107).
     """
     if isinstance(key, Path):
         with bind_files(LocalFileStore(key.parent)):
@@ -128,9 +135,7 @@ def render_validated_pdf(
     store.delete(key)
     pdf_path = store.local_path(key)
     if pdf_path is None:
-        # A store with no local files renders elsewhere: spec 107's second
-        # pull request. No such store exists yet.
-        raise FileStoreError(f"{key.split('/', 1)[0]}: no local file to render beside")
+        return _render_and_upload(store, html_text, key, render, validate)
     # A name the render creates, rather than a file created here, so the PDF
     # keeps the permissions it always had.
     temporary = pdf_path.with_name(f".{pdf_path.name}.{secrets.token_hex(4)}.tmp")
@@ -142,3 +147,30 @@ def render_validated_pdf(
         return errors
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _render_and_upload(
+    store: FileStore,
+    html_text: str,
+    key: str,
+    render: Callable[[str, Path], None],
+    validate: Callable[[Path, str], list[str]],
+) -> list[str]:
+    """A store with no local files (hosted, spec 107): render into a new
+    directory of mode 0700 on this machine's disk, run the gate there, and
+    upload only a passing PDF, once. The directory goes in a `finally`, pass
+    or fail. The caller deleted the earlier object first, so a failure
+    leaves the key empty, as locally."""
+    directory = Path(tempfile.mkdtemp(prefix="harrier-pdf-"))
+    try:
+        # mkdtemp creates it 0700 already; said again so the mode does not
+        # rest on a library default.
+        os.chmod(directory, HOSTED_RENDER_DIRECTORY_MODE)
+        rendered = directory / PurePosixPath(key).name
+        render(html_text, rendered)
+        errors = validate(rendered, html_text)
+        if not errors:
+            store.put(key, rendered.read_bytes(), atomic=True)
+        return errors
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)

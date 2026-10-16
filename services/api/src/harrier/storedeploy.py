@@ -34,6 +34,7 @@ from harrier.tracker.schema import (
     OWNED_TABLES,
     SCHEDULE_READER_ROLE,
     SERVICE_ROLE,
+    STORAGE_USER_FUNCTION,
     TENANT_ROLE,
 )
 
@@ -201,8 +202,10 @@ def _check_data_api_roles(conn: Connection) -> str:
     trigger function and extension members are not harrier's and are not
     read (spec 105, N2). The one exception is `service_role`'s `EXECUTE` on
     `harrier_erase_owner(uuid)`, the door `harrier operator erase` uses and
-    nothing else (spec 111). The same function held by `anon`,
-    `authenticated` or `PUBLIC` is still a finding."""
+    nothing else (spec 111), and `authenticated`'s `EXECUTE` on
+    `harrier_storage_user_active()`, which the Storage policy calls for the
+    user Storage runs a request as (spec 107). Either function held by any
+    other of these roles or by `PUBLIC` is still a finding."""
     placeholders = ", ".join("?" for _ in DATA_API_ROLES)
     held = conn.execute(
         "SELECT r.rolname, c.relname, 'table' FROM pg_catalog.pg_roles r "
@@ -226,6 +229,7 @@ def _check_data_api_roles(conn: Connection) -> str:
         "WHERE d.classid = 'pg_catalog.pg_proc'::regclass AND d.objid = p.oid "
         "AND d.deptype = 'e') "
         "AND NOT (r.rolname = ? AND p.oid = pg_catalog.to_regprocedure(?)) "
+        "AND NOT (r.rolname = ? AND p.oid = pg_catalog.to_regprocedure(?)) "
         "AND pg_catalog.has_function_privilege(r.oid, p.oid, 'EXECUTE') "
         "ORDER BY 1, 3, 2",
         (
@@ -234,6 +238,8 @@ def _check_data_api_roles(conn: Connection) -> str:
             *DATA_API_ROLES,
             SERVICE_ROLE,
             f"public.{ERASE_FUNCTION}",
+            "authenticated",
+            f"public.{STORAGE_USER_FUNCTION}",
         ),
     ).fetchall()
     if held:
@@ -244,7 +250,8 @@ def _check_data_api_roles(conn: Connection) -> str:
         )
     return (
         f"data api roles: {', '.join(DATA_API_ROLES)} hold nothing in public "
-        f"but {SERVICE_ROLE}'s EXECUTE on {ERASE_FUNCTION}"
+        f"but {SERVICE_ROLE}'s EXECUTE on {ERASE_FUNCTION} "
+        f"and authenticated's EXECUTE on {STORAGE_USER_FUNCTION}"
     )
 
 

@@ -6,6 +6,7 @@ Routes speak Pydantic models only; the web app speaks generated types only.
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from collections.abc import AsyncGenerator
@@ -35,6 +36,7 @@ from harrier.apply.brief import Brief
 from harrier.connection import Connection, store_target
 from harrier.db import DatabaseOwnedByHost, connect, data_dir, default_db_path, lease_directory
 from harrier.demo import repo_root
+from harrier.filestore import FileStoreError, FileStoreUnavailable, FileStoreUnbound
 from harrier.hostlease import oldest_hold
 from harrier.logredact import scrub_outbound
 from harrier.logsetup import configure_logging, drop_access_queries, scrub_uvicorn_handlers
@@ -59,16 +61,19 @@ from harrier_api.demo import demo_db_path, is_demo_mode, seed_demo_db
 from harrier_api.deps import (
     CAUSE_JOIN,
     DATABASE_HELD_DETAIL,
+    STORAGE_UNAVAILABLE_DETAIL,
     VERB_IN_BODY,
     Conn,
     DatabaseHeldOut,
     DatabaseHoldOut,
     DatabaseRoute,
     ErrorOut,
+    StorageUnavailableOut,
     get_conn,
     merge_responses,
     require_operation,
     scope_for,
+    uses_storage,
 )
 from harrier_api.hostedauth import (
     BEARER_SCHEME_NAME,
@@ -85,6 +90,7 @@ from harrier_api.hostedauth import (
     fetch_from,
     hosted_config,
     hosted_mode,
+    storage_binder,
 )
 from harrier_api.hostedruns import HostedRuns, KeepAwake
 from harrier_api.hostedstore import (
@@ -123,6 +129,17 @@ from harrier_api.settings_routes import settings_router
 from harrier_api.tracks_routes import tracks_router
 
 API_VERSION = "0.1.0"
+
+logger = logging.getLogger(__name__)
+
+
+def route_of(request: Request) -> str:
+    """The request's method and route template, for a log line: never the
+    path as sent, whose selector can name a company or a role."""
+    route = request.scope.get("route")
+    template = getattr(route, "path", None)
+    return f"{request.method} {template if isinstance(template, str) else 'an unmatched route'}"
+
 
 # Stamped into the image at build time (Dockerfile, spec 051). Read from the
 # environment rather than from git, because the container has no .git directory
@@ -986,7 +1003,7 @@ async def evaluate_offer_route(
 @apply_router.get(
     "/apply/{selector}/artifacts",
     operation_id="listArtifacts",
-    dependencies=[Depends(require_token)],
+    dependencies=[Depends(require_token), Depends(uses_storage)],
     responses=APPLY_ERRORS,
 )
 def list_artifacts(
@@ -1016,7 +1033,7 @@ def list_artifacts(
 @apply_router.get(
     "/apply/{selector}/artifacts/{kind}",
     operation_id="readArtifact",
-    dependencies=[Depends(require_token)],
+    dependencies=[Depends(require_token), Depends(uses_storage)],
     responses=ARTIFACT_ERRORS,
 )
 def read_artifact(
@@ -1024,9 +1041,9 @@ def read_artifact(
     kind: str,
     conn: Conn,
     scope: Annotated[TrackScope, Depends(scope_for("artifacts"))],
-) -> FileResponse:
+) -> Response:
     from harrier.artifacts import UnknownArtifactKind, artifact_for_job
-    from harrier.filestore import local_file
+    from harrier.filestore import files
 
     job_id = _job_id_for(conn, scope, selector)
     try:
@@ -1035,18 +1052,39 @@ def read_artifact(
         # A path-shaped kind lands here, refused before anything touched the
         # filesystem, because the kind is a closed set (spec 047).
         raise HTTPException(status_code=404, detail=f"unknown artifact kind: {kind}") from error
-    if not artifact.exists or artifact.key is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"no {kind} for this job yet; run {artifact.produced_by} to produce it",
-        )
-    # Read through the seam (spec 107): locally the key's file, served from
-    # its path as before.
-    return FileResponse(
-        local_file(artifact.key),
-        media_type=artifact.media_type,
-        filename=artifact.filename,
+    absent = HTTPException(
+        status_code=404,
+        detail=f"no {kind} for this job yet; run {artifact.produced_by} to produce it",
     )
+    if not artifact.exists or artifact.key is None:
+        raise absent
+    # Read through the seam (spec 107): locally the key's file, served from
+    # its path as before; hosted the object's bytes, with the same media
+    # type and the same file name.
+    store = files()
+    path = store.local_path(artifact.key)
+    if path is not None:
+        return FileResponse(path, media_type=artifact.media_type, filename=artifact.filename)
+    data = store.read(artifact.key)
+    if data is None:
+        # Removed between the listing and the read.
+        raise absent
+    return Response(
+        content=data,
+        media_type=artifact.media_type,
+        headers={"Content-Disposition": attachment_disposition(artifact.filename)},
+    )
+
+
+def attachment_disposition(filename: str) -> str:
+    """The `Content-Disposition` a `FileResponse` sends for `filename`, so a
+    hosted download names the file exactly as a local one does."""
+    from urllib.parse import quote
+
+    quoted = quote(filename)
+    if quoted != filename:
+        return "attachment; filename*=utf-8''" + quoted
+    return f'attachment; filename="{filename}"'
 
 
 # --- apply: the application brief (spec 066, routed by spec 095) ---
@@ -1544,6 +1582,35 @@ def _app_with_routes(manager: RunManager) -> FastAPI:
         # does not decrypt (spec 106). The text names the kind only.
         return JSONResponse(status_code=409, content=ErrorOut(detail=str(error)).model_dump())
 
+    @app.exception_handler(FileStoreUnavailable)
+    async def storage_unavailable(request: Request, error: FileStoreUnavailable) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        # Hosted, Storage did not answer or answered with a server error
+        # (spec 107). Every route that reads or writes through the seam
+        # declares the 503 (`uses_storage`). The log names the route, the
+        # operation and the family, which is all the error's text holds.
+        logger.warning("storage unavailable on %s: %s", route_of(request), error)
+        body = StorageUnavailableOut(
+            detail=STORAGE_UNAVAILABLE_DETAIL, reason="storage_unavailable"
+        )
+        return JSONResponse(status_code=503, content=body.model_dump())
+
+    @app.exception_handler(FileStoreError)
+    async def storage_failed(request: Request, error: FileStoreError) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        # Storage refused the owner's own token (`FileStoreDenied`), an
+        # object over the limit, or any other answer: the policy or the
+        # configuration, not the caller's doing. 500, logged with the
+        # operation and the family (spec 107, Failure modes).
+        logger.error("storage refused on %s: %s", route_of(request), error)
+        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+
+    @app.exception_handler(FileStoreUnbound)
+    async def storage_unbound(request: Request, error: FileStoreUnbound) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
+        # Hosted, a path reached the seam with no store bound: a defect.
+        # 500 with a generic detail; the log names the route, never a key
+        # (spec 107, Failure modes). Nothing was written to the disk.
+        logger.error("no file store bound on %s", route_of(request))
+        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+
     @app.exception_handler(DatabaseOwnedByHost)
     async def database_held(request: Request, error: DatabaseOwnedByHost) -> JSONResponse:  # pyright: ignore[reportUnusedFunction]
         # Raised by `get_conn` inside the container while a host lease exists
@@ -1722,7 +1789,12 @@ def create_hosted_app(
     # Innermost first. The token is checked on the path without its /api
     # prefix and inside the host check, and every answer, a 401 included,
     # passes the CORS layer on its way out, so the SPA can read it.
-    app.add_middleware(HostedAuthMiddleware, verifier=TokenVerifier(config, keys))
+    # The token's check binds the request's file store too (spec 107).
+    app.add_middleware(
+        HostedAuthMiddleware,
+        verifier=TokenVerifier(config, keys),
+        binder=storage_binder(config),
+    )
     app.add_middleware(ApiPrefixMiddleware)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(config.allowed_hosts))
     app.add_middleware(

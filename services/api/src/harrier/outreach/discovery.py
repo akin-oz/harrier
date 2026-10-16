@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from harrier.connection import Connection
-from harrier.filestore import files, local_file, save_json
+from harrier.filestore import FileStoreError, files, local_file, save_json
 from harrier.outreach.contacts import upsert_contact
 from harrier.sources.apify_linkedin import (
     API_BASE_URL,
@@ -427,21 +427,44 @@ def candidates_output_path(company: str, role: str) -> Path:
     return local_file(candidates_key(company, role))
 
 
-def load_candidates_artifact(company: str, role: str) -> dict[str, object] | None:
+def load_candidates_artifact(
+    company: str, role: str, *, strict: bool = False
+) -> dict[str, object] | None:
+    """The staged candidates, or None when there are none to read.
+
+    `strict` is for approve and reject: a Storage error (unavailable or
+    denied) is raised, so the route answers 503 or 500 rather than calling
+    the candidate unstaged. The list reads an outage as nothing staged
+    (spec 107, "Callers keep their rules on read failure"; data-integrity
+    review of PR #363). A local read error is None either way, as before.
+    """
     try:
         raw = files().read(candidates_key(company, role))
         if raw is None:
             return None
         payload: object = json.loads(raw.decode("utf-8"))
+    except FileStoreError:
+        if strict:
+            raise
+        return None
     except (OSError, json.JSONDecodeError):
         return None
     return cast("dict[str, object]", payload) if isinstance(payload, dict) else None
 
 
 def write_candidates_artifact(company: str, role: str, payload: dict[str, object]) -> Path:
+    """Write the staged candidates and return the local file, for a command
+    that prints it."""
     key = candidates_key(company, role)
-    save_json(key, payload, atomic=False)
+    _save_candidates(key, payload)
     return local_file(key)
+
+
+def _save_candidates(key: str, payload: dict[str, object]) -> None:
+    """The write alone: a review or an approval names no file, so it runs
+    on a store with no local files too (spec 107; the hosted Outreach
+    page)."""
+    save_json(key, payload, atomic=False)
 
 
 def staged_candidates(company: str, role: str) -> list[dict[str, str]]:
@@ -472,13 +495,13 @@ def _artifact_candidates(payload: dict[str, object]) -> list[dict[str, str]]:
 def update_candidate_review_status(
     company: str, role: str, linkedin_url: str, review_status: str
 ) -> dict[str, str] | None:
-    payload = load_candidates_artifact(company, role)
+    payload = load_candidates_artifact(company, role, strict=True)
     if payload is None:
         return None
     for candidate in _artifact_candidates(payload):
         if str(candidate.get("linkedin_url") or "").strip().lower() == linkedin_url.strip().lower():
             candidate["review_status"] = review_status
-            write_candidates_artifact(company, role, payload)
+            _save_candidates(candidates_key(company, role), payload)
             return candidate
     return None
 
@@ -492,7 +515,7 @@ def approve_candidate(
     linkedin_url: str,
 ) -> dict[str, str] | None:
     """The only path from a staged candidate into the contacts store."""
-    payload = load_candidates_artifact(company, role)
+    payload = load_candidates_artifact(company, role, strict=True)
     if payload is None:
         return None
     for candidate in _artifact_candidates(payload):
@@ -518,7 +541,7 @@ def approve_candidate(
             notes=f"staged_candidate_query={candidate.get('raw_query', '')}",
         )
         candidate["review_status"] = "approved"
-        write_candidates_artifact(company, role, payload)
+        _save_candidates(candidates_key(company, role), payload)
         return added
     return None
 

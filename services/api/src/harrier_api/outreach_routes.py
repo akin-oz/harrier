@@ -26,7 +26,15 @@ from harrier.tracker.selector import SelectorError
 from harrier.tracker.store import TrackerError
 from harrier.tracks import Scope
 from harrier.tracks import Scope as TrackScope
-from harrier_api.deps import CAUSE_JOIN, Conn, DatabaseRoute, ErrorOut, merge_responses, scope_for
+from harrier_api.deps import (
+    CAUSE_JOIN,
+    Conn,
+    DatabaseRoute,
+    ErrorOut,
+    merge_responses,
+    scope_for,
+    uses_storage,
+)
 from harrier_api.localauth import TOKEN_RESPONSES, require_token
 from harrier_api.runmodels import RUN_CONFLICT_RESPONSES, Manager, RunOut, run_out
 from harrier_api.runs import RunParams, write_run_input
@@ -211,7 +219,7 @@ def list_candidates(
 @outreach_router.post(
     "/outreach/{selector}/candidates/approve",
     operation_id="approveCandidate",
-    dependencies=[Depends(require_token)],
+    dependencies=[Depends(require_token), Depends(uses_storage)],
     responses=CANDIDATE_ERRORS,
 )
 def approve(
@@ -256,7 +264,7 @@ def approve(
 @outreach_router.post(
     "/outreach/{selector}/candidates/reject",
     operation_id="rejectCandidate",
-    dependencies=[Depends(require_token)],
+    dependencies=[Depends(require_token), Depends(uses_storage)],
     responses=CANDIDATE_ERRORS,
 )
 def reject(

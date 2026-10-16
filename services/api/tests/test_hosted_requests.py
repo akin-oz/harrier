@@ -48,6 +48,7 @@ from test_hosted_auth import (
     API_HOST,
     CREDENTIALS_KEY_TEXT,
     KID,
+    PUBLISHABLE_KEY,
     RUN_DATABASE_URL,
     SPA_ORIGIN,
     SUPABASE_URL,
@@ -407,6 +408,7 @@ def hosted_environment(
     monkeypatch.setenv("HARRIER_CORS_ORIGINS", SPA_ORIGIN)
     monkeypatch.setenv(URL_VARIABLE, database_url)
     monkeypatch.setenv("HARRIER_CREDENTIALS_KEY", CREDENTIALS_KEY_TEXT)
+    monkeypatch.setenv("HARRIER_SUPABASE_PUBLISHABLE_KEY", PUBLISHABLE_KEY)
     monkeypatch.setenv(
         "HARRIER_RUN_DATABASE_URL",
         run_database_url if run_database_url is not None else RUN_DATABASE_URL,

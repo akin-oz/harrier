@@ -217,6 +217,9 @@ type ErrorOut = components["schemas"]["ErrorOut"];
 type DatabaseHeldOut = components["schemas"]["DatabaseHeldOut"];
 type HTTPValidationError = components["schemas"]["HTTPValidationError"];
 type AuthRefusalOut = components["schemas"]["AuthRefusalOut"];
+// Hosted, Storage unavailable on the routes that write the staged
+// candidates (spec 107).
+type StorageUnavailableOut = components["schemas"]["StorageUnavailableOut"];
 type User = ReturnType<typeof userEvent.setup>;
 
 async function clickInDueRow(user: User, name: string): Promise<void> {
@@ -474,10 +477,10 @@ test("an outreach refusal is read through the contract's types", () => {
     DatabaseHeldOut | AuthRefusalOut
   >();
   expectTypeOf<Declared<operations["approveCandidate"]["responses"][503]>>().toEqualTypeOf<
-    DatabaseHeldOut | AuthRefusalOut
+    DatabaseHeldOut | AuthRefusalOut | StorageUnavailableOut
   >();
   expectTypeOf<Declared<operations["rejectCandidate"]["responses"][503]>>().toEqualTypeOf<
-    DatabaseHeldOut | AuthRefusalOut
+    DatabaseHeldOut | AuthRefusalOut | StorageUnavailableOut
   >();
   expectTypeOf<Declared<operations["findContacts"]["responses"][503]>>().toEqualTypeOf<
     DatabaseHeldOut | AuthRefusalOut

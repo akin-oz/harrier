@@ -31,6 +31,7 @@ from pg_support import (
     superuser_url,
     with_user,
 )
+from storage_support import FakeStorage
 from test_owner_policy import fill, migrate_to
 
 from harrier import operator
@@ -51,7 +52,6 @@ from harrier.operator import (
     NOT_A_USER_ID,
     NOT_AN_ADDRESS,
     NOT_MIGRATED,
-    OBJECTS_REMAIN,
     ROLE_DID_NOT_HOLD,
     SECRET_KEY_VARIABLE,
     SUPABASE_URL_VARIABLE,
@@ -79,17 +79,18 @@ UNREACHABLE_URL = "postgresql://someone:pw-unused@127.0.0.1:1/nowhere"
 
 
 class FakeSupabase:
-    """The auth server's admin routes and Storage's list route, as far as
-    these commands call them. Records every call; `failures` answers a kind
-    of call with a status, once each, in order; `listings` says whether each
-    Storage listing finds an object (default: none)."""
+    """The auth server's admin routes and Storage's list and remove routes,
+    as far as these commands call them. Records every call; `failures`
+    answers a kind of call with a status, once each, in order. Storage is
+    `storage`, the fake every hosted store test uses
+    (`tests/storage_support.py`): a test puts objects there."""
 
     def __init__(self, db: PgConnection | None = None) -> None:
         self.db = db
         self.calls: list[tuple[str, str]] = []
         self.requests: list[httpx.Request] = []
         self.failures: dict[str, list[int]] = {}
-        self.listings: list[bool] = []
+        self.storage = FakeStorage()
         self.addresses: dict[str, str] = {}
         self.before: dict[str, Callable[[str], None]] = {}
         self.events: list[str] = []
@@ -116,6 +117,8 @@ class FakeSupabase:
             return {"GET": "get", "PUT": "ban", "DELETE": "delete"}[request.method]
         if path == f"/storage/v1/object/list/{BUCKET}":
             return "list"
+        if path == f"/storage/v1/object/{BUCKET}" and request.method == "DELETE":
+            return "remove"
         return "unknown"
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -146,9 +149,8 @@ class FakeSupabase:
             return self.user_call(kind, user)
         if kind == "ban":
             return httpx.Response(200, json={"id": user})
-        if kind == "list":
-            found = self.listings.pop(0) if self.listings else False
-            return httpx.Response(200, json=[{"name": "folder", "id": None}] if found else [])
+        if kind in ("list", "remove"):
+            return self.storage.handler(request)
         return httpx.Response(404, json={})
 
     def user_call(self, kind: str, user: str) -> httpx.Response:
@@ -516,6 +518,16 @@ def erasure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[Erasure
             yield Erasure(url, db, server, tmp_path)
 
 
+# The body of the seam's listing of one folder (spec 107; Storage's
+# `POST /object/list/{bucket}`), page one.
+LISTING: dict[str, object] = {
+    "prefix": "",
+    "limit": 100,
+    "offset": 0,
+    "sortBy": {"column": "name", "order": "asc"},
+}
+
+
 def step_lines(out: str) -> list[str]:
     return [line for line in out.splitlines() if line.startswith("step ")]
 
@@ -554,12 +566,13 @@ def test_erase_runs_its_steps_in_order(
     assert json.loads(ban.content) == {"ban_duration": "876000h"}
     assert json.loads(erasure.fake.of_kind("delete")[0].content) == {"should_soft_delete": False}
     for listing in erasure.fake.of_kind("list"):
-        assert json.loads(listing.content) == {"prefix": a, "limit": 1, "offset": 0}
+        assert json.loads(listing.content) == LISTING | {"prefix": a}
         assert listing.headers["apikey"] == SECRET and "authorization" not in listing.headers
         assert listing.method == "POST"
-    # Nothing in Storage is deleted: no call but those four kinds, and none
-    # of them a delete of an object.
+    # An empty prefix: listed, nothing to remove.
     assert {kind for kind, _ in erasure.fake.calls} == {"get", "ban", "list", "delete"}
+    assert "step 2 storage: 0 objects deleted" in out
+    assert "step 5 stragglers: 0 objects deleted" in out
 
     lines = step_lines(out)
     assert [line.split(":")[0] for line in lines if not line.startswith("step 3")] == [
@@ -604,16 +617,19 @@ def test_erase_resumes_after_a_failed_step(
     assert (code, err) == (1, "error: step 1 (ban): the server answered 500\n")
     assert erasure.rows(a) == all_rows and fake.events == ["get", "ban"]
 
-    # Step 2: Storage cannot be read, then it holds an object. Rows untouched.
+    # Step 2: Storage cannot be read, then it refuses the remove of an object
+    # it holds. Rows untouched, the object still there.
     fake.events.clear()
     fake.failures["list"] = [503]
     code, out, err = run(erasure.argv(), capsys)
     assert (code, err) == (1, "error: step 2 (storage): the server answered 503\n")
     assert erasure.rows(a) == all_rows
-    fake.listings = [True]
+    fake.storage.put(f"{a}/resumes/{'0' * 64}.pdf", b"%PDF-1.4 synthetic", "application/pdf")
+    fake.storage.failures["remove"] = [500]
     code, out, err = run(erasure.argv(), capsys)
-    assert (code, err) == (1, f"error: step 2 (storage): {OBJECTS_REMAIN}\n")
+    assert (code, err) == (1, "error: step 2 (storage): the server answered 500\n")
     assert erasure.rows(a) == all_rows and erasure.user_exists(a)
+    assert fake.storage.names() == [f"{a}/resumes/{'0' * 64}.pdf"]
     assert "delete" not in fake.events and erasure.ledger() == []
 
     # Step 3: a row lock is held past the lock timeout. Nothing deleted.
@@ -637,19 +653,28 @@ def test_erase_resumes_after_a_failed_step(
     assert [line["complete"] for line in erasure.ledger()] == [False]
     assert erasure.ledger()[0]["completed"] == ["ban", "storage", "rows"]
 
-    # Step 5: an object appears after the delete. The user is gone.
-    fake.listings = [False, True]
+    # Step 5: an object appears after the delete, and Storage refuses its
+    # remove. The user is gone.
+    def late_object(_user: str) -> None:
+        fake.storage.put(f"{a}/answers/{'1' * 64}.md", b"# synthetic", "text/markdown")
+        fake.storage.failures["remove"] = [500]
+
+    fake.before["delete"] = late_object
     code, out, err = run(erasure.argv(), capsys)
-    assert (code, err) == (1, f"error: step 5 (stragglers): {OBJECTS_REMAIN}\n")
+    assert (code, err) == (1, "error: step 5 (stragglers): the server answered 500\n")
+    assert "step 2 storage: 0 objects deleted" in out
     assert not erasure.user_exists(a)
     assert [line["complete"] for line in erasure.ledger()] == [False, False]
+    fake.before.clear()
 
     # A re-run: the user is gone, so steps 1, 3 and 4 are skipped, and the
-    # rest completes.
+    # rest completes, the straggler removed.
     fake.events.clear()
     code, out, err = run(erasure.argv(), capsys)
     assert (code, err) == (0, "")
-    assert fake.events == ["get", "list", "list"]
+    assert fake.events == ["get", "list", "list", "remove", "list"]
+    assert "step 2 storage: 1 objects deleted" in out
+    assert fake.storage.names() == []
     assert "step 1 ban: skipped" in out and "step 3 rows: skipped" in out
     assert "step 4 auth user: skipped" in out
     assert erasure.ledger()[-1]["complete"] is True
@@ -658,38 +683,60 @@ def test_erase_resumes_after_a_failed_step(
 def test_this_build_deletes_no_storage_object(
     erasure: Erasure, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Until spec 107's Storage seam exists (spec 111, Amendment
-    (2026-10-15)) the erase only lists the owner's prefix. Run with an object
-    listed and without, it makes no Storage call but that list, and the list
-    has the documented shape. The module names no `storage.objects` and no
-    Storage route but the list. Spec 107's build replaces the check with the
-    delete and updates this test."""
-    a, fake = erasure.a, erasure.fake
-    fake.listings = [True]
-    code, _, err = run(erasure.argv(), capsys)
-    assert code == 1 and OBJECTS_REMAIN in err
-    # The listing stopped it: no row call, no auth delete.
-    assert fake.events == ["get", "ban", "list"]
-    assert erasure.user_exists(a)
-    fake.events.clear()
-    code, _, err = run(erasure.argv(), capsys)
+    """Spec 107's build replaced spec 111's list-only check with the delete
+    (spec 107, Note (2026-10-15)); the name is kept because specs 107 and
+    111 cite it. What it pins now: steps 2 and 5 delete every object under
+    the owner's prefix, at any depth and past one listing page, through
+    Storage's list and remove routes with the secret key in `apikey`, and
+    delete no other owner's object. No Storage object is deleted by SQL:
+    neither the operator module nor the seam names `storage.objects`."""
+    from harrier import filestore
+
+    a, b, fake = erasure.a, erasure.b, erasure.fake
+    mine = [
+        f"{a}/resumes/{'2' * 64}.pdf",
+        f"{a}/discovery/3/apify_academic/runs/run01.json",
+        *(f"{a}/descriptions/{index:064x}.json" for index in range(150)),
+    ]
+    theirs = [f"{b}/resumes/{'2' * 64}.pdf", f"{b}/descriptions/{'3' * 64}.json"]
+    for name in [*mine, *theirs]:
+        fake.storage.put(name, b"{}")
+
+    code, out, err = run(erasure.argv(), capsys)
+
     assert (code, err) == (0, "")
+    assert f"step 2 storage: {len(mine)} objects deleted" in out
+    assert "step 5 stragglers: 0 objects deleted" in out
+    assert fake.storage.names() == sorted(theirs)
     storage = [r for r in fake.requests if r.url.path.startswith("/storage/")]
     assert storage
     for request in storage:
-        assert request.method == "POST"
-        assert request.url.path == f"/storage/v1/object/list/{BUCKET}"
-        assert json.loads(request.content) == {"prefix": a, "limit": 1, "offset": 0}
-        assert request.headers["apikey"] == SECRET
-
-    tree = ast.parse(Path(operator.__file__).read_text(encoding="utf-8"))
-    strings = [
-        node.value
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        assert request.headers["apikey"] == SECRET and "authorization" not in request.headers
+        assert (request.method, request.url.path) in {
+            ("POST", f"/storage/v1/object/list/{BUCKET}"),
+            ("DELETE", f"/storage/v1/object/{BUCKET}"),
+        }
+        body = json.loads(request.content)
+        if request.method == "POST":
+            assert str(body["prefix"]).split("/")[0] == a
+        else:
+            assert all(str(name).startswith(f"{a}/") for name in body["prefixes"])
+    # The descriptions folder needed a second page.
+    offsets = [
+        json.loads(r.content)["offset"]
+        for r in storage
+        if r.method == "POST" and json.loads(r.content)["prefix"] == f"{a}/descriptions"
     ]
-    assert not [text for text in strings if "storage.objects" in text.lower()]
-    assert {text for text in strings if text.startswith("/storage")} == {"/storage/v1/object/list/"}
+    assert offsets[:2] == [0, 100]
+
+    for module in (operator, filestore):
+        tree = ast.parse(Path(module.__file__ or "").read_text(encoding="utf-8"))
+        strings = [
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        ]
+        assert not [text for text in strings if "storage.objects" in text.lower()], module
 
 
 def test_a_rerun_after_the_rows_are_gone_deletes_none(

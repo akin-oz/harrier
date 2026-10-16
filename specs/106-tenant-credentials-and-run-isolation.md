@@ -1460,3 +1460,14 @@ and
   run binding", and spec 108's agent's report relayed on 2026-10-13.
 - `specs/109-gmail-and-telegram-for-tenants.md` and pull request #312.
 - `specs/115-spec-105-holds-on-a-real-supabase-project.md`, F1 and F2.
+
+## Note (2026-10-16): spec 107's change
+
+Spec 107's "Changes to approved specs" asks this of spec 106, approved with
+it; its Storage identity part moved to spec 107 (its Amendment
+(2026-10-13)). Nothing else in this spec changes.
+
+- Run inputs (`services/api/src/harrier_api/runs.py`, `write_run_input`)
+  hold an owner's free text on the machine's disk, in the API's
+  `data_dir()/runs/inputs`, until the run that consumes them ends. Hosted,
+  the run journal is not written; its rows are `run_records`.

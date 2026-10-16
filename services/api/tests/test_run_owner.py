@@ -52,6 +52,7 @@ from test_hosted_auth import (
 from harrier.backup import ARCHIVE_PREFIX, ARCHIVE_SUFFIX
 from harrier.db import connect
 from harrier.demo import repo_root
+from harrier.filestore import LocalFileStore, bind_files
 from harrier.tracker.store import add_job
 from harrier.tracks import default_scope
 from harrier_api.app import create_app, create_hosted_app
@@ -402,6 +403,29 @@ START_ROUTES = {
 }
 
 
+def northwind_job() -> int:
+    """A job the routes can name, added by the test outside any request.
+    Hosted, the insert's description digest reads through the seam, which
+    refuses with nothing bound (spec 107), so the test binds the local store
+    for its own setup."""
+    with bind_files(LocalFileStore()):
+        conn = connect()
+        try:
+            return add_job(
+                conn,
+                {
+                    "company": "Northwind Labs",
+                    "title": "Senior Engineer",
+                    "url": "https://boards.example.com/northwind/1",
+                    "source": "greenhouse",
+                    "location": "Remote, Europe",
+                },
+                scope=default_scope(conn),
+            )
+        finally:
+            conn.close()
+
+
 @pytest.mark.parametrize("case", REFUSED_CASES, ids=lambda case: f"{case.method} {case.path}")
 def test_a_kind_not_offered_hosted_answers_501_naming_its_spec(
     case: StartCase,
@@ -414,19 +438,7 @@ def test_a_kind_not_offered_hosted_answers_501_naming_its_spec(
     journal entry, no run and no process."""
     monkeypatch = hosted_process
     # A job and an archive, so each route reaches the run it would start.
-    conn = connect()
-    job = add_job(
-        conn,
-        {
-            "company": "Northwind Labs",
-            "title": "Senior Engineer",
-            "url": "https://boards.example.com/northwind/1",
-            "source": "greenhouse",
-            "location": "Remote, Europe",
-        },
-        scope=default_scope(conn),
-    )
-    conn.close()
+    job = northwind_job()
     backups = tmp_path / "backups"
     backups.mkdir()
     archive = f"{ARCHIVE_PREFIX}2026-01-01-000000{ARCHIVE_SUFFIX}"
@@ -483,19 +495,7 @@ def test_a_kind_offered_hosted_reaches_its_start(
     apps do not have, so `start` is replaced here (test integrity review of
     PR #316)."""
     monkeypatch = hosted_process
-    conn = connect()
-    job = add_job(
-        conn,
-        {
-            "company": "Northwind Labs",
-            "title": "Senior Engineer",
-            "url": "https://boards.example.com/northwind/1",
-            "source": "greenhouse",
-            "location": "Remote, Europe",
-        },
-        scope=default_scope(conn),
-    )
-    conn.close()
+    job = northwind_job()
     manager = hosted_manager(tmp_path)
     given: list[tuple[str, str]] = []
 

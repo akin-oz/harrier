@@ -545,6 +545,27 @@ def _api_token(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[repo
     monkeypatch.setenv("HARRIER_API_TOKEN", TEST_TOKEN)
 
 
+@pytest.fixture(autouse=True)
+def storage(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """Every hosted file store in the suite talks to an in-memory fake of
+    Supabase Storage (`tests/storage_support.py`), so no test reaches the
+    network (spec 107). A test that inspects what was stored asks for this
+    fixture by name. Typed `Any` so this module imports no httpx at
+    collection. A copy of this file run alone (the pin net in
+    `tests/test_store_cli.py`) has no `storage_support` beside it and no
+    hosted store to fake."""
+    try:
+        from storage_support import FakeStorage
+    except ImportError:
+        return None
+
+    import harrier.filestore as filestore_module
+
+    fake = FakeStorage()
+    monkeypatch.setattr(filestore_module, "storage_client", fake.client)
+    return fake
+
+
 def auth() -> dict[str, str]:
     """Headers a request from the operator's own browser would carry."""
     return {"X-Harrier-Token": TEST_TOKEN}

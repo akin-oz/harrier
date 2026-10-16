@@ -65,6 +65,7 @@ from harrier.tracker.schema import (
     SCHEDULE_INPUTS_FUNCTION,
     SCHEDULE_READER_ROLE,
     SERVICE_ROLE,
+    STORAGE_USER_FUNCTION,
     SUPABASE_FUNCTIONS_IN_PUBLIC,
     SUPABASE_ROLES,
     TENANT_ROLE,
@@ -143,11 +144,13 @@ TENANT_ATTRIBUTES = (
 
 # The SECURITY DEFINER functions harrier declares in public: a new owner's
 # track 1 (spec 105), the scheduler's one listing across owners (spec 108),
-# and one owner's erasure (spec 111). Any other is a catalog problem.
+# one owner's erasure (spec 111), and whether the Storage policy's user is
+# active (spec 107). Any other is a catalog problem.
 DECLARED_DEFINER_FUNCTIONS = (
     "harrier_new_owner",
     "harrier_schedule_inputs",
     "harrier_erase_owner",
+    "harrier_storage_user_active",
 )
 
 # The attributes the schedule reader must not have (spec 108).
@@ -1123,6 +1126,10 @@ def catalog_problems(conn: PgConnection) -> list[str]:
             # The one function service_role executes: one owner's erasure
             # (spec 111). It still holds no table or sequence privilege.
             if grantee == SERVICE_ROLE and signature == ERASE_FUNCTION:
+                continue
+            # The one function authenticated executes: the Storage policy's
+            # check that its user exists and is not banned (spec 107).
+            if grantee == "authenticated" and signature == STORAGE_USER_FUNCTION:
                 continue
             problems.append(f"{name}(): executable by {grantee}")
     # PUBLIC on its own, so the problem names the grant that reaches every
