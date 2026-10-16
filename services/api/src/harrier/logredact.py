@@ -180,6 +180,13 @@ class IdentityRedactionFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if not self._values:
             return True
+        # The secret scrub first, whatever ran before this filter on the
+        # handler (spec 136). The rendering below fills `exc_text` with
+        # `traceback.format_exception` and writes the rendered message over
+        # `msg`, and either one prints a driver error by `str()`, row values
+        # and all. A record scrubbed already is scrubbed again with no
+        # change, so a handler that runs the scrub first loses nothing.
+        SECRET_SCRUB.filter(record)
         try:
             message = record.getMessage()
         except (TypeError, ValueError):
@@ -641,7 +648,9 @@ class SecretScrubFilter(logging.Filter):
     identity values and is not installed when they cannot be loaded: the two
     cases where a hosted store's password would pass unscrubbed. This one
     needs no database, so it is always installed, before the identity filter
-    on the same handler.
+    on the same handler. The identity filter runs it again before it renders
+    a record, so the order stops mattering (spec 136); a second pass changes
+    nothing.
 
     The record is mutated, as the identity filter mutates it, so every
     handler after the first sees the scrubbed text. The filter never raises:
@@ -733,3 +742,10 @@ class SecretScrubFilter(logging.Filter):
         record.args = ()
         # uvicorn's coloured formatter renders this instead of `msg`.
         record.__dict__.pop("color_message", None)
+
+
+# One instance, holding no state, so installing it twice on a handler is a
+# no-op: `create_app` runs more than once in a process under test. Here, not
+# in `harrier.logsetup`, which imports this module: the identity filter runs
+# it before it renders a record (spec 136).
+SECRET_SCRUB = SecretScrubFilter()

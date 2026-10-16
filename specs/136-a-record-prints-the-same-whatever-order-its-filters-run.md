@@ -116,18 +116,18 @@ That is unchanged here and named in Honest limitations.
       row value and the store password, and whose message holds the
       identity value: the output holds none of the row value, the password
       or the identity value
-      (planned test_the_identity_filter_alone_withholds_what_the_scrub_withholds).
+      (`services/api/tests/test_log_filter_order.py::test_the_identity_filter_alone_withholds_what_the_scrub_withholds`).
 - [ ] The same, for a psycopg error passed as an argument to a message
       that holds the identity value
-      (planned test_the_identity_filter_alone_withholds_a_driver_argument).
+      (`services/api/tests/test_log_filter_order.py::test_the_identity_filter_alone_withholds_a_driver_argument`).
 - [ ] For the records above, a handler with the two filters in each order
       prints the same text, and that text equals what the handler
       `configure_logging` installs prints
-      (planned test_filter_order_does_not_change_what_a_record_prints).
+      (`services/api/tests/test_log_filter_order.py::test_filter_order_does_not_change_what_a_record_prints`).
 - [ ] A record passed through the secret scrub twice prints what it prints
       after once, for a record holding a URL password, a secret parameter,
       a driver error in its chain and a driver error as an argument
-      (planned test_the_secret_scrub_is_idempotent).
+      (`services/api/tests/test_log_filter_order.py::test_the_secret_scrub_is_idempotent`).
 - [ ] Every existing test in `services/api/tests/test_logging.py`,
       `services/api/tests/test_store_password_scrub.py` and
       `services/api/tests/test_hosted_logs.py` passes unchanged.

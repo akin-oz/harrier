@@ -49,7 +49,7 @@ from harrier.connection import (
     open_store,
 )
 from harrier.db import DatabaseOwnedByContainer, DatabaseOwnershipError, connect, data_dir
-from harrier.logredact import ACCESS_QUERY, SecretScrubFilter, forget_all
+from harrier.logredact import ACCESS_QUERY, SECRET_SCRUB, forget_all
 
 LOG_DIR_NAME = "logs"
 LOG_FILE_NAME = "harrier.log"
@@ -68,10 +68,6 @@ HOSTED_NOTE = (
 )
 
 _configured = False
-
-# One instance, holding no state, so installing it twice on a handler is a
-# no-op: `create_app` runs more than once in a process under test.
-SECRET_SCRUB = SecretScrubFilter()
 
 # uvicorn's own loggers, which do not propagate to the root, so a filter on
 # the root handlers never sees their records. `uvicorn.error` propagates to
