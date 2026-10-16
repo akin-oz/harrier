@@ -63,6 +63,8 @@ harrier log line that passes one, would print it unmasked.
 - `services/api/src/harrier/logredact.py`: `SecretScrubFilter` masks the
   hosts described below.
 - Tests in `services/api/tests/test_logging.py`.
+- `services/api/tests/test_store_password_scrub.py`, as the amendment
+  below states.
 
 ## Behavior
 
@@ -84,9 +86,11 @@ record's message, exception text and stack text, wherever the password is
 masked today, and in the same pass. Matching is case-insensitive. A host is
 replaced only where it is not part of a longer host name: the character
 before it and the character after it are each not a letter, digit or `-`,
-and not a `.` followed by a letter or digit. An IPv6 address is matched
-with and without its brackets. The port and everything else on the line
-stay.
+and not a `.` followed by a letter or digit. A character before the host
+that ends an escape counts as a boundary too: a backslash escape such as
+`\n` written out by `repr`, or a percent escape such as `%40` (`@`) in an
+encoded URL. An IPv6 address is matched with and without its brackets. The
+port and everything else on the line stay.
 
 **The user names.** For the same three variables, the user name is the
 `user` value libpq reads from the URL, or the one `urlsplit` reads when
@@ -94,13 +98,31 @@ libpq cannot parse it. On Supabase's pooler it is `postgres.<project ref>`,
 and the ref names the project as surely as the host does. psycopg's repr
 prints it whenever it differs from the database name.
 
-A user name is replaced with `REDACTED` only where it follows `user=`: the
-characters `user=`, then the name, either bare or in single quotes, then
-whitespace, `)`, `,`, the closing quote or the end of the text. That is the
-shape psycopg's repr and libpq's keyword form both write. Matching is exact,
-as Postgres role names are. A user name elsewhere in the text stays, so a
-plain user such as `postgres` does not mask that word wherever a message
-uses it.
+A user name is replaced with `REDACTED` wherever it stands as a whole
+role name, in any of its forms: as libpq reads it, as the URL writes it,
+and percent-encoded. Each of those forms, and each host, is also matched as
+`repr` and `json.dumps` quote it, as the password forms are (spec 133):
+JSON writes a non-ASCII character as a `\u` escape, so `café` is
+`caf\u00e9` there. It stands whole where the character before it and the
+character after it cannot continue a role name: neither is a letter, digit,
+`_`, `$` or `-`, and a `.` counts only where another such character follows
+it after the name, or comes before it. A letter or digit before the name
+that ends an escape counts as a boundary, as it does for a host. So the
+user is masked after `user=` (bare or quoted, with or without spaces), in
+a URL's userinfo (plain, JSON-escaped or percent-encoded), in a dict or
+JSON value, before `@host` without a scheme, and in libpq's own text
+(`for user "<name>"`).
+
+**The plain role `postgres` is never masked.** It is the default role of
+every Postgres server and names no project, and as a word it appears in
+ordinary messages (`the Postgres store`, `postgresql://`). A store whose
+user is `postgres` masks its host and password only.
+
+Matching is exact, as Postgres role names are. A role name that is not a
+store's user, such as one the schema creates, stays. A store's user that is
+also a word in a message, such as a role named `harrier_account`, is masked
+in that message too: the rule hides more than the identifying value, never
+less.
 
 So the line in Problem prints as:
 
@@ -131,7 +153,13 @@ refusing, as spec 103 meant.
 | A multi-host URL (`host1,host2`) | Each host masked |
 | Two variables naming the same host | Masked once; no doubled marker |
 | The host overlaps a password form in the same text | The union of the spans is replaced, as `_mask` does for overlapping password forms |
-| The user name appears in a message without `user=` before it | Not masked |
+| The user name appears anywhere as a whole role name | Masked, in any form: `{'user': '<name>'}`, `"user": "<name>"`, `user = '<name>'`, `<name>@host`, `postgresql%3A%2F%2F<name>%3A...`, `for user "<name>"` |
+| The user is `postgres` | Not masked anywhere; the host and password still are |
+| The user inside a longer role name (`x.<name>`, `<name>x`, `<name>.more`) | Not masked |
+| A log call passes the user or a host as an argument of its own, and the format string continues it (`"user=%sx"`) | The argument is masked on its own, as every string argument is scrubbed before the record is rendered: `user=REDACTEDx`. This hides more, never less |
+| A logged store URL, `postgresql://postgres.<ref>:...@host/db` | The user, the password and the host are masked: `postgresql://REDACTED:REDACTED@REDACTED/db` |
+| `user=` followed by the name and `&`, `;`, `.` or a closing `"` | Masked |
+| A host after a written-out escape (`\ndb.example.co`) or a percent escape (`%40db.example.co`) | Masked |
 | `user=` followed by a name that none of the three URLs holds | Not masked |
 | `user=` followed by a longer name that starts with the URL's user (`user=postgres.abcx` for `postgres.abc`) | Not masked: the name must end where the boundary rule says |
 | A URL with no user name | No user masked from it. libpq then connects as the operating system's login name, which the repr may print; see Honest limitations |
@@ -143,29 +171,52 @@ refusing, as spec 103 meant.
 - [ ] A record logged through `logging.lastResort` after
   `scrub_last_resort()`, with psycopg's rollback format and a transaction
   repr naming the host of `HARRIER_DATABASE_URL`, prints no host and keeps
-  the port (planned test_the_last_resort_masks_the_store_host).
+  the port (`services/api/tests/test_logging.py::test_the_last_resort_masks_the_store_host`).
 - [ ] The same for a host named by `HARRIER_IMPORT_DATABASE_URL` and by
   `HARRIER_ACCOUNT_DATABASE_URL`, each set alone in the environment
-  (planned test_each_store_url_host_is_masked).
+  (`services/api/tests/test_logging.py::test_each_store_url_host_is_masked`).
 - [ ] `HARRIER_IMPORT_DATABASE_URL` and `HARRIER_ACCOUNT_DATABASE_URL` set
   only in `.env` are not read; `HARRIER_DATABASE_URL` set only in `.env` is
-  (planned test_the_host_variables_are_read_where_their_specs_read_them).
+  (`services/api/tests/test_logging.py::test_the_host_variables_are_read_where_their_specs_read_them`).
 - [ ] The same record prints `user=REDACTED` for the user name of each
-  of the three URLs, keeps a bare `postgres` elsewhere in the message, and
+  of the three URLs, keeps `postgres` when a URL's user is `postgres`, and
   keeps `user=` followed by a name no URL holds
-  (planned test_the_store_user_is_masked_after_user_equals).
+  (`services/api/tests/test_logging.py::test_the_store_user_is_masked_after_user_equals`).
+- [ ] A store URL's user is masked in its userinfo, as written and
+  percent-encoded, and after `user=` before `&`, `;`, `.` and inside
+  double quotes
+  (`services/api/tests/test_logging.py::test_the_store_user_is_masked_in_a_url_and_at_every_ending`).
+- [ ] A store's user is masked as a whole role name in a dict repr, a
+  JSON value, libpq's keyword form with spaces, an escaped double quote,
+  `<name>@host` without a scheme, a percent-encoded URL and libpq's
+  `for user "<name>"`, and is kept inside a longer role name
+  (`services/api/tests/test_logging.py::test_the_store_user_is_masked_wherever_it_stands_as_a_role_name`).
+- [ ] A non-ASCII user and host are masked as `json.dumps` and `repr`
+  write them
+  (`services/api/tests/test_logging.py::test_a_non_ascii_user_and_host_are_masked_as_json_and_repr_write_them`).
+- [ ] A host after a written-out backslash escape or a `%40` escape is
+  masked
+  (`services/api/tests/test_logging.py::test_a_host_after_an_escape_is_masked`).
 - [ ] A configured stream handler masks the same record
-  (planned test_a_configured_handler_masks_the_store_host).
+  (`services/api/tests/test_logging.py::test_a_configured_handler_masks_the_store_host`).
 - [ ] `db.example.co` is not masked inside `db.example.com`, is masked in
   upper case, and `localhost` is never masked
-  (planned test_the_host_mask_keeps_its_boundaries).
+  (`services/api/tests/test_logging.py::test_the_host_mask_keeps_its_boundaries`).
 - [ ] Every host of a multi-host URL is masked
-  (planned test_every_host_of_a_multi_host_url_is_masked).
+  (`services/api/tests/test_logging.py::test_every_host_of_a_multi_host_url_is_masked`).
+- [ ] A record logged before psycopg is loaded masks every host of a
+  multi-host URL, as libpq reads it
+  (`services/api/tests/test_logging.py::test_a_store_url_is_read_as_libpq_reads_it_before_the_driver_loads`).
+- [ ] A URL libpq cannot read has its `urlsplit` host and user masked
+  (`services/api/tests/test_logging.py::test_a_url_libpq_cannot_read_is_read_with_urlsplit`).
+- [ ] A record whose format string does not fit its arguments keeps the
+  format string with the host masked
+  (`services/api/tests/test_logging.py::test_a_format_that_does_not_fit_its_arguments_masks_the_host`).
 - [ ] `query cancellation failed: %s` with a psycopg `OperationalError`
   whose text names the host still prints `OperationalError` alone
-  (planned test_a_cancel_failure_prints_no_host).
+  (`services/api/tests/test_logging.py::test_a_cancel_failure_prints_no_host`).
 - [ ] `scrub_outbound` returns a text naming the host unchanged
-  (planned test_scrub_outbound_keeps_the_host).
+  (`services/api/tests/test_logging.py::test_scrub_outbound_keeps_the_host`).
 - [ ] `uv run ruff check`, `uv run pyright` and `just check` pass.
 
 ## Proof / origin
@@ -215,6 +266,82 @@ refusing, as spec 103 meant.
 - The route found is narrow: a failed ROLLBACK on a connection libpq still
   reports as OK. No test drives it against a real server; the tests build
   the repr with `connection_summary` on a stub connection.
+
+## Amendment (2026-10-15): spec 133's log assertions
+
+Found while implementing. Three assertions in
+`services/api/tests/test_store_password_scrub.py` read a log record's text
+for the URL with its password masked and its host kept,
+`postgresql://harrier:REDACTED@db.example.test`. That host is a store
+URL's host, so this spec masks it. With the user masked too, by the
+amendment below, they now read
+`postgresql://REDACTED:REDACTED@REDACTED:5432/tracker`, and assert the
+host appears nowhere in the record, its exception and stack text included.
+They still prove what they proved, and prove this spec on the root handler
+and the log file as well. The absence check was added after the local
+review of PR #360 showed that a masked copy of the URL being present did
+not rule out an unmasked one in the exception text.
+
+`test_a_record_that_cannot_be_scrubbed_is_withheld` replaced
+`scrub_outbound` with a function that raises, to make the filter fail. The
+filter now calls `scrub_logged`, which applies `scrub_outbound`'s masking
+and this spec's, so the test replaces that instead. Its assertions do not
+change.
+
+The assertions on HTTP error bodies and run events keep the host, as
+Behavior says, and pass unchanged.
+
+A store URL is read as libpq reads it whenever psycopg is installed, the
+driver imported if it is not yet loaded, as `url_parts` already does for
+the password forms. A first draft read it only when the driver was already
+loaded and cached the `urlsplit` reading otherwise, so a record logged
+before the driver loaded left every host after the first of a multi-host
+URL unmasked for the rest of the process (privacy review of PR #360).
+
+## Amendment (2026-10-15): the user in a URL, more endings, escapes
+
+The local privacy review of PR #360 found three ways the approved text let
+a store's identity through. Akin chose on 2026-10-15 to close all three:
+
+1. **The user in a URL.** Masking the user only after `user=` left it in a
+   logged URL, `postgresql://postgres.<ref>:REDACTED@REDACTED/...`. On
+   Supabase's shared pooler the host is regional, so there the user is the
+   only part that names the project. It is now masked in a URL's userinfo
+   as well.
+2. **More endings after `user=`.** The first text ended a bare name only
+   at whitespace, `)`, `,`, a closing `'` or the end of the text, so
+   `?user=<name>&sslmode=require`, `user=<name>;`, `user=<name>.` and
+   `user="<name>"` printed it. A bare name now ends at any character that
+   cannot continue a role name, and double quotes are read as single ones
+   are.
+3. **A host after an escape.** The boundary rule read the letter or digit
+   that ends `\n` or `%40` as part of a longer host name, so a host after
+   either printed. Both now count as a boundary.
+
+The spec 133 log assertions read the URL with the user kept; they now
+read `postgresql://REDACTED:REDACTED@REDACTED:5432/tracker`.
+
+A local privacy review of the first build of this amendment found two
+places where the code did less than the text above says. The user was
+masked as libpq reads it and as `quote` encodes it, but not as the URL
+writes it, so a URL encoding only some characters, as
+`encodeURIComponent` does, printed its own user. And only a backslash
+followed by one letter counted as an escape, so a host after `\x1b`,
+`\xa0`, `\u200b` or a JSON `\u00a0` printed. Both are fixed: the user as
+written is masked, and `\xHH`, `\uHHHH` and `\UHHHHHHHH` count as
+escapes.
+
+## Amendment (2026-10-15): the user wherever it stands
+
+A local privacy review of the amendment above found the user still
+printed in shapes the "only after `user=` or in userinfo" rule left out:
+a percent-encoded URL, a dict or JSON value, libpq's keyword form with
+spaces, an escaped double quote, `<name>@host` without a scheme, and
+libpq's own `password authentication failed for user "<name>"` when that
+text is copied outside a driver error. Akin chose on 2026-10-15 to mask
+the user wherever it stands as a whole role name, with the host's
+boundaries and escapes, except the plain role `postgres`. Behavior above
+states the rule. It replaces the two places of the amendment above.
 
 ## Migration
 
