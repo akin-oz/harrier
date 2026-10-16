@@ -1,8 +1,8 @@
 ---
 spec: 149
 title: The Apply page shows the stored description and takes one when none was captured
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M6
 depends: [009, 013, 047, 079, 094, 095]
 ---
