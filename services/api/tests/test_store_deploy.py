@@ -434,12 +434,13 @@ def test_check_deploy_passes_on_a_migrated_granted_store(
     assert out.splitlines() == [
         f"store version: postgres {target_version()}",
         "data api roles: anon, authenticated, service_role hold nothing in public "
-        "but service_role's EXECUTE on harrier_erase_owner(uuid)",
+        "but service_role's EXECUTE on harrier_erase_owner(uuid) "
+        "and authenticated's EXECUTE on harrier_storage_user_active()",
         f"row security: enabled and forced on {len(OWNED_TABLES)} tables",
         f"{api}: member of {TENANT_ROLE}",
         f"{run_login}: member of {TENANT_ROLE}",
         f"{scheduler}: member of {SCHEDULE_READER_ROLE}, {TENANT_ROLE}",
-        "storage.objects: absent, no policy to check",
+        "storage.objects: no policy but harrier_files_owner_only",
     ]
     never_the_url(server, out, err)
 
@@ -622,7 +623,8 @@ def test_check_deploy_leaves_supabases_own_event_trigger_function_alone(
     assert (code, err) == (0, "")
     assert (
         "data api roles: anon, authenticated, service_role hold nothing in public "
-        "but service_role's EXECUTE on harrier_erase_owner(uuid)"
+        "but service_role's EXECUTE on harrier_erase_owner(uuid) "
+        "and authenticated's EXECUTE on harrier_storage_user_active()"
     ) in out
 
 
@@ -726,21 +728,11 @@ def test_check_deploy_holds_run_and_scheduler_logins_to_their_roles(
     assert failure == f"check-deploy: login role {scheduler}: {CANNOT_LOG_IN}"
 
 
-def storage_objects(server: Server, *policies: str) -> None:
-    server.sql(
-        "CREATE SCHEMA storage",
-        # As Supabase's `postgres` may use it.
-        "GRANT USAGE ON SCHEMA storage TO harrier_migrator",
-        "CREATE TABLE storage.objects (id uuid, owner_id uuid)",
-        "ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY",
-        *[f"CREATE POLICY {name} ON storage.objects FOR SELECT USING (true)" for name in policies],
-    )
-
-
 def test_check_deploy_names_a_policy_on_storage_objects_that_is_not_harriers(
     server: Server, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    storage_objects(server, "harrier_files_owner_only")
+    """The migrated store carries migration 23's policy on the shim's
+    storage.objects (spec 107), and nothing else passes."""
     code, out, err = run(bare(server), capsys)
     assert (code, err) == (0, "")
     assert out.splitlines()[-1] == "storage.objects: no policy but harrier_files_owner_only"
@@ -751,6 +743,23 @@ def test_check_deploy_names_a_policy_on_storage_objects_that_is_not_harriers(
     assert failure == (
         "check-deploy: storage policies: storage.objects carries another_one, anyone_reads"
     )
+
+
+def test_check_deploy_says_when_there_is_no_storage(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A store without Supabase's storage objects has no policy to check."""
+    from contextlib import closing
+
+    from harrier.connection import Connection
+    from harrier.pgstore import postgres_connect
+
+    with fresh_database() as url, closing(postgres_connect(url)) as raw:
+        raw.execute(b"DROP SCHEMA storage CASCADE")
+        conn = Connection.postgres(raw)
+        assert storedeploy._check_storage_policies(conn) == (  # pyright: ignore[reportPrivateUsage]
+            "storage.objects: absent, no policy to check"
+        )
 
 
 def test_check_deploy_writes_nothing(server: Server, monkeypatch: pytest.MonkeyPatch) -> None:

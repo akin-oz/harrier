@@ -140,9 +140,11 @@ SHIM_ROLES: tuple[tuple[str, str], ...] = (
     ("service_role", "NOLOGIN NOINHERIT BYPASSRLS"),
 )
 
-SHIM_STATEMENTS: tuple[str, ...] = (
+AUTH_SHIM_STATEMENTS: tuple[str, ...] = (
     "CREATE SCHEMA auth",
-    "CREATE TABLE auth.users (id uuid PRIMARY KEY)",
+    # `banned_until` as the auth server keeps it: the storage policy reads
+    # it (spec 107, Amendment (2026-10-15)).
+    "CREATE TABLE auth.users (id uuid PRIMARY KEY, banned_until timestamptz)",
     # The body Supabase's auth server ships (migration
     # 20220224000811_update_auth_functions): the old single claim first,
     # then the sub of the claims document, as uuid. Null without either.
@@ -197,6 +199,72 @@ SHIM_STATEMENTS: tuple[str, ...] = (
         for kind in ("TABLES", "SEQUENCES", "FUNCTIONS")
     ),
 )
+
+# The role that owns Supabase's storage schema on a project. The migrator is
+# made a member, as the migrating role must create a policy on
+# storage.objects and a row in storage.buckets (spec 107, Honest
+# limitations, assumption 4).
+STORAGE_OWNER_ROLE = "supabase_storage_admin"
+
+# Supabase's storage objects as far as harrier touches them (spec 107, Scope
+# item 11): the two tables with the columns Storage's own migrations give
+# them, and `storage.foldername()` with the body Storage ships. Row security
+# on, as Supabase turns it on, and the Data API roles granted everything, as
+# on a project. No migration creates any of these.
+STORAGE_SHIM_STATEMENTS: tuple[str, ...] = (
+    f"CREATE SCHEMA storage AUTHORIZATION {STORAGE_OWNER_ROLE}",
+    """
+    CREATE TABLE storage.buckets (
+        id text PRIMARY KEY,
+        name text NOT NULL,
+        owner uuid,
+        owner_id text,
+        created_at timestamptz DEFAULT now(),
+        updated_at timestamptz DEFAULT now(),
+        public boolean DEFAULT false,
+        avif_autodetection boolean DEFAULT false,
+        file_size_limit bigint,
+        allowed_mime_types text[]
+    )
+    """,
+    """
+    CREATE TABLE storage.objects (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        bucket_id text REFERENCES storage.buckets (id),
+        name text,
+        owner uuid,
+        owner_id text,
+        created_at timestamptz DEFAULT now(),
+        updated_at timestamptz DEFAULT now(),
+        last_accessed_at timestamptz DEFAULT now(),
+        metadata jsonb,
+        user_metadata jsonb,
+        version text,
+        UNIQUE (bucket_id, name)
+    )
+    """,
+    # The body Supabase's Storage server ships: every segment but the last.
+    """
+    CREATE FUNCTION storage.foldername(name text) RETURNS text[]
+    LANGUAGE plpgsql AS $$
+    DECLARE
+        _parts text[];
+    BEGIN
+        SELECT string_to_array(name, '/') INTO _parts;
+        RETURN _parts[1:array_length(_parts, 1) - 1];
+    END
+    $$
+    """,
+    "ALTER TABLE storage.buckets ENABLE ROW LEVEL SECURITY",
+    "ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY",
+    f"ALTER TABLE storage.buckets OWNER TO {STORAGE_OWNER_ROLE}",
+    f"ALTER TABLE storage.objects OWNER TO {STORAGE_OWNER_ROLE}",
+    f"ALTER FUNCTION storage.foldername(text) OWNER TO {STORAGE_OWNER_ROLE}",
+    "GRANT USAGE ON SCHEMA storage TO anon, authenticated, service_role",
+    "GRANT ALL ON storage.buckets, storage.objects TO anon, authenticated, service_role",
+)
+
+SHIM_STATEMENTS: tuple[str, ...] = (*AUTH_SHIM_STATEMENTS, *STORAGE_SHIM_STATEMENTS)
 
 
 def _create_role(conn: PgConnection, name: str, attributes: str) -> None:
@@ -276,6 +344,9 @@ def ensure_migrator(conn: PgConnection) -> None:
     for role in MIGRATOR_MEMBER_OF:
         _grant_to_migrator(conn, role, "ADMIN OPTION, INHERIT TRUE, SET TRUE")
     _grant_to_migrator(conn, TENANT_ROLE, "ADMIN OPTION, INHERIT FALSE, SET TRUE")
+    # The storage schema's owner, so the migrator may add the bucket and the
+    # policy (spec 107).
+    _grant_to_migrator(conn, STORAGE_OWNER_ROLE, "ADMIN OPTION, INHERIT TRUE, SET TRUE")
 
 
 def install_shim(url: str, statements: tuple[str, ...] = SHIM_STATEMENTS) -> None:
@@ -291,6 +362,9 @@ def install_shim(url: str, statements: tuple[str, ...] = SHIM_STATEMENTS) -> Non
     with psycopg.connect(superuser_url(url), autocommit=True) as conn:
         for name, attributes in SHIM_ROLES:
             _create_role(conn, name, attributes)
+        # Not one of SHIM_ROLES, which are the Data API's: it owns the
+        # storage schema, as on a project (spec 107).
+        _create_role(conn, STORAGE_OWNER_ROLE, "NOLOGIN NOINHERIT")
         ensure_migrator(conn)
         with conn.transaction():
             for statement in statements:

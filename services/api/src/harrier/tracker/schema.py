@@ -639,6 +639,10 @@ MIGRATIONS: list[tuple[int, list[str]]] = [
     # owner, who deletes the file. Empty on purpose, and declared so in
     # SINGLE_DIALECT_MIGRATIONS.
     (22, []),
+    # Postgres only (spec 107): the Storage bucket and its policy. The local
+    # store has no Storage. Empty on purpose, and declared so in
+    # SINGLE_DIALECT_MIGRATIONS.
+    (23, []),
 ]
 
 # --- Postgres (spec 103, ADR-013) ---
@@ -931,6 +935,10 @@ SINGLE_DIALECT_MIGRATIONS: dict[int, tuple[Dialect, str]] = {
     22: (
         "postgres",
         "owner erasure (spec 111); the local store has one owner, who deletes the file",
+    ),
+    23: (
+        "postgres",
+        "the Storage bucket and its policy (spec 107); the local store has no Storage",
     ),
 }
 
@@ -1900,6 +1908,124 @@ POSTGRES_ERASURE: list[str] = [
     f"GRANT EXECUTE ON FUNCTION public.{ERASE_FUNCTION} TO {SERVICE_ROLE}",
 ]
 
+# --- the Storage bucket and its policy (spec 107) ---
+
+# Migration 23's own copies of the bucket's settings, frozen as a migration's
+# text is history. `tests/test_storage_policy.py` holds them equal to the
+# seam's (`harrier.filestore.BUCKET`, `SIZE_LIMIT`, `CONTENT_TYPES`).
+MIGRATION_23_BUCKET = "harrier-files"
+MIGRATION_23_SIZE_LIMIT = 6000000
+MIGRATION_23_MIME_TYPES: tuple[str, ...] = (
+    "application/pdf",
+    "text/markdown",
+    "text/html",
+    "application/json",
+    "application/x-ndjson",
+)
+STORAGE_POLICY = "harrier_files_owner_only"
+# The narrow door the policy uses to read `auth.users`, which
+# `authenticated` holds no grant on (spec 107, Amendment (2026-10-15): the
+# policy refuses a banned or deleted user).
+STORAGE_USER_FUNCTION = "harrier_storage_user_active()"
+
+MIGRATION_23_NEEDS_STORAGE = (
+    "migration 23 needs Supabase's storage schema (storage.buckets, "
+    "storage.objects, storage.foldername()); this store has none"
+)
+MIGRATION_23_OTHER_BUCKET = (
+    "migration 23 found bucket harrier-files with other settings; "
+    "it does not change a bucket it did not create"
+)
+
+_MIGRATION_23_TYPES = ", ".join(_sql_text(value) for value in MIGRATION_23_MIME_TYPES)
+_STORAGE_OWNER_ONLY = f"""
+        bucket_id = {_sql_text(MIGRATION_23_BUCKET)}
+        AND (storage.foldername(name))[1] = (SELECT auth.uid())::text
+        AND (SELECT public.{STORAGE_USER_FUNCTION})
+"""
+
+POSTGRES_STORAGE: list[str] = [
+    # 1. Supabase's storage objects, which no migration creates: the tests
+    # install them in a shim (tests/pg_support.py), and a Supabase project
+    # has them. Without them the migration is refused whole.
+    f"""
+    DO $$
+    BEGIN
+        IF to_regclass('storage.buckets') IS NULL
+            OR to_regclass('storage.objects') IS NULL
+            OR to_regprocedure('storage.foldername(text)') IS NULL
+        THEN
+            RAISE EXCEPTION {_sql_text(MIGRATION_23_NEEDS_STORAGE)};
+        END IF;
+    END
+    $$
+    """,
+    # 2. The bucket: private, with the seam's size limit and types. A bucket
+    # of that id with other settings is not this migration's to change.
+    f"""
+    DO $$
+    BEGIN
+        IF EXISTS (
+            SELECT 1 FROM storage.buckets b
+            WHERE b.id = {_sql_text(MIGRATION_23_BUCKET)}
+                AND NOT (
+                    b.public IS FALSE
+                    AND b.file_size_limit IS NOT DISTINCT FROM {MIGRATION_23_SIZE_LIMIT}
+                    AND b.allowed_mime_types @> ARRAY[{_MIGRATION_23_TYPES}]::text[]
+                    AND b.allowed_mime_types <@ ARRAY[{_MIGRATION_23_TYPES}]::text[]
+                )
+        ) THEN
+            RAISE EXCEPTION {_sql_text(MIGRATION_23_OTHER_BUCKET)};
+        END IF;
+    END
+    $$
+    """,
+    f"""
+    INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    VALUES (
+        {_sql_text(MIGRATION_23_BUCKET)},
+        {_sql_text(MIGRATION_23_BUCKET)},
+        false,
+        {MIGRATION_23_SIZE_LIMIT},
+        ARRAY[{_MIGRATION_23_TYPES}]::text[]
+    )
+    ON CONFLICT (id) DO NOTHING
+    """,
+    # 3. Whether the session's user exists and is not banned. `authenticated`
+    # has no grant on auth.users, so the policy asks this definer function,
+    # which reads that one row and returns a boolean. It takes no argument,
+    # so a caller learns about no user but itself. The user is the claims'
+    # `sub`, read by harrier_owner_id() as every owner reference since
+    # migration 16 is (spec 105, amendment of 2026-10-11). An empty
+    # search_path, as every definer function here has.
+    f"""
+    CREATE FUNCTION public.{STORAGE_USER_FUNCTION} RETURNS boolean
+    LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+        SELECT EXISTS (
+            SELECT 1 FROM auth.users u
+            WHERE u.id = public.{OWNER_ID_FUNCTION}
+                AND (u.banned_until IS NULL OR u.banned_until <= pg_catalog.now())
+        )
+    $$
+    """,
+    # In the migration's own transaction, as PostgreSQL advises for a definer
+    # function. Executable by `authenticated`, the role Storage runs a user's
+    # request as, and by no other grantee.
+    (
+        f"REVOKE ALL ON FUNCTION public.{STORAGE_USER_FUNCTION} "
+        f"FROM PUBLIC, anon, authenticated, service_role, {TENANT_ROLE}"
+    ),
+    f"GRANT EXECUTE ON FUNCTION public.{STORAGE_USER_FUNCTION} TO authenticated",
+    # 4. The one policy on storage.objects. No ALTER TABLE: Supabase enables
+    # row security there itself and restricts other DDL in that schema.
+    f"""
+    CREATE POLICY {STORAGE_POLICY} ON storage.objects
+        AS PERMISSIVE FOR ALL TO authenticated
+        USING ({_STORAGE_OWNER_ONLY})
+        WITH CHECK ({_STORAGE_OWNER_ONLY})
+    """,
+]
+
 POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (POSTGRES_BASELINE_VERSION, POSTGRES_BASELINE),
     (10, POSTGRES_OWNERS),
@@ -1943,6 +2069,8 @@ POSTGRES_MIGRATIONS: list[tuple[int, list[str]]] = [
     (21, POSTGRES_JOB_VERDICTS),
     # Spec 111: one owner's erasure.
     (22, POSTGRES_ERASURE),
+    # Spec 107: the Storage bucket and its policy.
+    (23, POSTGRES_STORAGE),
 ]
 
 
