@@ -1,8 +1,8 @@
 ---
 spec: 148
 title: The Anthropic provider sets its effort and reports a cut-off answer
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [012, 058, 106, 107]
 ---
@@ -176,7 +176,7 @@ Tests stub the HTTP call; no test reaches the Anthropic API.
 
 ## Decisions
 
-Akin agreed both on 2026-10-16.
+Akin agreed both on 2026-10-16 and approved the spec the same day.
 
 1. **The default model stays `claude-sonnet-4-5`.** A change to
    `claude-sonnet-5-5` is its own spec, written after a few resumes and
