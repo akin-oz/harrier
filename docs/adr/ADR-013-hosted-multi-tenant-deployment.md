@@ -174,6 +174,18 @@ Postgres hosted), and a JWT boundary the local product never had. Chosen.
    seen-state, trained scoring models) are objects in a private bucket
    under a path prefixed by the owner's id, with a storage policy matching
    decision 1.
+
+   **Amended (spec 107).** The storage policy matches decision 1 in shape
+   (owner from the session, every command, fails closed) but not in role.
+   Storage switches to the role in the caller's token, so the policy on
+   `storage.objects` is `harrier_files_owner_only`, `FOR ALL TO
+   authenticated`, limited to bucket `harrier-files` and to object names
+   whose first segment is the caller's `auth.uid()`. A tenant can therefore
+   reach their own objects with their own token and the publishable key,
+   without harrier; they cannot reach another owner's. File access goes
+   through one seam, `harrier.filestore`: local files locally, the bucket
+   hosted, bound to the request's owner. Object names that would carry a
+   person's name are hashed.
 7. **Topology.** Vercel serves the SPA build only; it holds no secret but
    the Supabase URL, the anon key and the API URL. Fly runs the API image
    (FastAPI, run manager, Chromium, poppler) in one region. Supabase runs

@@ -512,8 +512,7 @@ specs".
 - **Another policy on `storage.objects` that matches the bucket.**
   Permissive policies combine with OR, so it would widen access. The
   storage catalog test fails on any policy on `storage.objects` other than
-  `harrier_files_owner_only` (planned
-  test_storage_objects_carries_only_the_harrier_policy). A real project's
+  `harrier_files_owner_only` (`services/api/tests/test_storage_policy.py::test_storage_objects_carries_only_the_harrier_policy`). A real project's
   other policies are checked by spec 110 (its Amendment of 2026-10-11).
 
 ## Acceptance criteria
@@ -546,51 +545,42 @@ PR 1 (refactor):
 PR 2 (hosted):
 
 - [ ] Hosted, `files()` with nothing bound raises `FileStoreUnbound`, and
-      no route falls back to the local disk (planned
-      test_an_unbound_hosted_store_refuses).
+      no route falls back to the local disk (`services/api/tests/test_hosted_files.py::test_an_unbound_hosted_store_refuses`).
 - [ ] A hosted request binds a store for its own `sub`, and a synchronous
-      route sees it (planned
-      test_a_request_binds_its_owner_for_sync_routes).
+      route sees it (`services/api/tests/test_hosted_files.py::test_a_request_binds_its_owner_for_sync_routes`).
 - [ ] With a fake Storage server, every writer in the first table run
       hosted writes nothing under `data_dir()` and uploads only under
       `<owner>/` (planned
       test_a_hosted_store_writes_nothing_under_the_data_directory).
 - [ ] Object names hash every non-listed family and keep listed families
       plain, and the downloaded file name is the key's last segment
-      (planned test_object_names_never_carry_a_person).
+      (`services/api/tests/test_hosted_files.py::test_object_names_never_carry_a_person`).
 - [ ] Each Storage answer in the error table maps to its class, and no
-      message contains the token, the owner or the full key (planned
-      test_storage_errors_name_the_family_only).
+      message contains the token, the owner or the full key (`services/api/tests/test_hosted_files.py::test_storage_errors_name_the_family_only`).
 - [ ] Hosted unavailable Storage raises `DamagedStateError` for seen state
       and mail state, and a status change still records with an empty
-      description digest (planned
-      test_an_outage_never_reads_as_empty_state).
+      description digest (`services/api/tests/test_hosted_files.py::test_an_outage_never_reads_as_empty_state`).
 - [ ] Two owners with the same model key get their own model from the
-      cache (planned test_the_model_cache_never_crosses_owners).
+      cache (`services/api/tests/test_hosted_files.py::test_the_model_cache_never_crosses_owners`).
 - [ ] A hosted PDF that fails the gate uploads nothing and leaves no
-      temporary directory; one that passes is uploaded once (planned
-      test_a_hosted_pdf_uploads_only_after_the_gate).
+      temporary directory; one that passes is uploaded once (`services/api/tests/test_hosted_files.py::test_a_hosted_pdf_uploads_only_after_the_gate`).
 - [ ] `harrier store migrate` on a shimmed database prints
       `postgres 0 -> <target_version()>`; without the storage shim it
       exits 1 with the precheck text and the store stays at the version
-      before the storage migration (planned
-      test_the_storage_migration_needs_supabase_storage).
+      before the storage migration (`services/api/tests/test_storage_policy.py::test_the_storage_migration_needs_supabase_storage`).
 - [ ] Acting as owner A with `as_role(conn, "authenticated", owner)` from
       `services/api/tests/pg_support.py`, the shim's `storage.objects` accepts an insert,
       select, update and delete under A's prefix in `harrier-files`, and
       refuses each under B's prefix, under no prefix, and in another
-      bucket; `anon` is refused everything (planned
-      test_the_bucket_policy_confines_an_owner_to_their_prefix).
+      bucket; `anon` is refused everything (`services/api/tests/test_storage_policy.py::test_the_bucket_policy_confines_an_owner_to_their_prefix`).
 - [ ] The only policy on `storage.objects` is `harrier_files_owner_only`,
       permissive, `ALL`, roles `{authenticated}`, with the expressions
-      above; the bucket is private with the limit and types above (planned
-      test_storage_objects_carries_only_the_harrier_policy).
+      above; the bucket is private with the limit and types above (`services/api/tests/test_storage_policy.py::test_storage_objects_carries_only_the_harrier_policy`).
 - [ ] A migration statement creates no `storage` schema, table or
       function; only `services/api/tests/pg_support.py` does.
 - [ ] Hosted mode refuses to start without a valid
       `HARRIER_SUPABASE_PUBLISHABLE_KEY`, with the text under Failure
-      modes, and never prints the value (planned
-      test_hosted_mode_needs_a_publishable_key).
+      modes, and never prints the value (`services/api/tests/test_hosted_auth.py::test_hosted_mode_needs_a_publishable_key`).
 - [ ] `just contract` shows the 503 declaration admitting the Storage
       body on the routes that use the seam, and no other contract diff.
 - [ ] ADR-013 decision 6 carries the "Amended (spec 107)" note;
@@ -1004,10 +994,10 @@ ban has lapsed passes again.
 - [ ] As `authenticated` with a valid token, a write under the owner's
       prefix succeeds; after the user is banned it is refused; after the
       user is deleted it is refused
-      (planned test_the_storage_policy_refuses_a_banned_or_deleted_user).
+      (`services/api/tests/test_storage_policy.py::test_the_storage_policy_refuses_a_banned_or_deleted_user`).
 - [ ] The definer function is executable by `authenticated` and by no other
       grantee, and returns only a boolean
-      (planned test_the_storage_policy_function_is_narrow).
+      (`services/api/tests/test_storage_policy.py::test_the_storage_policy_function_is_narrow`).
 
 ## Amendment (2026-10-15): PR 1's build
 
@@ -1057,3 +1047,178 @@ and nothing here changes what PR 2 builds.
   (`services/api/src/harrier/scoring/train.py:131-133`). The PDF gate's
   temporary file is a local path by design (Behavior, "PDF rendering").
   Templates, configuration files and the Gmail token are not data paths.
+
+## Amendment (2026-10-16): PR 2's build, and a third pull request
+
+Written by the change that builds PR 2. Spec 107 is delivered in three pull
+requests, not two: PR 2 is the hosted store and every request path, and a
+third, PR 3, binds runs. The split is stated here rather than made silently
+(Open decision 6 chose two; this amends it).
+
+### Why a third pull request
+
+- **Size.** The store, the request binding, the migration and its policy,
+  the operator binding, the contract and the documents are one reviewable
+  change. Binding runs touches the run manager, the CLI's hosted entry, the
+  run environment, every writer that returns a local path, the scheduler
+  and spec 106's table, and is a second one.
+- **A question for Akin first.** The Decision taken (2026-10-15) says a
+  scheduled run binds no store, so `files()` refuses, and "the kinds that
+  write files stay refused for scheduled runs". Spec 108's scheduler runs
+  `discovery` and `academic-discovery` (`HOSTED_JOBS` in
+  `services/api/src/harrier/hostedschedule.py`). Both read and write files
+  on every run: seen state, the incoming summaries, the academic run
+  datasets and the description cache. Today a hosted run writes them in its
+  owner's run directory on the machine's disk (spec 106,
+  `services/api/src/harrier_api/runenv.py`). Once runs are bound as this
+  spec says, every scheduled run would fail at its first file, which turns
+  spec 108's hosted schedule off. PR 3 waits for Akin to choose: refuse the
+  two scheduled jobs until a later spec gives scheduled runs a Storage
+  identity; or let a scheduled run keep its owner's run directory on the
+  machine's disk, which the criterion of the Amendment (2026-10-13), "never
+  returns this spec's local store", would then exclude scheduled runs from;
+  or another way.
+
+### What PR 2 builds
+
+Scope items 7, 8 (the request's binding), 9 to 16, the Amendment
+(2026-10-15) on banned and deleted users, the Note (2026-10-15) on spec
+111's erase, and the `save_dataset` point of the Amendment (2026-10-15):
+PR 1's build
+(`services/api/tests/test_hosted_files.py::test_academic_discovery_never_reads_an_unbound_store_as_a_failed_source`).
+Hosted runs are unchanged: a hosted run's process has no `HARRIER_AUTH`, so
+`files()` there is still the local store rooted at the owner's run
+directory, as spec 106 built it. For Scope item 16, specs 104, 106 and 117
+each gain a note holding their line; specs 110 and 111 already carry
+theirs, and spec 108's waits for PR 3 (below).
+
+### What PR 3 builds
+
+- The run binding of the Amendment (2026-10-13) and the Decision taken
+  (2026-10-15), with its criterion (planned
+  test_a_hosted_run_binds_its_owners_storage), and the answer to the
+  question above.
+- The writers that return a local path (`run_tailor`,
+  `write_cover_letter_artifacts`, `write_output`, `evaluate_offer`,
+  `save_dataset`, and the outreach and scoring writers, which call
+  `local_file`) made to run on a store with no local files, and the
+  criterion that every writer run hosted writes nothing under the data
+  directory (planned
+  test_a_hosted_store_writes_nothing_under_the_data_directory).
+- Lifting spec 106's refusals. **No kind is lifted in PR 2.** All eight
+  kinds spec 106 marks "501 until spec 107" (`tailor`, `cover-letter`,
+  `answers`, `evaluate`, `outreach-draft`, `find-contacts`,
+  `backfill-posters`, `scoring-export`) keep their 501
+  (`services/api/src/harrier_api/runs.py`, `HOSTED_RUN_KINDS`). Until runs
+  are bound, such a run would write the owner's artifacts to the machine's
+  disk, where no hosted route can serve them, since the artifact routes now
+  read Storage. PR 3 lifts the kinds whose writers it moves, each with the
+  credential kinds it needs (`tailor`, `cover-letter`, `answers` and
+  `evaluate` need `ai`, as `evaluate-prospects` does, `tailor` not with
+  `--no-ai`), and amends spec 106's table in the same change.
+- The spec 108 line under "Changes to approved specs". It says a scheduled
+  run binds its owner's store; the Decision taken (2026-10-15) says it binds
+  none. It is not written into spec 108 until the question above is
+  answered.
+
+### Settled by the build
+
+- **Storage's REST shapes, pinned in tests against a fake server**
+  (`services/api/tests/storage_support.py`,
+  `services/api/tests/test_hosted_files.py::test_the_hosted_store_speaks_storages_api`).
+  The paths come from Storage's published API and `storage-js`, read
+  2026-10-16. Each is an assumption for spec 110's staging check, beside
+  those under Honest limitations:
+  10. Upload is `POST /storage/v1/object/harrier-files/<name>`, the bytes
+      as the body, with `x-upsert: true`, the content type and
+      `cache-control: no-cache` as headers, answering 200.
+  11. Download is `GET /storage/v1/object/harrier-files/<name>`. An
+      object's size, update time and entity tag come from `GET
+      /storage/v1/object/info/harrier-files/<name>` (`size`, `updated_at`
+      or `last_modified`, `etag`).
+  12. Remove is `DELETE /storage/v1/object/harrier-files` with
+      `{"prefixes": [<names>]}`, answering 200 whether or not each object
+      existed.
+  13. List is `POST /storage/v1/object/list/harrier-files` with `prefix`
+      (no trailing slash), `limit`, `offset` and `sortBy`; a folder entry
+      has `id` null, and an object's size is `metadata.size`.
+  14. An absent object is answered 404, or 400 whose body's `statusCode`
+      is "404"; a policy refusal 403, or 400 whose `statusCode` is "403".
+      The seam reads the body's status when the answer is 400.
+  15. With a secret key in `apikey` and no `Authorization` header, Storage
+      acts as the service role, as spec 111's list did.
+- **No request line reaches a log.** httpx logs every request at INFO with
+  its URL, which holds the owner's id and the object name. The seam holds
+  the `httpx` and `httpcore` loggers at WARNING
+  (`services/api/src/harrier/filestore.py`, `quiet_request_logs`).
+- **Where the 503 is declared.** `uses_storage`, a route dependency in
+  `services/api/src/harrier_api/deps.py`, widens a route's 503 to admit
+  `StorageUnavailableOut`. Four routes can meet an unavailable Storage:
+  the artifact list and read, and the staged candidate approval and
+  rejection, which write the candidates file. The other request paths
+  that touch files keep their rules on read failure (Behavior, "Callers
+  keep their rules on read failure"): capture logs a failed description
+  write, a status change records an empty digest, the staged candidate
+  list reads as empty, and the settings page reads the rules score and no
+  export. A denied or unbound store answers 500
+  (`services/api/tests/test_hosted_files.py::test_an_artifact_route_answers_503_when_storage_is_unavailable`).
+- **The approval writes no path.** Approving or rejecting a staged
+  candidate saved the file through `write_candidates_artifact`, which
+  returns its local path and so refused hosted. Both now save the file
+  without naming it (`services/api/src/harrier/outreach/discovery.py`).
+- **Messages that named the qualified name.** `load_mapping`'s
+  `DamagedStateError` and the model's log line named the store's
+  qualified name, which hosted holds the owner. Both name
+  `shown_name(key)`, a new member of `FileStore`: the path locally, as
+  before, and the key's first segment hosted. The model cache still keys
+  by the qualified name.
+- **The definer function reads the claims' `sub` through
+  `harrier_owner_id()`,** not `auth.uid()`: since migration 16 nothing
+  harrier owns in `public` reaches `auth.uid()` (spec 105, amendment of
+  2026-10-11,
+  `services/api/tests/test_owner_policy.py::test_nothing_harrier_owns_references_auth_uid`).
+  The policy's folder check uses `auth.uid()` as the SQL above says. Both
+  read the `sub` of `request.jwt.claims`; `auth.uid()` falls back to the
+  legacy `request.jwt.claim.sub` when that is unset. The function is
+  `harrier_storage_user_active()`. It takes no argument, so a caller
+  learns about no user but itself, and it returns a boolean.
+- **The deploy check.** `harrier store check-deploy` (spec 110) allowed
+  the Data API roles no `EXECUTE` in `public` but `service_role`'s on the
+  erase function. It now also allows `authenticated`'s on
+  `harrier_storage_user_active()`, and still refuses any other role's
+  (`services/api/src/harrier/storedeploy.py`,
+  `services/api/tests/test_store_deploy.py::test_check_deploy_passes_on_a_migrated_granted_store`).
+- **The test shim.** `auth.users` gains `banned_until`, which the policy
+  reads. The storage schema is owned by a role `supabase_storage_admin`,
+  of which the migrator is a member, so the migration may add the bucket
+  and the policy (assumption 4).
+- **The hosted start.** Besides the publishable key, the hosted start now
+  needs `httpx` among the `hosted` group's packages.
+- **The erase deletes.** Steps 2 and 5 of `harrier operator erase` list
+  the owner's prefix at every depth, page by page, and remove what they
+  find through the seam's operator binding, printing how many objects
+  each deleted. A Storage failure names the step and the HTTP status. The
+  test that pinned the list-only check keeps its name,
+  `services/api/tests/test_operator.py::test_this_build_deletes_no_storage_object`,
+  because spec 111 cites it and this spec changes nothing else there. It
+  now pins that the delete goes through the Storage API, reaches only the
+  owner's prefix, and that nothing names `storage.objects`.
+- **Spec 146's asks are built.** `SupabaseFileStore.for_operator` binds
+  one owner outside any request, built beside a `LocalFileStore` rather
+  than through `files()`, and reads, stats and puts under that owner's
+  prefix only. `SIZE_LIMIT` and `CONTENT_TYPES` are exported from
+  `harrier.filestore`
+  (`services/api/tests/test_hosted_files.py::test_the_seam_exports_its_limit_and_types`).
+  The criterion that no local command imports httpx keeps spec 146's
+  exception for `harrier operator` and `harrier store import-artifacts`
+  (`services/api/tests/test_cli_imports_no_httpx.py::test_the_local_seam_imports_no_httpx`).
+- **A hosted process outside a request.** With `HARRIER_AUTH=supabase`,
+  domain code that reaches a file outside a request now refuses. Tests
+  that set up rows in a hosted process bind a store for their own setup.
+- **Spec 117 is approved now.** The line under "Written into other specs"
+  is added to it as a note, and nothing else in it changes.
+
+### Acceptance criteria (amendment of 2026-10-16)
+
+- [ ] PR 3 builds the run binding, the writers and the lifted kinds above,
+      after Akin answers the question on scheduled runs.
