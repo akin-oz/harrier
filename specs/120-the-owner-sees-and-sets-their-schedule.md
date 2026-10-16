@@ -260,6 +260,56 @@ Each is built as written here.
   schedule could not be read: <refusal>. Saving replaces it." above a form
   with nothing ticked and the browser's zone.
 
+### From the local reviews of PR #384
+
+- **The server's definition cannot be read.** When `config/schedule.json`
+  fails to load, nothing is on offer. The hosted answer then has
+  `offered` null, `jobs` empty, `timezone` null, the loader's words in
+  `error`, and `installed_state` "The server's schedule definition could
+  not be read, so nothing runs on a schedule until it is fixed."
+  (`services/api/tests/test_owner_schedule.py::test_hosted_schedule_offers_nothing_when_the_definition_cannot_be_read`).
+  The Settings section shows that refusal and no form, because a save
+  could only store "no jobs" over the owner's choice
+  (`apps/web/src/pages/settings/ScheduleChoiceSection.hosted.test.tsx`:
+  "settings schedule section offers no save when the schedule definition
+  cannot be read"). The Operations page names the definition, not the
+  owner's row, as what could not be read.
+- **Tests the criteria did not name.** The test integrity review mutated
+  the build and found behaviour this spec states with no test that fails
+  without it. Each now has one:
+  - the refused row's `installed_state`, and the spec's wording pinned as
+    literals rather than imported from the route;
+  - a refusal's text scrubbed before it leaves the process
+    (`services/api/tests/test_owner_schedule.py::test_hosted_schedule_scrubs_a_refusal_before_answering`);
+  - a weekly job's next slot a week on, across a clock change
+    (`services/api/tests/test_owner_schedule.py::test_the_next_slot_is_the_first_after_now_in_the_owner_s_zone`);
+  - "Running since" read from the run's start, and an OK run shown without
+    a failure mark
+    (`apps/web/src/pages/operations/OperationsPage.test.tsx`: "operations
+    schedule section shows a running and an OK hosted run");
+  - the stored row's refusal on the Operations page
+    (`apps/web/src/pages/operations/OperationsPage.test.tsx`: "operations
+    schedule section shows a hosted owner's unreadable stored schedule");
+  - jobs sent in the offered order, and unticking every box pausing
+    (`apps/web/src/pages/settings/ScheduleChoiceSection.hosted.test.tsx`:
+    "settings schedule section sends the ticked jobs in the offered order
+    and pauses when none is ticked");
+  - the stored row's refusal in Settings, with the browser's zone pinned
+    away from UTC so the default is proven on any machine
+    (`apps/web/src/pages/settings/ScheduleChoiceSection.hosted.test.tsx`:
+    "settings schedule section says a stored row it cannot read is
+    replaced by a save");
+  - the `schedule` entry left out of the Configuration section's
+    read-only list
+    (`apps/web/src/pages/settings/ScheduleChoiceSection.hosted.test.tsx`:
+    "settings configuration section does not list the schedule
+    read-only").
+- **Out of scope, noted.** `features/host-commands/useCommandPlaces.ts`
+  fetches `/ops/schedule` with its own function under the same query key
+  as `features/schedule`. It predates this spec; a feature cannot import
+  another, so sharing it means moving it to `shared/api`, a change of its
+  own.
+
 ## Changes to approved specs
 
 - **Spec 096** (Operations wording): hosted, the Schedule section names the

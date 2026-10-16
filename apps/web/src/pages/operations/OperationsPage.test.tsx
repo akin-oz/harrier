@@ -267,6 +267,56 @@ test("operations schedule section shows the hosted last run", async () => {
   expect(screen.queryByText(/On the host/)).toBeNull();
 });
 
+test("operations schedule section shows a running and an OK hosted run", async () => {
+  const state = (outcome: string) => ({
+    last_slot_at: "2026-10-12T18:00:00Z",
+    last_outcome: outcome,
+    last_started_at: "2026-10-12T18:01:00Z",
+    last_finished_at: outcome === "running" ? null : "2026-10-12T18:09:00Z",
+    last_ok_at: null,
+    next_slot_at: "2026-10-16T18:00:00Z",
+  });
+  stubApi({
+    schedule: schedule({
+      jobs: [
+        { name: "discovery", cadence: "daily", records: [], hosted: state("running") },
+        { name: "academic-discovery", cadence: "weekly", records: [], hosted: state("ok") },
+      ],
+      installed_state: "Hosted, the scheduler starts each chosen job.",
+      host_command: null,
+      timezone: "Europe/Berlin",
+      offered: [],
+    }),
+  });
+  renderPage();
+
+  // Running: since the run's start, not its slot (18:01 UTC is 20:01 in Berlin).
+  const running = (await screen.findByRole("rowheader", { name: "discovery" })).closest("tr");
+  expect(running?.textContent).toContain("Running since 12 Oct, 20:01");
+  // OK: its finish, with no failure mark.
+  const ok = screen.getByRole("rowheader", { name: "academic-discovery" }).closest("tr");
+  expect(ok?.textContent).toContain("OK, 12 Oct, 20:09");
+  expect(ok?.querySelector(".ops-badge__mark")).toBeNull();
+  expect(ok?.querySelector(".ops-badge--overdue")).toBeNull();
+});
+
+test("operations schedule section shows a hosted owner's unreadable stored schedule", async () => {
+  stubApi({
+    schedule: schedule({
+      jobs: [],
+      error: "schedule.timezone is not a zone this server can load",
+      installed_state: "You have not chosen a schedule.",
+      host_command: null,
+      timezone: null,
+      offered: [],
+    }),
+  });
+  renderPage();
+
+  const alert = await screen.findByText(/^Your stored schedule could not be read/);
+  expect(alert.textContent).toContain("schedule.timezone is not a zone this server can load");
+});
+
 test("an unreadable schedule definition is shown in the loader's words", async () => {
   stubApi({ schedule: schedule({ jobs: [], error: "config/schedule.json: no jobs" }) });
   renderPage();

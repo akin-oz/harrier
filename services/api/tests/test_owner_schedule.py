@@ -27,7 +27,8 @@ from test_hosted_requests import Hosted, Server, copied_server, serving
 
 from harrier.hostedschedule import load_hosted_jobs, next_slot
 from harrier.pgstore import postgres_connect
-from harrier_api.ops_routes import HOSTED_PAUSED, HOSTED_SCHEDULED, HOSTED_UNSCHEDULED
+from harrier.schedule import ScheduleConfigError
+from harrier.userconfig import ConfigError
 
 if TYPE_CHECKING:
     import psycopg
@@ -35,6 +36,17 @@ if TYPE_CHECKING:
     PgConnection = psycopg.Connection[Any]
 
 BERLIN = "Europe/Berlin"
+# Spec 120's wording, written out rather than imported from the module
+# under test, so a change to what the owner reads is a failure here.
+HOSTED_SCHEDULED = "Hosted, the scheduler starts each chosen job at its slots in your timezone."
+HOSTED_UNSCHEDULED = (
+    "You have not chosen a schedule. Nothing runs on a schedule; choose jobs in Settings."
+)
+HOSTED_PAUSED = "Your schedule is paused: no job is chosen."
+HOSTED_DEFINITION_UNREADABLE = (
+    "The server's schedule definition could not be read, so nothing runs on a schedule "
+    "until it is fixed."
+)
 OFFERED = [
     {"name": "discovery", "cadence": "daily at 09:00, 13:00, 16:00, 20:00", "needs": []},
     {"name": "academic-discovery", "cadence": "Mondays at 09:30", "needs": ["apify"]},
@@ -156,6 +168,45 @@ def test_hosted_schedule_names_an_unscheduled_paused_or_unreadable_choice(
     assert body["jobs"] == [] and body["timezone"] is None
     assert body["error"] == "schedule.timezone is not a zone this server can load"
     assert body["offered"] == OFFERED
+    assert body["installed_state"] == HOSTED_UNSCHEDULED
+
+
+def test_hosted_schedule_offers_nothing_when_the_definition_cannot_be_read(
+    server: Server, hosted: Hosted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A committed definition that fails to load is the server's fault: the
+    answer offers no job (`offered` null, so the page offers no save) and
+    says so, rather than reading as an owner who chose nothing."""
+    owner = server.owner()
+    choose(hosted, owner, {"timezone": BERLIN, "jobs": ["discovery"]})
+
+    def unreadable(path: object = None) -> object:
+        raise ScheduleConfigError("config/schedule.json: no jobs")
+
+    monkeypatch.setattr("harrier.hostedschedule.load_hosted_jobs", unreadable)
+    body = read(hosted, owner)
+    assert (body["jobs"], body["offered"], body["timezone"]) == ([], None, None)
+    assert body["error"] == "config/schedule.json: no jobs"
+    assert body["installed_state"] == HOSTED_DEFINITION_UNREADABLE
+
+
+def test_hosted_schedule_scrubs_a_refusal_before_answering(
+    server: Server, hosted: Hosted, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refusal's text may quote what it refused, so it is scrubbed before
+    it leaves the process (spec 133), as the local answer's is."""
+    owner = server.owner()
+    secret = "synthetic-secret-value"
+
+    def refusing(conn: object, kind: str) -> object:
+        raise ConfigError(f"stored schedule configuration is not valid JSON: token={secret}")
+
+    monkeypatch.setattr("harrier.userconfig.get_config", refusing)
+    body = read(hosted, owner)
+    assert body["error"] == ("stored schedule configuration is not valid JSON: token=REDACTED"), (
+        body
+    )
+    assert secret not in json.dumps(body)
 
 
 def test_hosted_schedule_reads_only_the_owners_state(server: Server, hosted: Hosted) -> None:
@@ -190,6 +241,10 @@ def test_the_next_slot_is_the_first_after_now_in_the_owner_s_zone() -> None:
     assert next_slot(discovery, berlin, on_slot) == datetime(2026, 10, 17, 7, 0, tzinfo=UTC)
     # Weekly: Monday 19 October at 09:30 in Berlin.
     assert next_slot(academic, berlin, friday) == datetime(2026, 10, 19, 7, 30, tzinfo=UTC)
+    # Just after a weekly slot, the next is a week on, after the clocks go
+    # back: Monday 26 October at 09:30 is 08:30 UTC.
+    after_weekly = datetime(2026, 10, 19, 7, 31, tzinfo=UTC)
+    assert next_slot(academic, berlin, after_weekly) == datetime(2026, 10, 26, 8, 30, tzinfo=UTC)
     # Across the clock change on Sunday 25 October: 09:00 is then UTC+1.
     saturday_night = datetime(2026, 10, 24, 19, 0, tzinfo=UTC)
     assert next_slot(discovery, berlin, saturday_night) == datetime(2026, 10, 25, 8, 0, tzinfo=UTC)

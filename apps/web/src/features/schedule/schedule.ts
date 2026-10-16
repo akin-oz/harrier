@@ -24,6 +24,16 @@ export function isHosted(schedule: Schedule): boolean {
   return schedule.host_command === null;
 }
 
+/**
+ * The server's schedule definition could not be read: nothing is on offer,
+ * so nothing can be chosen, and the fault is the server's, not the owner's
+ * stored row (spec 120, Amendment). Locally `offered` is always null, and an
+ * error there is the definition's too.
+ */
+export function definitionUnreadable(schedule: Schedule): boolean {
+  return schedule.error !== null && schedule.offered === null;
+}
+
 // Each scheduler outcome in words (spec 108's outcome classes). A typed
 // record, so an outcome the contract adds fails the type check here.
 const OUTCOME_WORDS: Record<Outcome, string> = {

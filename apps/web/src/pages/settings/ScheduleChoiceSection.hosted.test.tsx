@@ -96,6 +96,17 @@ beforeEach(() => {
         });
       }
       if (path === "/ops/schedule") return reply(200, state.schedule);
+      if (path === "/config") {
+        return reply(200, [
+          {
+            kind: "schedule",
+            value: { timezone: "Europe/Berlin", jobs: ["discovery"] },
+            source: "store",
+            updated_at: "2026-10-16 08:00:00",
+            error: null,
+          },
+        ]);
+      }
       if (path === "/credentials") {
         return reply(200, {
           credentials: [
@@ -112,9 +123,24 @@ beforeEach(() => {
   );
 });
 
+// The browser's zone, pinned away from UTC so the default is the browser's
+// and not a fallback that happens to match where the tests run.
+const BROWSER_ZONE = "Asia/Tokyo";
+
+beforeEach(() => {
+  // Read before the spy, so the stub returns the real options with only the
+  // zone changed.
+  const real = new Intl.DateTimeFormat().resolvedOptions();
+  vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+    ...real,
+    timeZone: BROWSER_ZONE,
+  });
+});
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function renderPage(): void {
@@ -162,7 +188,7 @@ test("settings schedule section names an unscheduled and a paused owner", async 
   expect(within(section).getByText(/^Not scheduled yet: nothing runs on a schedule/)).toBeDefined();
   // No stored zone: the browser's own is chosen.
   const zone = within(section).getByLabelText<HTMLSelectElement>("Timezone");
-  expect(zone.value).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  expect(zone.value).toBe(BROWSER_ZONE);
   for (const box of within(section).getAllByRole<HTMLInputElement>("checkbox")) {
     expect(box.checked).toBe(false);
   }
@@ -210,4 +236,77 @@ test("settings schedule section notes a job's missing credential", async () => {
   await vi.waitFor(() => {
     expect(within(section).queryByText(note)).toBeNull();
   });
+});
+
+test("settings schedule section offers no save when the schedule definition cannot be read", async () => {
+  state.schedule = schedule({ offered: null, error: "config/schedule.json: no jobs" });
+  renderPage();
+  const alert = await screen.findByText(/^The schedule definition on the server could not be read/);
+  expect(alert.textContent).toContain("config/schedule.json: no jobs");
+  // No form, so no save can store "no jobs" over the owner's choice.
+  expect(screen.queryByRole("form", { name: "Schedule" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Save schedule" })).toBeNull();
+  expect(puts).toEqual([]);
+});
+
+test("settings schedule section sends the ticked jobs in the offered order and pauses when none is ticked", async () => {
+  state.schedule = schedule({
+    timezone: "Europe/Berlin",
+    jobs: [hostedJob("discovery", "2026-10-16T18:00:00Z")],
+  });
+  renderPage();
+  const section = await form();
+  const user = userEvent.setup();
+  const discovery = within(section).getByRole<HTMLInputElement>("checkbox", { name: "discovery" });
+  const academic = within(section).getByRole<HTMLInputElement>("checkbox", {
+    name: "academic-discovery",
+  });
+  expect(discovery.checked).toBe(true);
+
+  // Untick, then tick both in the reverse of the offered order.
+  await user.click(discovery);
+  await user.click(academic);
+  await user.click(discovery);
+  await user.click(within(section).getByRole("button", { name: "Save schedule" }));
+  // Untick everything: the save pauses the schedule.
+  await user.click(discovery);
+  await user.click(academic);
+  await user.click(within(section).getByRole("button", { name: "Save schedule" }));
+
+  await vi.waitFor(() => {
+    expect(puts).toHaveLength(2);
+  });
+  expect(puts.map((put) => put.body)).toEqual([
+    { value: { timezone: "Europe/Berlin", jobs: ["discovery", "academic-discovery"] } },
+    { value: { timezone: "Europe/Berlin", jobs: [] } },
+  ]);
+});
+
+test("settings schedule section says a stored row it cannot read is replaced by a save", async () => {
+  state.schedule = schedule({
+    error: "schedule.timezone is not a zone this server can load",
+  });
+  renderPage();
+  const section = await form();
+  const alert = within(section).getByRole("alert");
+  expect(alert.textContent).toBe(
+    "The stored schedule could not be read: schedule.timezone is not a zone this server can load. Saving replaces it.",
+  );
+  for (const box of within(section).getAllByRole<HTMLInputElement>("checkbox")) {
+    expect(box.checked).toBe(false);
+  }
+  expect(within(section).getByLabelText<HTMLSelectElement>("Timezone").value).toBe(BROWSER_ZONE);
+});
+
+test("settings configuration section does not list the schedule read-only", async () => {
+  renderPage();
+  await form();
+  // The Configuration section reads the same kinds; the schedule is edited
+  // in its own section, so no read-only entry points at the CLI for it.
+  await screen.findByRole("heading", { name: "Configuration" });
+  await vi.waitFor(() => {
+    expect(screen.queryByText(/Reading the configuration/)).toBeNull();
+  });
+  expect(screen.queryByText(/harrier config set schedule/)).toBeNull();
+  expect(screen.queryByRole("region", { name: "schedule" })).toBeNull();
 });

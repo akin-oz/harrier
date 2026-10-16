@@ -55,6 +55,10 @@ HOSTED_UNSCHEDULED = (
     "You have not chosen a schedule. Nothing runs on a schedule; choose jobs in Settings."
 )
 HOSTED_PAUSED = "Your schedule is paused: no job is chosen."
+HOSTED_DEFINITION_UNREADABLE = (
+    "The server's schedule definition could not be read, so nothing runs on a schedule "
+    "until it is fixed."
+)
 
 # The sources as the contract declares them, built from the domain's own
 # order so a new source reaches the generated client on the next
@@ -371,13 +375,15 @@ def _hosted_schedule(conn: Connection) -> ScheduleOut:
     from harrier.schedule import ScheduleConfigError, describe_cadence
     from harrier.userconfig import SCHEDULE, ConfigError, get_config
 
-    def refused(error: Exception, offered: list[OfferedJobOut] | None) -> ScheduleOut:
+    def refused(
+        error: Exception, offered: list[OfferedJobOut] | None, installed_state: str
+    ) -> ScheduleOut:
         # A 200 body, as the local answer gives for an unreadable
         # definition, scrubbed because the text may quote it (spec 133).
         return ScheduleOut(
             jobs=[],
             error=scrub_outbound(str(error)),
-            installed_state=HOSTED_UNSCHEDULED,
+            installed_state=installed_state,
             host_command=None,
             timezone=None,
             offered=offered,
@@ -386,7 +392,9 @@ def _hosted_schedule(conn: Connection) -> ScheduleOut:
     try:
         jobs = load_hosted_jobs()
     except ScheduleConfigError as error:
-        return refused(error, None)
+        # Nothing is on offer, so `offered` is null and the page offers no
+        # save: a save could only store "no jobs" over the owner's choice.
+        return refused(error, None, HOSTED_DEFINITION_UNREADABLE)
     offered = [
         OfferedJobOut(name=name, cadence=describe_cadence(jobs[name]), needs=list(JOB_NEEDS[name]))
         for name in HOSTED_JOBS
@@ -395,7 +403,7 @@ def _hosted_schedule(conn: Connection) -> ScheduleOut:
     try:
         stored = get_config(conn, SCHEDULE)
     except ConfigError as error:
-        return refused(error, offered)
+        return refused(error, offered, HOSTED_UNSCHEDULED)
     if not isinstance(stored, dict):
         return ScheduleOut(
             jobs=[],

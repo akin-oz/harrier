@@ -1,7 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { CONFIG_KEY } from "../../features/config";
-import { SCHEDULE_KEY, ScheduleForm, fetchSchedule } from "../../features/schedule";
+import {
+  SCHEDULE_KEY,
+  ScheduleForm,
+  definitionUnreadable,
+  fetchSchedule,
+} from "../../features/schedule";
 import { CREDENTIALS_KEY, fetchCredentials } from "./CredentialsSection";
 
 /**
@@ -21,6 +26,16 @@ export function ScheduleChoiceSection() {
     return (
       <p role="alert" className="settings-error">
         {schedule.error.message}
+      </p>
+    );
+  }
+  if (definitionUnreadable(schedule.data)) {
+    // No form: with nothing on offer, a save could only store "no jobs" over
+    // the owner's choice, and the fault is not theirs to fix.
+    return (
+      <p role="alert" className="settings-error">
+        The schedule definition on the server could not be read: {schedule.data.error}. Nothing can
+        be chosen until it is fixed; your stored choice is unchanged.
       </p>
     );
   }

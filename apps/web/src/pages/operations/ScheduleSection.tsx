@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import {
   SCHEDULE_KEY,
+  definitionUnreadable,
   fetchSchedule,
   inZone,
   isHosted,
@@ -117,7 +118,10 @@ function HostedScheduleBody({ schedule }: { schedule: Schedule }) {
     <>
       {schedule.error !== null && (
         <p role="alert" className="ops-error">
-          Your stored schedule could not be read: {schedule.error}
+          {definitionUnreadable(schedule)
+            ? "The schedule definition on the server could not be read: "
+            : "Your stored schedule could not be read: "}
+          {schedule.error}
         </p>
       )}
       {schedule.jobs.length > 0 && (
