@@ -948,6 +948,58 @@ runs. No signing key is held, and no token is minted.
 - The token travels to the run's process in its environment, never in its
   arguments or its run journal, and the run's logs never print it.
 
+### Decision taken (2026-10-16): a scheduled run's Storage token
+
+Akin chose in chat on 2026-10-16. The decision of 2026-10-15 left a scheduled
+run with no token, so it would bind no store. Spec 108's scheduler starts
+discovery and academic discovery, which read and write files on every run
+(seen state, incoming summaries, academic datasets, the description cache).
+Built as that decision wrote it, every scheduled run would fail at its first
+file. A scheduled run therefore gets a token minted for its owner.
+
+- **The key.** The scheduler holds one private signing key, in its own
+  environment only, as `HARRIER_STORAGE_SIGNING_KEY`. Its public half is
+  imported into the Supabase project as a JWT signing key, so Storage
+  verifies what the scheduler signs. The API holds no such key and refuses
+  to start with that variable in its environment, as it refuses a secret
+  key (spec 104).
+- **The token.** For each scheduled run the scheduler mints one token for
+  that run's owner: `sub` the owner, `role` and `aud` `authenticated`, an
+  `exp` no later than the run's timeout
+  (`HARRIER_SCHEDULED_RUN_TIMEOUT_SECONDS`) plus one minute. It reaches the
+  run's process in its environment, as a request-started run's token does,
+  and no log prints it.
+- **The binding.** A scheduled run binds a `SupabaseFileStore` for its owner
+  with that token before any domain code runs, as a request-started run
+  does. Seen state, summaries, datasets and the description cache then sit
+  in the owner's prefix, the same objects a run started from the browser
+  reads, so the two never keep separate state.
+- **No key configured.** The scheduler starts no run of a kind that writes
+  files and logs one line naming the variable, never its value. Nothing is
+  written to the machine's disk.
+- **Request-started runs are unchanged.** They keep the session token of the
+  request that started them (the decision of 2026-10-15).
+
+**What the key can do.** A token signed with it is accepted wherever the
+project's tokens are: by Storage, and by spec 104's verification of API
+requests, as that owner. Its reach matches what the scheduler's database
+login already has over every owner's rows (spec 108): the scheduler can
+already act as any owner. A leaked key lets its holder act as any owner in
+Storage and in the API until the key is removed from the project. Rotating
+it is removing the old public key from the project and setting a new
+private key on the scheduler.
+
+**Left to the build (spec 107's third pull request).** The token's
+algorithm, the key's format in the variable, how the public key is imported
+(a dashboard step, written into `docs/deploy.md`), and the tests:
+a scheduled run binds its owner's store with a minted token whose `sub` is
+that owner and whose `exp` is within the run's timeout (planned
+test_a_scheduled_run_binds_a_minted_token); the API refuses to start with
+the signing key in its environment (planned
+test_the_api_refuses_the_storage_signing_key); with no key the scheduler
+starts no file-writing run (planned
+test_a_scheduler_without_a_signing_key_starts_no_file_writing_run).
+
 ### Proof / origin (amendment of 2026-10-13)
 
 - `specs/106-tenant-credentials-and-run-isolation.md`, Open decision 8,
