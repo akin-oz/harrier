@@ -138,6 +138,16 @@ class StoreImportRefused(StoreError):
     column, never an owner, a host or a value."""
 
 
+class ArtifactImportRefused(StoreError):
+    """A check refused the import before the first upload. The text names
+    the check (spec 146), never an owner, a host, a file or a key."""
+
+
+class ArtifactImportStopped(StoreError):
+    """The copy stopped at a file. The text names the step and the family,
+    never the file, the key or the owner. Objects already copied stay."""
+
+
 class AccountRefused(StoreError):
     """A check of a `harrier --owner` command refused it before anything was
     written (spec 144). The text names the check, never an owner, a host or

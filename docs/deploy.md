@@ -598,6 +598,12 @@ unattached: <count>
 imported
 ```
 
+When Storage rate-limits the run (it answers 429), the import waits and asks
+again, up to about two minutes in all, and prints a `Storage asked the
+import to slow down` line for each wait. Only a limit that outlasts the
+waits stops the run; run it again to resume (spec 146, Amendment
+(2026-10-16)).
+
 The verdict is `imported` and the exit status 0 only when every file was copied
 or was already there. A file over the size limit (6,000,000 bytes), of a type
 the bucket does not accept, with a name outside its key grammar, or empty is
