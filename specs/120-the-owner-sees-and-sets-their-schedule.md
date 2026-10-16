@@ -172,40 +172,38 @@ Locally the section renders exactly as today.
 
 ## Acceptance criteria
 
-- [ ] Hosted, the Settings page shows a Schedule section with one checkbox
+- [x] Hosted, the Settings page shows a Schedule section with one checkbox
       per hosted job and a timezone select; saving sends the ticked jobs
-      and the zone to `PUT /config/schedule` (planned test
-      settings schedule section saves the chosen jobs and zone).
-- [ ] With no stored row the section preselects the browser's zone and
+      and the zone to `PUT /config/schedule` (`apps/web/src/pages/settings/ScheduleChoiceSection.hosted.test.tsx`:
+      "settings schedule section saves the chosen jobs and zone").
+- [x] With no stored row the section preselects the browser's zone and
       says "Not scheduled yet"; with `jobs: []` stored it says "Paused"
-      (planned test settings schedule section names an unscheduled and a
-      paused owner).
-- [ ] A 400 from the save shows its detail and keeps the entry (planned
-      test settings schedule section shows the store's refusal).
-- [ ] `academic-discovery` shows the Apify note when no `apify` credential
-      is saved, and none when one is (planned test settings schedule
-      section notes a job's missing credential).
-- [ ] Locally the Settings page has no Schedule section (planned test
-      settings page shows no schedule section locally).
-- [ ] Hosted `GET /ops/schedule` lists only the owner's chosen jobs, each
+      (`apps/web/src/pages/settings/ScheduleChoiceSection.hosted.test.tsx`:
+      "settings schedule section names an unscheduled and a paused owner").
+- [x] A 400 from the save shows its detail and keeps the entry (`apps/web/src/pages/settings/ScheduleChoiceSection.hosted.test.tsx`:
+      "settings schedule section shows the store's refusal").
+- [x] `academic-discovery` shows the Apify note when no `apify` credential
+      is saved, and none when one is (`apps/web/src/pages/settings/ScheduleChoiceSection.hosted.test.tsx`:
+      "settings schedule section notes a job's missing credential").
+- [x] Locally the Settings page has no Schedule section (`apps/web/src/pages/settings/SettingsPage.test.tsx`:
+      "settings page shows no schedule section locally").
+- [x] Hosted `GET /ops/schedule` lists only the owner's chosen jobs, each
       with `hosted` holding the `schedule_state` row's fields and the next
       slot in the owner's zone, `timezone` set and `host_command` null
-      (planned test_hosted_schedule_lists_the_owners_chosen_jobs_and_their_last_run).
-- [ ] Hosted `GET /ops/schedule` with no row, with `jobs: []`, and with a
+      (`services/api/tests/test_owner_schedule.py::test_hosted_schedule_lists_the_owners_chosen_jobs_and_their_last_run`).
+- [x] Hosted `GET /ops/schedule` with no row, with `jobs: []`, and with a
       row the store refuses answers the three `installed_state` texts and
-      the refusal in `error` (planned
-      test_hosted_schedule_names_an_unscheduled_paused_or_unreadable_choice).
-- [ ] Hosted `GET /ops/schedule` reads no other owner's `schedule_state`
-      (planned test_hosted_schedule_reads_only_the_owners_state).
-- [ ] The local `GET /ops/schedule` body is unchanged apart from the new
-      fields, which are null (planned
-      test_local_schedule_answer_carries_null_hosted_fields).
-- [ ] The Operations page shows the hosted Last run and Next slot and no
-      host command (planned test operations schedule section shows the
-      hosted last run).
-- [ ] The contract is regenerated (`just contract`) and the web app reads
+      the refusal in `error` (`services/api/tests/test_owner_schedule.py::test_hosted_schedule_names_an_unscheduled_paused_or_unreadable_choice`).
+- [x] Hosted `GET /ops/schedule` reads no other owner's `schedule_state`
+      (`services/api/tests/test_owner_schedule.py::test_hosted_schedule_reads_only_the_owners_state`).
+- [x] The local `GET /ops/schedule` body is unchanged apart from the new
+      fields, which are null (`services/api/tests/test_ui_operations.py::test_local_schedule_answer_carries_null_hosted_fields`).
+- [x] The Operations page shows the hosted Last run and Next slot and no
+      host command (`apps/web/src/pages/operations/OperationsPage.test.tsx`:
+      "operations schedule section shows the hosted last run").
+- [x] The contract is regenerated (`just contract`) and the web app reads
       the new fields only through the generated types.
-- [ ] `just check` passes.
+- [x] `just check` passes.
 
 ## Out of scope
 
@@ -234,6 +232,33 @@ Locally the section renders exactly as today.
   refusal is what the owner then sees.
 - **Last run is one row per job.** `schedule_state` keeps the latest slot
   only, so the page shows the last run, not a history.
+
+## Amendment (2026-10-16): what the build settled
+
+Four places where the text above was short of what the build needed.
+Each is built as written here.
+
+- **The jobs on offer.** The form needs every hosted job, its cadence and
+  the credentials it needs, chosen or not, and `jobs` lists only the
+  chosen ones. So the hosted answer also carries `offered`, a list of
+  `OfferedJobOut` (`name`, `cadence`, `needs`), every job of `HOSTED_JOBS`
+  the committed file names, with `JOB_NEEDS` as `needs`. It is null
+  locally. It is filled hosted whatever the owner's row holds, including a
+  row the store refuses
+  (`services/api/tests/test_owner_schedule.py::test_hosted_schedule_names_an_unscheduled_paused_or_unreadable_choice`).
+- **Where the form reads.** The Settings section reads `GET /ops/schedule`,
+  not `GET /config`: that answer carries the offered jobs, the owner's
+  zone and chosen jobs, the next slots it shows after a save, and the
+  store's refusal of a stored row in `error`. It still writes through
+  `PUT /config/schedule`. "Not scheduled yet" is `timezone` null with no
+  `error`; "Paused" is a `timezone` with no jobs.
+- **When a running job started.** "Running since <started>" needs the
+  start, so `HostedJobOut` also carries `last_started_at`. `last_outcome`
+  is typed as spec 108's outcome classes, so the page's words for each
+  are checked against the contract.
+- **A stored row the store refuses** reads in Settings as "The stored
+  schedule could not be read: <refusal>. Saving replaces it." above a form
+  with nothing ticked and the browser's zone.
 
 ## Changes to approved specs
 

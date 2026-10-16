@@ -32,7 +32,9 @@ export function ConfigSection() {
   }
 
   const byKind = new Map(config.data.map((entry) => [entry.kind, entry]));
-  const known = new Set(["feeds", "linkedin_searches", "discovery", "company_holds"]);
+  // `schedule` is the hosted owner's, edited in its own Settings section
+  // (spec 120); the local store has no such kind.
+  const known = new Set(["feeds", "linkedin_searches", "discovery", "company_holds", "schedule"]);
   const others = config.data.filter((entry) => !known.has(entry.kind));
   const at = (kind: string): ConfigEntry | undefined => byKind.get(kind);
   const feeds = at("feeds");

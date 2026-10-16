@@ -17,13 +17,16 @@ import datetime as dt
 import io
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from harrier.connection import Connection
+from harrier.credentials import CredentialKind
 from harrier.discovery import APIFY_MAX_COUNT, SOURCE_ORDER
+from harrier.hostedschedule import Outcome
 from harrier.logredact import scrub_outbound
 from harrier.tracks import DEFAULT_TRACK_ID
 from harrier.tracks import Scope as TrackScope
@@ -46,6 +49,12 @@ INSTALLED_STATE = (
     "Whether each job is installed and loaded in launchd is the host's to report; "
     "this server runs where launchd cannot be asked."
 )
+# Hosted, the note names the scheduler and the owner's choice (spec 120).
+HOSTED_SCHEDULED = "Hosted, the scheduler starts each chosen job at its slots in your timezone."
+HOSTED_UNSCHEDULED = (
+    "You have not chosen a schedule. Nothing runs on a schedule; choose jobs in Settings."
+)
+HOSTED_PAUSED = "Your schedule is paused: no job is chosen."
 
 # The sources as the contract declares them, built from the domain's own
 # order so a new source reaches the generated client on the next
@@ -239,10 +248,35 @@ class SuccessRecordOut(BaseModel):
     overdue: bool
 
 
+class HostedJobOut(BaseModel):
+    """A chosen job's scheduler state, hosted (spec 120). Times are ISO 8601
+    UTC text; each is null while `schedule_state` holds no row for the job.
+    `next_slot_at` is when the next slot falls due, not that it will start:
+    whether the scheduler runs is the operator's to see."""
+
+    last_slot_at: str | None
+    last_outcome: Outcome | None
+    last_started_at: str | None
+    last_finished_at: str | None
+    last_ok_at: str | None
+    next_slot_at: str | None
+
+
 class ScheduledJobOut(BaseModel):
     name: str
     cadence: str
     records: list[SuccessRecordOut]
+    # Null locally. Required, so a client cannot leave it unread.
+    hosted: HostedJobOut | None
+
+
+class OfferedJobOut(BaseModel):
+    """A job a hosted owner may choose, with its committed cadence and the
+    credentials a run of it needs (spec 120)."""
+
+    name: str
+    cadence: str
+    needs: list[CredentialKind]
 
 
 class ScheduleOut(BaseModel):
@@ -251,6 +285,10 @@ class ScheduleOut(BaseModel):
     There is no `installed` or `loaded` field on purpose. Only launchctl on
     the host can answer either, and a field this server filled would be a
     guess shown as a fact.
+
+    Hosted (spec 120), `jobs` is the owner's chosen jobs, `timezone` their
+    zone, `offered` every job they may choose, and `host_command` null: no
+    host command is theirs to run. Locally `timezone` and `offered` are null.
     """
 
     jobs: list[ScheduledJobOut]
@@ -258,19 +296,25 @@ class ScheduleOut(BaseModel):
     # `jobs` is then empty. Required, so a client cannot leave it unread.
     error: str | None
     installed_state: str
-    host_command: str
+    host_command: str | None
+    timezone: str | None
+    offered: list[OfferedJobOut] | None
 
 
 @ops_router.get("/ops/schedule", operation_id="getSchedule")
-def get_schedule(conn: Conn) -> ScheduleOut:
+def get_schedule(conn: Conn, request: Request) -> ScheduleOut:
     """The cadence of each scheduled job and when it last succeeded.
 
     No token: job names, cadences and times describe the installation, not
     the operator's search, and spec 050 lists this read as tokenless.
+    Hosted, every route but the public one needs a session (spec 114), and
+    the answer is the signed-in owner's choice and state (spec 120).
     """
     from harrier.paths import repo_root
     from harrier.schedule import SCHEDULE_CONFIG_PATH, ScheduleConfigError, job_health
 
+    if getattr(request.app.state, "hosted", False):
+        return _hosted_schedule(conn)
     try:
         health = job_health(conn, config_path=repo_root() / SCHEDULE_CONFIG_PATH)
     except ScheduleConfigError as error:
@@ -281,6 +325,8 @@ def get_schedule(conn: Conn) -> ScheduleOut:
             error=scrub_outbound(str(error)),
             installed_state=INSTALLED_STATE,
             host_command=SCHEDULE_HOST_COMMAND,
+            timezone=None,
+            offered=None,
         )
     return ScheduleOut(
         jobs=[
@@ -296,12 +342,103 @@ def get_schedule(conn: Conn) -> ScheduleOut:
                     )
                     for record in job.records
                 ],
+                hosted=None,
             )
             for job in health
         ],
         error=None,
         installed_state=INSTALLED_STATE,
         host_command=SCHEDULE_HOST_COMMAND,
+        timezone=None,
+        offered=None,
+    )
+
+
+def _hosted_schedule(conn: Connection) -> ScheduleOut:
+    """The owner's schedule (spec 120): their choice from the `schedule`
+    kind and their state from `schedule_state`, both read on their own
+    connection. It starts nothing and reads no other owner's rows."""
+    from zoneinfo import ZoneInfo
+
+    from harrier.hostedschedule import (
+        HOSTED_JOBS,
+        JOB_NEEDS,
+        instant_text,
+        load_hosted_jobs,
+        next_slot,
+        owner_states,
+    )
+    from harrier.schedule import ScheduleConfigError, describe_cadence
+    from harrier.userconfig import SCHEDULE, ConfigError, get_config
+
+    def refused(error: Exception, offered: list[OfferedJobOut] | None) -> ScheduleOut:
+        # A 200 body, as the local answer gives for an unreadable
+        # definition, scrubbed because the text may quote it (spec 133).
+        return ScheduleOut(
+            jobs=[],
+            error=scrub_outbound(str(error)),
+            installed_state=HOSTED_UNSCHEDULED,
+            host_command=None,
+            timezone=None,
+            offered=offered,
+        )
+
+    try:
+        jobs = load_hosted_jobs()
+    except ScheduleConfigError as error:
+        return refused(error, None)
+    offered = [
+        OfferedJobOut(name=name, cadence=describe_cadence(jobs[name]), needs=list(JOB_NEEDS[name]))
+        for name in HOSTED_JOBS
+        if name in jobs
+    ]
+    try:
+        stored = get_config(conn, SCHEDULE)
+    except ConfigError as error:
+        return refused(error, offered)
+    if not isinstance(stored, dict):
+        return ScheduleOut(
+            jobs=[],
+            error=None,
+            installed_state=HOSTED_UNSCHEDULED,
+            host_command=None,
+            timezone=None,
+            offered=offered,
+        )
+    choice = cast("dict[str, object]", stored)
+    timezone = str(choice["timezone"])
+    chosen = {str(name) for name in cast("list[object]", choice["jobs"])}
+    zone = ZoneInfo(timezone)
+    now = dt.datetime.now(dt.UTC)
+    states = owner_states(conn)
+    listed: list[ScheduledJobOut] = []
+    for name in HOSTED_JOBS:
+        if name not in chosen or name not in jobs:
+            continue
+        state = states.get(name)
+        upcoming = next_slot(jobs[name], zone, now)
+        listed.append(
+            ScheduledJobOut(
+                name=name,
+                cadence=describe_cadence(jobs[name]),
+                records=[],
+                hosted=HostedJobOut(
+                    last_slot_at=None if state is None else state.last_slot_at,
+                    last_outcome=None if state is None else cast("Outcome", state.last_outcome),
+                    last_started_at=None if state is None else state.last_started_at,
+                    last_finished_at=None if state is None else state.last_finished_at,
+                    last_ok_at=None if state is None else state.last_ok_at,
+                    next_slot_at=None if upcoming is None else instant_text(upcoming),
+                ),
+            )
+        )
+    return ScheduleOut(
+        jobs=listed,
+        error=None,
+        installed_state=HOSTED_SCHEDULED if chosen else HOSTED_PAUSED,
+        host_command=None,
+        timezone=timezone,
+        offered=offered,
     )
 
 

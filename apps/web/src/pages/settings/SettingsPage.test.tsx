@@ -298,3 +298,14 @@ test("local settings show no credentials or Telegram section", async () => {
     ),
   ).toEqual([]);
 });
+
+test("settings page shows no schedule section locally", async () => {
+  stubApi(handler({}));
+  renderPage();
+  await screen.findByRole("heading", { name: "Backups" });
+
+  // Locally the schedule is launchd's (spec 120): no section and no form.
+  // The host panel still reads the schedule, as it did before.
+  expect(screen.queryByRole("heading", { name: "Schedule" })).toBeNull();
+  expect(screen.queryByRole("form", { name: "Schedule" })).toBeNull();
+});

@@ -217,6 +217,56 @@ test("the installed and loaded state is the host's to report, with the command",
   expect(screen.queryByText(/^loaded$/i)).toBeNull();
 });
 
+test("operations schedule section shows the hosted last run", async () => {
+  // The hosted answer (spec 120): the owner's chosen jobs, their last run
+  // and next slot, and no host command. Times are UTC; Berlin is UTC+2.
+  const hosted = (outcome: string | null, next: string) => ({
+    last_slot_at: outcome === null ? null : "2026-10-12T18:00:00Z",
+    last_outcome: outcome,
+    last_started_at: outcome === null ? null : "2026-10-12T18:01:00Z",
+    last_finished_at: outcome === null || outcome === "running" ? null : "2026-10-12T18:09:00Z",
+    last_ok_at: null,
+    next_slot_at: next,
+  });
+  stubApi({
+    schedule: schedule({
+      jobs: [
+        {
+          name: "discovery",
+          cadence: "daily at 09:00, 13:00, 16:00, 20:00",
+          records: [],
+          hosted: hosted("failed", "2026-10-16T18:00:00Z"),
+        },
+        {
+          name: "academic-discovery",
+          cadence: "Mondays at 09:30",
+          records: [],
+          hosted: hosted(null, "2026-10-19T07:30:00Z"),
+        },
+      ],
+      installed_state:
+        "Hosted, the scheduler starts each chosen job at its slots in your timezone.",
+      host_command: null,
+      timezone: "Europe/Berlin",
+      offered: [],
+    }),
+  });
+  renderPage();
+
+  const discovery = (await screen.findByRole("rowheader", { name: "discovery" })).closest("tr");
+  expect(discovery?.textContent).toContain("Failed, 12 Oct, 20:09");
+  expect(discovery?.textContent).toContain("16 Oct, 20:00");
+  // A failure carries a shape as well as its words.
+  expect(discovery?.querySelector(".ops-badge__mark")).not.toBeNull();
+  const academic = screen.getByRole("rowheader", { name: "academic-discovery" }).closest("tr");
+  expect(academic?.textContent).toContain("No run recorded yet.");
+  expect(academic?.textContent).toContain("19 Oct, 09:30");
+
+  expect(screen.getByText(/^Hosted, the scheduler starts each chosen job/)).toBeDefined();
+  expect(screen.queryByText(/harrier schedule status/)).toBeNull();
+  expect(screen.queryByText(/On the host/)).toBeNull();
+});
+
 test("an unreadable schedule definition is shown in the loader's words", async () => {
   stubApi({ schedule: schedule({ jobs: [], error: "config/schedule.json: no jobs" }) });
   renderPage();

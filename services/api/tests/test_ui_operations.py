@@ -526,6 +526,17 @@ def test_the_schedule_marks_a_job_with_no_recent_success_and_claims_no_install_s
     assert not keys(body) & {"installed", "loaded", "drifted", "last_exit_status", "next_run"}
 
 
+def test_local_schedule_answer_carries_null_hosted_fields(client: TestClient) -> None:
+    """Spec 120's hosted fields are null locally, and the local answer keeps
+    launchd's wording and its host command."""
+    body = client.get("/ops/schedule").json()
+    assert body["jobs"], body
+    assert (body["timezone"], body["offered"]) == (None, None)
+    assert body["host_command"] == "harrier schedule status"
+    assert all(job["hosted"] is None for job in body["jobs"])
+    assert "launchd" in body["installed_state"]
+
+
 def test_an_unreadable_schedule_is_reported_in_the_loader_s_words(client: TestClient) -> None:
     with patch("harrier.schedule.load_schedule", side_effect=ScheduleConfigError("no jobs")):
         body = client.get("/ops/schedule").json()

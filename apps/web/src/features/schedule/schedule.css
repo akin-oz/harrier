@@ -1,0 +1,78 @@
+.schedule-form {
+  display: grid;
+  gap: var(--space-2);
+  max-width: 420px;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.schedule-form__state,
+.schedule-form__note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.schedule-form__field {
+  display: grid;
+  gap: var(--space-1);
+  font-size: 13px;
+}
+.schedule-form__field input {
+  padding: 5px 8px;
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+.schedule-form__field input:focus-visible,
+.schedule-form__field select:focus-visible,
+.schedule-form__jobs input:focus-visible,
+.schedule-form__actions button:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+.schedule-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+.schedule-form__problem {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+  overflow-wrap: anywhere;
+}
+.schedule-form__field select {
+  padding: 5px 8px;
+  font: inherit;
+  color: var(--color-text);
+  background: var(--color-bg-raised);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+.schedule-form__jobs {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 13px;
+}
+.schedule-form__jobs legend {
+  padding: 0;
+  margin-bottom: var(--space-1);
+}
+.schedule-form__job {
+  display: grid;
+  gap: 2px;
+}
+.schedule-form__cadence,
+.schedule-form__needs {
+  color: var(--color-text-secondary);
+}
+.schedule-form__state p,
+.schedule-form__next {
+  margin: 0;
+}

@@ -1758,6 +1758,98 @@
         "title": "HostPanelRowOut",
         "type": "object"
       },
+      "HostedJobOut": {
+        "description": "A chosen job's scheduler state, hosted (spec 120). Times are ISO 8601\nUTC text; each is null while `schedule_state` holds no row for the job.\n`next_slot_at` is when the next slot falls due, not that it will start:\nwhether the scheduler runs is the operator's to see.",
+        "properties": {
+          "last_finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Finished At"
+          },
+          "last_ok_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Ok At"
+          },
+          "last_outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "running",
+                  "ok",
+                  "failed",
+                  "crashed",
+                  "timed_out",
+                  "not_configured",
+                  "refused",
+                  "interrupted",
+                  "missed"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Outcome"
+          },
+          "last_slot_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Slot At"
+          },
+          "last_started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Started At"
+          },
+          "next_slot_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Slot At"
+          }
+        },
+        "required": [
+          "last_slot_at",
+          "last_outcome",
+          "last_started_at",
+          "last_finished_at",
+          "last_ok_at",
+          "next_slot_at"
+        ],
+        "title": "HostedJobOut",
+        "type": "object"
+      },
       "HunterCredentialIn": {
         "additionalProperties": false,
         "properties": {
@@ -2231,6 +2323,39 @@
         "title": "MarkIn",
         "type": "object"
       },
+      "OfferedJobOut": {
+        "description": "A job a hosted owner may choose, with its committed cadence and the\ncredentials a run of it needs (spec 120).",
+        "properties": {
+          "cadence": {
+            "title": "Cadence",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "needs": {
+            "items": {
+              "enum": [
+                "ai",
+                "apify",
+                "hunter",
+                "telegram"
+              ],
+              "type": "string"
+            },
+            "title": "Needs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "cadence",
+          "needs"
+        ],
+        "title": "OfferedJobOut",
+        "type": "object"
+      },
       "OutreachRowOut": {
         "description": "A tracker row seen through the outreach axis, which is orthogonal to\nthe status lifecycle and stays that way.",
         "properties": {
@@ -2577,7 +2702,7 @@
         "type": "object"
       },
       "ScheduleOut": {
-        "description": "What the container can read about the schedule, and what it cannot.\n\nThere is no `installed` or `loaded` field on purpose. Only launchctl on\nthe host can answer either, and a field this server filled would be a\nguess shown as a fact.",
+        "description": "What the container can read about the schedule, and what it cannot.\n\nThere is no `installed` or `loaded` field on purpose. Only launchctl on\nthe host can answer either, and a field this server filled would be a\nguess shown as a fact.\n\nHosted (spec 120), `jobs` is the owner's chosen jobs, `timezone` their\nzone, `offered` every job they may choose, and `host_command` null: no\nhost command is theirs to run. Locally `timezone` and `offered` are null.",
         "properties": {
           "error": {
             "anyOf": [
@@ -2591,8 +2716,15 @@
             "title": "Error"
           },
           "host_command": {
-            "title": "Host Command",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host Command"
           },
           "installed_state": {
             "title": "Installed State",
@@ -2604,13 +2736,40 @@
             },
             "title": "Jobs",
             "type": "array"
+          },
+          "offered": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OfferedJobOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offered"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
           }
         },
         "required": [
           "jobs",
           "error",
           "installed_state",
-          "host_command"
+          "host_command",
+          "timezone",
+          "offered"
         ],
         "title": "ScheduleOut",
         "type": "object"
@@ -2620,6 +2779,16 @@
           "cadence": {
             "title": "Cadence",
             "type": "string"
+          },
+          "hosted": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostedJobOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "name": {
             "title": "Name",
@@ -2636,7 +2805,8 @@
         "required": [
           "name",
           "cadence",
-          "records"
+          "records",
+          "hosted"
         ],
         "title": "ScheduledJobOut",
         "type": "object"
@@ -7837,7 +8007,7 @@
     },
     "/ops/schedule": {
       "get": {
-        "description": "The cadence of each scheduled job and when it last succeeded.\n\nNo token: job names, cadences and times describe the installation, not\nthe operator's search, and spec 050 lists this read as tokenless.",
+        "description": "The cadence of each scheduled job and when it last succeeded.\n\nNo token: job names, cadences and times describe the installation, not\nthe operator's search, and spec 050 lists this read as tokenless.\nHosted, every route but the public one needs a session (spec 114), and\nthe answer is the signed-in owner's choice and state (spec 120).",
         "operationId": "getSchedule",
         "responses": {
           "200": {
