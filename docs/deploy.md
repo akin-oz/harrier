@@ -276,10 +276,11 @@ The key is the project's current signing key (spec 107, Decision taken
 in makes Storage accept the scheduler's tokens. The steps:
 
 1. Make the key on your own machine, outside the repository, as a private
-   P-256 JWK with a `kid`:
+   P-256 JWK with a `kid`. `--group hosted` brings in `pyjwt`, which the
+   default environment does not hold:
 
    ```
-   uv run --project services/api python -c "import json, uuid; from cryptography.hazmat.primitives.asymmetric import ec; from jwt.algorithms import ECAlgorithm; k = json.loads(ECAlgorithm.to_jwk(ec.generate_private_key(ec.SECP256R1()))); k['kid'] = str(uuid.uuid4()); print(json.dumps(k))" > "$HOME/scheduler-signing-key.jwk"
+   uv run --project services/api --group hosted python -c "import json, uuid; from cryptography.hazmat.primitives.asymmetric import ec; from jwt.algorithms import ECAlgorithm; k = json.loads(ECAlgorithm.to_jwk(ec.generate_private_key(ec.SECP256R1()))); k['kid'] = str(uuid.uuid4()); print(json.dumps(k))" > "$HOME/scheduler-signing-key.jwk"
    chmod 600 "$HOME/scheduler-signing-key.jwk"
    ```
 
