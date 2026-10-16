@@ -31,7 +31,9 @@ everywhere, and so the bypass class of bug cannot recur.
     is truthy, so subscription auth is the default
   - openai-api: OpenAI Responses API
   - anthropic-api: Anthropic Messages API (ANTHROPIC_MAX_TOKENS honored,
-    default 4096)
+    default 16000; ANTHROPIC_EFFORT low, medium or high, default medium,
+    sent only to the models that take it; a cut-off or refused answer
+    raises: spec 148)
 - Provider selection: AI_PROVIDER with the old aliases (codex, claude,
   openai, anthropic, and underscore or squashed variants), unknown values
   raise LLMClientError. Model resolution order: explicit argument, then

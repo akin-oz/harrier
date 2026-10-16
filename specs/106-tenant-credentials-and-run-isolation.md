@@ -1500,3 +1500,11 @@ else in this spec changes.
 - **The owner's run directory** stays, as the run's working directory, its
   `HOME` and its log file's place; it holds no domain file once runs are
   bound (spec 107's amendment says why).
+
+## Note (2026-10-16): spec 148
+
+Spec 148 sets the Anthropic provider's effort from `ANTHROPIC_EFFORT`, one
+value for every owner. "Copied from the server's environment when set" also
+names `ANTHROPIC_EFFORT`, beside `ANTHROPIC_MAX_TOKENS`. Nothing else in this
+spec changes
+(`services/api/tests/test_hosted_runs.py::test_the_run_environment_carries_the_anthropic_effort`).
