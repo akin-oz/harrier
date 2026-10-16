@@ -1034,8 +1034,8 @@ def test_backfill_never_rewrites_the_candidates_on_a_read_error(storage: FakeSto
     """A Storage error while `backfill-posters` reads the staged candidates
     ends that poster: it never reads as "nothing staged" and uploads a fresh
     list over the candidates and their reviews."""
-    from harrier.outreach.backfill import _stage_poster  # pyright: ignore[reportPrivateUsage]
     from harrier.outreach.discovery import candidates_key
+    from harrier.outreach.posters import stage_poster
 
     store = store_for()
     key = candidates_key("Example Co", "Senior Frontend Engineer")
@@ -1046,7 +1046,6 @@ def test_backfill_never_rewrites_the_candidates_on_a_read_error(storage: FakeSto
         ]
     }
     store.put(key, json.dumps(staged).encode("utf-8"), atomic=False)
-    row = {"company": "Example Co", "title": "Senior Frontend Engineer"}
     poster = {
         "name": "Example Poster",
         "linkedin_url": "https://www.linkedin.com/in/example-poster",
@@ -1055,7 +1054,14 @@ def test_backfill_never_rewrites_the_candidates_on_a_read_error(storage: FakeSto
     with bind_files(store):
         storage.failures["download"] = [503]
         with pytest.raises(FileStoreError):
-            _stage_poster(row, "https://jobs.example.com/example-co", poster)
+            stage_poster(
+                "Example Co",
+                "Senior Frontend Engineer",
+                "https://jobs.example.com/example-co",
+                poster,
+                source="linkedin_guest",
+                raw_query="guest_poster_backfill",
+            )
 
     stored = store.read(key)
     assert stored is not None

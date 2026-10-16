@@ -14,13 +14,10 @@ from dataclasses import dataclass, field
 from typing import cast
 
 from harrier.connection import Connection
-from harrier.outreach.contacts import infer_relevance, normalize
-from harrier.outreach.discovery import (
-    load_candidates_artifact,
-    write_candidates_artifact,
-)
+from harrier.outreach.contacts import normalize
+from harrier.outreach.posters import contact_url_keys, stage_poster
 from harrier.screening.linkedin import fetch_linkedin_job_details, linkedin_job_id
-from harrier.tracker import list_contacts, list_jobs
+from harrier.tracker import list_jobs
 from harrier.tracks import Scope
 
 BATCH = 25
@@ -34,15 +31,6 @@ class BackfillSummary:
     no_poster: int = 0
     errors: list[str] = field(default_factory=list[str])
     lines: list[str] = field(default_factory=list[str])
-
-
-def _existing_contact_keys(conn: Connection) -> set[str]:
-    keys: set[str] = set()
-    for contact in list_contacts(conn):
-        url = (contact.get("linkedin_url") or "").strip()
-        if url:
-            keys.add(normalize(url))
-    return keys
 
 
 def _linkedin_rows(conn: Connection, scope: Scope) -> list[tuple[dict[str, str], str]]:
@@ -59,58 +47,6 @@ def _linkedin_rows(conn: Connection, scope: Scope) -> list[tuple[dict[str, str],
     return rows
 
 
-def _stage_poster(row: dict[str, str], job_url: str, poster: dict[str, str]) -> bool:
-    """Merge the poster into the job's candidates artifact as a pending
-    candidate. Returns False when it is already staged."""
-    company = row.get("company", "")
-    role = row.get("title", "")
-    poster_url = str(poster.get("linkedin_url") or "").strip()
-    poster_name = str(poster.get("name") or "").strip()
-    # Strict: a Storage error while reading must end this poster, not read
-    # as "nothing staged" and upload a fresh list over the candidates and
-    # their reviews (data-integrity review of PR #368).
-    payload = load_candidates_artifact(company, role, strict=True) or {
-        "company": company,
-        "role": role,
-        "job_url": job_url,
-        "candidates": [],
-    }
-    candidates_raw = payload.get("candidates")
-    candidates: list[object] = (
-        cast("list[object]", candidates_raw) if isinstance(candidates_raw, list) else []
-    )
-    key = normalize(poster_url or poster_name)
-    for item in candidates:
-        if not isinstance(item, dict):
-            continue
-        existing_url = str(item.get("linkedin_url") or "")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-        existing_name = str(item.get("person_name") or "")  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-        if normalize(existing_url or existing_name) == key:
-            return False
-    candidates.append(
-        {
-            "person_name": poster_name or "Job poster",
-            "company": company,
-            "applied_job_title": role,
-            "person_title": str(poster.get("title", "")),
-            "relevance": infer_relevance(str(poster.get("title", ""))),
-            "fit_score": "",
-            "fit_reason": "poster of the tracked job posting",
-            "location": "",
-            "source": "linkedin_guest",
-            "linkedin_url": poster_url,
-            "job_url": job_url,
-            "contact_status": "candidate",
-            "reply_status": "",
-            "review_status": "pending",
-            "raw_query": "guest_poster_backfill",
-        }
-    )
-    payload["candidates"] = candidates
-    write_candidates_artifact(company, role, payload)
-    return True
-
-
 def backfill_posters(
     conn: Connection, scope: Scope, *, limit: int = 0, dry_run: bool = False
 ) -> BackfillSummary:
@@ -122,7 +58,7 @@ def backfill_posters(
     if not rows:
         return summary
 
-    existing = _existing_contact_keys(conn)
+    existing = contact_url_keys(conn)
     for start in range(0, len(rows), BATCH):
         batch = rows[start : start + BATCH]
         details = fetch_linkedin_job_details([url for _, url in batch])
@@ -149,7 +85,14 @@ def backfill_posters(
                 )
                 continue
             try:
-                if _stage_poster(row, url, poster):
+                if stage_poster(
+                    row.get("company", ""),
+                    row.get("title", ""),
+                    url,
+                    poster,
+                    source="linkedin_guest",
+                    raw_query="guest_poster_backfill",
+                ):
                     summary.staged += 1
                     summary.lines.append(
                         f"staged for review: {poster_name} -> {row.get('company', '')}"

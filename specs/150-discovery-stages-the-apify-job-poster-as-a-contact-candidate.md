@@ -1,7 +1,7 @@
 ---
 spec: 150
 title: Discovery stages the Apify job poster as a contact candidate
-status: accepted
+status: shipped
 approved: yes
 milestone: M6
 depends: [009, 011, 016]
@@ -106,29 +106,29 @@ carries no name, title or URL. The per-source summary does not change.
 
 ## Acceptance criteria
 
-- [ ] An Apify item with `jobPosterName`, `jobPosterTitle` and
+- [x] An Apify item with `jobPosterName`, `jobPosterTitle` and
       `jobPosterProfileUrl` on a `uk.linkedin.com/in/` link, run through
       discovery and added to the tracker, leaves one pending candidate with
       that name and title and `https://www.linkedin.com/in/<slug>`
-      (planned test_discovery_stages_the_apify_poster).
-- [ ] The same run as a dry run stages nothing
-      (planned test_a_dry_run_stages_no_poster).
-- [ ] An item that screening rejects, or that is a tracker duplicate,
-      stages nothing (planned test_only_added_rows_stage_a_poster).
-- [ ] An item with no poster keys stages nothing, and an item whose URL is
+      (`services/api/tests/test_discovery.py::test_discovery_stages_the_apify_poster`).
+- [x] The same run as a dry run stages nothing
+      (`services/api/tests/test_discovery.py::test_a_dry_run_stages_no_poster`).
+- [x] An item that screening rejects, or that is a tracker duplicate,
+      stages nothing (`services/api/tests/test_discovery.py::test_only_added_rows_stage_a_poster`).
+- [x] An item with no poster keys stages nothing, and an item whose URL is
       not an `https` LinkedIn `/in/` link stages the name with no URL
-      (planned test_an_unusable_poster_url_is_dropped).
-- [ ] A poster already staged for the job, or already in the contacts
+      (`services/api/tests/test_discovery.py::test_an_unusable_poster_url_is_dropped`).
+- [x] A poster already staged for the job, or already in the contacts
       table, is not staged again
-      (planned test_a_known_poster_is_not_staged_twice).
-- [ ] A candidates artifact write that raises leaves the job added and the
-      run finished (planned test_a_staging_failure_does_not_fail_the_run).
-- [ ] No contact row is written by discovery (the same tests read the
+      (`services/api/tests/test_discovery.py::test_a_known_poster_is_not_staged_twice`).
+- [x] A candidates artifact write that raises leaves the job added and the
+      run finished (`services/api/tests/test_discovery.py::test_a_staging_failure_does_not_fail_the_run`).
+- [x] No contact row is written by discovery (the same tests read the
       contacts table).
-- [ ] `extract_publisher_contact` reads `jobPosterProfileUrl`
-      (an added case in `test_extract_publisher_contact_flat_and_nested`).
-- [ ] `backfill-posters` behaves as before
-      (the existing tests in `services/api/tests/test_outreach.py`).
+- [x] `extract_publisher_contact` reads `jobPosterProfileUrl`
+      (an added case in `services/api/tests/test_apify_linkedin.py::test_extract_publisher_contact_flat_and_nested`).
+- [x] `backfill-posters` behaves as before
+      (`services/api/tests/test_outreach.py::test_backfill_stages_posters_without_writing_contacts`).
 
 ## Proof / origin
 
