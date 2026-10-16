@@ -32,6 +32,7 @@ family names only. The module deletes and changes nothing locally.
 from __future__ import annotations
 
 import stat as stat_module
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -39,7 +40,14 @@ from pathlib import Path, PurePosixPath
 import harrier.filestore as filestore
 from harrier.apply.answers import ANSWERS, answers_key_for
 from harrier.apply.letters import COVER_LETTERS, cover_letter_keys_for
-from harrier.connection import URL_VARIABLE, Connection, StoreError, open_store, owner_claims
+from harrier.connection import (
+    URL_VARIABLE,
+    ArtifactImportRefused,
+    ArtifactImportStopped,
+    Connection,
+    open_store,
+    owner_claims,
+)
 from harrier.db import check_database_ownership, default_db_path
 from harrier.filestore import (
     CONTENT_TYPES,
@@ -75,16 +83,6 @@ FITS_NO_JOB = (
     "none of the files fits a job of this account, so --owner is probably not the account "
     "harrier store import-local filled; nothing was uploaded"
 )
-
-
-class ArtifactImportRefused(StoreError):
-    """A check refused the import before the first upload. The text names
-    the check, never an owner, a host, a file or a key."""
-
-
-class ArtifactImportStopped(StoreError):
-    """The copy stopped at a file. The text names the step and the family,
-    never the file, the key or the owner. Objects already copied stay."""
 
 
 @dataclass
@@ -229,6 +227,31 @@ def skip_reason(file: LocalFile) -> str | None:
 
 # --- the copy ---
 
+# Storage answers 429 when a run sends too many requests at once. The copy
+# waits and asks again, these many seconds in turn, before it stops as for
+# any other answer (spec 146, Amendment (2026-10-16)). The seam's error
+# carries the status, not Storage's Retry-After, so the waits are the
+# command's own.
+RATE_LIMITED = 429
+RETRY_WAITS: tuple[int, ...] = (2, 4, 8, 16, 32, 60)
+
+# Replaced in tests, so a rate-limited copy is tested without waiting.
+_sleep: Callable[[float], None] = time.sleep
+
+
+def _patiently[T](call: Callable[[], T], report: Callable[[str], None]) -> T:
+    """`call()`, asked again after each wait in RETRY_WAITS while Storage
+    answers 429. Any other error, or a 429 after the last wait, is raised."""
+    for wait in RETRY_WAITS:
+        try:
+            return call()
+        except FileStoreError as error:
+            if error.status != RATE_LIMITED:
+                raise
+        report(f"Storage asked the import to slow down; waiting {wait} s")
+        _sleep(wait)
+    return call()
+
 
 def _stopped(step: str, family: str, error: FileStoreError) -> ArtifactImportStopped:
     """The one-line stop for a failed Storage call: the step, the family and
@@ -264,6 +287,7 @@ def _copy_one(
     file: LocalFile,
     result: Imported,
     attached: frozenset[str],
+    report: Callable[[str], None],
 ) -> None:
     """Send one file that passed the skip rules, or leave it as it is."""
     family = file.family
@@ -271,8 +295,8 @@ def _copy_one(
     key = file.key
     data = _read_local(local, file)
     try:
-        found = hosted.stat(key)
-        hosted_bytes = hosted.read(key) if found is not None else None
+        found = _patiently(lambda: hosted.stat(key), report)
+        hosted_bytes = _patiently(lambda: hosted.read(key), report) if found is not None else None
     except FileStoreError as error:
         raise _stopped("check", family, error) from None
     if hosted_bytes is not None:
@@ -282,8 +306,8 @@ def _copy_one(
         count.present += 1
     else:
         try:
-            hosted.put(key, data, atomic=True)
-            after = hosted.stat(key)
+            _patiently(lambda: hosted.put(key, data, atomic=True), report)
+            after = _patiently(lambda: hosted.stat(key), report)
         except FileStoreError as error:
             raise _stopped("upload", family, error) from None
         if after is None or after.size != len(data):
@@ -354,7 +378,7 @@ def import_artifacts(
                 elif reason == "over":
                     result.over_limit += 1
                 else:
-                    _copy_one(hosted, local, file, result, attached)
+                    _copy_one(hosted, local, file, result, attached, report)
             report(_family_line(family, result.families[family]))
     report(f"not copied, over the size limit: {result.over_limit}")
     report(f"not copied, other type or name: {result.other}")
