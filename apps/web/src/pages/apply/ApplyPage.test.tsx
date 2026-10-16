@@ -141,6 +141,27 @@ function renderPage(): void {
   );
 }
 
+test("a half-pasted description does not carry over to another job's page", async () => {
+  stubApi({});
+  installRunStreams();
+  const user = userEvent.setup();
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const page = (job: Job) => (
+    <QueryClientProvider client={queryClient}>
+      <ApplyPage job={job} track={INDUSTRY_TRACK} onBack={() => undefined} />
+    </QueryClientProvider>
+  );
+  const { rerender } = render(page(JOB));
+
+  await user.click(await screen.findByRole("button", { name: "Replace" }));
+  await user.paste(" and a half-pasted line");
+  rerender(page({ ...JOB, id: 8 }));
+
+  // Job 8 shows its own stored text, not job 7's open draft.
+  expect(await screen.findByRole("button", { name: "Replace" })).toBeTruthy();
+  expect(screen.queryByLabelText("Paste the job description")).toBeNull();
+});
+
 // --- starting an operation ---------------------------------------------------
 
 test("tailoring posts to the resume route for this job", async () => {

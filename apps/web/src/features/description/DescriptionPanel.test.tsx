@@ -67,7 +67,10 @@ test("a stored description is shown, with no paste box", async () => {
   const calls = stubApi({ stored: { text: POSTING, stored: true } });
   renderPanel();
 
-  expect((await screen.findByLabelText("Stored description")).textContent).toBe(POSTING);
+  // A labelled group, so the label is one assistive technology reads.
+  expect((await screen.findByRole("group", { name: "Stored description" })).textContent).toBe(
+    POSTING,
+  );
   expect(screen.queryByLabelText("Paste the job description")).toBeNull();
   expect(screen.queryByText(/No description was captured/)).toBeNull();
   expect(calls.find((call) => call.url === "/api/apply/3/description")?.token).toBe("test-token");
@@ -102,6 +105,24 @@ test("no stored description shows the paste box, and saving shows the stored tex
   const put = calls.find((call) => call.method === "PUT");
   expect(put?.url).toBe("/api/apply/3/description");
   expect(put?.body).toEqual({ text: `  ${POSTING}\n` });
+});
+
+test("replacing clears the saved note, so cancelling does not report a save", async () => {
+  stubApi({ stored: { text: "", stored: false } });
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(await screen.findByLabelText("Paste the job description"));
+  await user.paste(POSTING);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  expect((await screen.findByRole("status")).textContent).toBe(
+    "Saved. Every operation reads this description.",
+  );
+
+  await user.click(screen.getByRole("button", { name: "Replace" }));
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  // Nothing was saved this time, so nothing says it was.
+  expect(screen.queryByRole("status")).toBeNull();
 });
 
 test("replace opens the box with the stored text, and cancel closes it", async () => {

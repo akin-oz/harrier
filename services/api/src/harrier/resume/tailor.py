@@ -14,6 +14,7 @@ from functools import partial
 from pathlib import Path
 
 from harrier.apply.brief import load_brief
+from harrier.apply.description import stored_description
 from harrier.connection import Connection
 from harrier.filestore import artifact_path, files, files_in, join_key, local_file, save_text
 from harrier.resume.ai import build_ai_tailored_content
@@ -30,7 +31,6 @@ from harrier.resume.plan import (
     validate_content_plan,
     with_confirmed_skills,
 )
-from harrier.screening.descriptions import load_cached_description
 from harrier.tracker import get_job, set_status
 from harrier.tracks import AI_CV_SECTION, Scope, rules_for
 
@@ -116,9 +116,14 @@ def run_tailor(
     requested_role = row.get("title", "")
     job_url = row.get("url", "")
 
+    # Blank text is no text, and the stored one is read as the check reads
+    # it, so a run the check let through never tailors to nothing (spec 149;
+    # post-merge review of PR #383).
+    if not (jd_text and jd_text.strip()):
+        jd_text = None
     jd_source = "arg_text" if jd_text else "none"
     if not jd_text:
-        cached = load_cached_description(job_url)
+        cached = stored_description(job_url)
         if cached:
             jd_text = cached
             jd_source = "cache"
