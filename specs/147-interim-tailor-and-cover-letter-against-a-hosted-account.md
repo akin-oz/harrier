@@ -57,6 +57,13 @@ requires:
 - **AI provider.** The local `AI_PROVIDER` setting applies, so the CLI
   providers (`claude-cli`, `codex-cli`) work, as they do not hosted.
 - **Without `--owner`.** Nothing changes: both open the local store.
+- **Only while nothing is bound.** The local-files behavior holds only while
+  the operator's shell sets none of the variables spec 107's PR 3 uses to
+  tell a process it is a hosted run and bind its Storage. If one of them is
+  set, `files()` may bind Storage instead. They do not exist yet, so this
+  build adds no check. PR 3, which introduces them, either removes both
+  commands from `--owner` (Removal) or makes them refuse when any of its
+  variables is set.
 
 The hosted web app does not show files written this way: they are local.
 Spec 146's `import-artifacts` copies them to Storage when wanted.
@@ -73,12 +80,12 @@ Spec 146's `import-artifacts` copies them to Storage when wanted.
 
 ## Acceptance criteria
 
-- [ ] `harrier tailor --owner <id> <job>` against a synthetic account reads
+- [ ] `harrier --owner <id> tailor --job-id <job>` against a synthetic account reads
       the account's job and profile documents, writes its files under the
       test's data directory, and records the status change in the account
       and not in any local store
       (planned test_tailor_with_owner_reads_and_records_in_the_account).
-- [ ] The same holds for `harrier cover-letter --owner`
+- [ ] The same holds for `harrier --owner <id> cover-letter --job-id <job>`
       (planned test_cover_letter_with_owner_reads_and_records_in_the_account).
 - [ ] Without `--owner`, both still open the local store
       (planned test_tailor_and_cover_letter_without_owner_stay_local).
@@ -128,5 +135,7 @@ not this one.
 
 ## Migration
 
-None. The operator runs `harrier tailor --owner <id> <job>` with the account
-login in the shell, as spec 144's commands are run.
+None. The operator runs `harrier --owner <id> tailor --job-id <job>` (and
+`harrier --owner <id> cover-letter --job-id <job>`) with the account login
+in the shell, as spec 144's commands are run. `--owner` is a global option,
+so it comes before the command.
