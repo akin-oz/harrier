@@ -516,6 +516,80 @@ def test_a_letter_render_that_raises_removes_the_earlier_pdf(
     assert paths["markdown"].is_file()
 
 
+def _write_letter_expecting_refusal(db: Connection, directory: Path) -> dict[str, Path]:
+    """Run the letter write with an earlier run's files in place, and return
+    the paths. The renderer must never be reached."""
+    paths = _seed_earlier_letter(directory)
+    rendered: list[Path] = []
+
+    def recording_render(html_text: str, pdf_path: Path) -> None:
+        rendered.append(pdf_path)
+        pdf_path.write_bytes(b"%PDF-1.4\n")
+
+    with pytest.raises(ValueError, match="LinkedIn link must be an http or https URL"):
+        write_cover_letter_artifacts(
+            db,
+            "examplesoft",
+            "Senior Product Engineer (Remote)",
+            "https://jobs.ashbyhq.com/examplesoft/123",
+            SHORT_LETTER,
+            FULL_LETTER,
+            output_dir=directory,
+            template_dir=REPO_ROOT / "templates",
+            render=recording_render,
+            kind="industry",
+        )
+    assert rendered == []
+    return paths
+
+
+@pytest.mark.parametrize("value", ["javascript:alert(1)", "  JavaScript:alert(1)"])
+def test_a_letter_with_an_unsafe_linkedin_is_not_rendered(
+    db: Connection, tmp_path: Path, value: str
+) -> None:
+    """Spec 142: the candidate document's link names `javascript:`, so no HTML
+    or PDF is written, an earlier run's are removed, and the draft stays."""
+    candidate = {
+        "candidate": {
+            "name": "Deniz Örnek",
+            "location": "Exampleland",
+            "email": "deniz@example.com",
+            "linkedin": value,
+        }
+    }
+    put_document(db, "candidate", "candidate.json", "json", json.dumps(candidate))
+    directory = tmp_path / "letters"
+    paths = _write_letter_expecting_refusal(db, directory)
+    assert not paths["pdf"].exists()
+    assert not paths["html"].exists()
+    assert "## Full Version" in paths["markdown"].read_text(encoding="utf-8")
+    assert sorted(path.name for path in directory.iterdir()) == [paths["markdown"].name]
+
+
+def test_a_truth_line_linkedin_is_checked_too(db: Connection, tmp_path: Path) -> None:
+    """With no candidate value the letter reads the truth document's
+    `- LinkedIn:` line, and that line is checked the same way (spec 142)."""
+    put_document(
+        db,
+        "candidate",
+        "candidate.json",
+        "json",
+        json.dumps({"candidate": {"name": "Deniz Örnek", "email": "deniz@example.com"}}),
+    )
+    put_document(
+        db,
+        "resume_truth",
+        "truth.md",
+        "markdown",
+        "- Email: deniz@example.com\n- LinkedIn: javascript:alert(1)\n",
+    )
+    directory = tmp_path / "letters"
+    paths = _write_letter_expecting_refusal(db, directory)
+    assert not paths["pdf"].exists()
+    assert not paths["html"].exists()
+    assert "## Full Version" in paths["markdown"].read_text(encoding="utf-8")
+
+
 def test_render_cover_letter_html_contains_only_full_letter(db: Connection) -> None:
     html = render_cover_letter_html(
         db,

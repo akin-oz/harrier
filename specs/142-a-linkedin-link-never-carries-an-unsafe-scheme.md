@@ -78,18 +78,20 @@ Nothing is rewritten. A refused value is the operator's to correct.
 
 ## Acceptance criteria
 
-- [ ] A resume facts document with `candidate.linkedin` of
+- [x] A resume facts document with `candidate.linkedin` of
   `javascript:alert(1)`, in any case and with leading spaces, is refused
-  naming the field (planned test_an_unsafe_linkedin_scheme_is_refused).
-- [ ] With `https://` and with no scheme, the industry CV's markdown and
-  HTML are byte-identical to today's (planned
-  test_a_safe_linkedin_renders_as_before).
-- [ ] A candidate document whose `linkedin` names `javascript:` fails the
-  letter run with no HTML or PDF, and the draft kept (planned
-  test_a_letter_with_an_unsafe_linkedin_is_not_rendered).
-- [ ] A truth line `- LinkedIn: javascript:...`, with no candidate value,
-  fails the same way (planned test_a_truth_line_linkedin_is_checked_too).
-- [ ] `just check` passes.
+  naming the field
+  (`services/api/tests/test_resume.py::test_an_unsafe_linkedin_scheme_is_refused`).
+- [x] With `https://` and with no scheme, the industry CV's markdown and
+  HTML are byte-identical to today's
+  (`services/api/tests/test_resume.py::test_a_safe_linkedin_renders_as_before`).
+- [x] A candidate document whose `linkedin` names `javascript:` fails the
+  letter run with no HTML or PDF, and the draft kept
+  (`services/api/tests/test_apply.py::test_a_letter_with_an_unsafe_linkedin_is_not_rendered`).
+- [x] A truth line `- LinkedIn: javascript:...`, with no candidate value,
+  fails the same way
+  (`services/api/tests/test_apply.py::test_a_truth_line_linkedin_is_checked_too`).
+- [x] `just check` passes.
 
 ## Proof / origin
 
@@ -115,3 +117,30 @@ Nothing is rewritten. A refused value is the operator's to correct.
 
 None, unless a stored LinkedIn value names a scheme other than http or
 https; `profile check` then names it, and the operator corrects it.
+
+## Amendments found while implementing (2026-10-16)
+
+1. **What "names a scheme" means.** The rule is the one a browser applies
+   when it reads an href, in `names_unsafe_scheme` in
+   `services/api/src/harrier/resume/content.py`: ASCII tab and line breaks
+   are dropped anywhere in the value, leading control characters and spaces
+   are trimmed, and the scheme is the run of letters, digits, `+`, `-` and
+   `.` before the first colon, starting with a letter. So `java\tscript:x`
+   and `JavaScript:x` are refused, and so is `linkedin.com:443/in/example`,
+   which a browser also reads as a scheme `linkedin.com`. A value with no
+   colon, or whose colon follows a character that cannot be in a scheme
+   (such as the `/` of `linkedin.com/in/a:b`), names no scheme.
+2. **One helper, two callers.** The letter calls the same function the CV
+   does, so the two cannot drift. It is imported from `harrier.resume.content`
+   as the letter already imports the truth sources from there.
+3. **The letter's failure is a `ValueError`.** It is raised in
+   `render_cover_letter_html`, inside the `try` of
+   `write_cover_letter_artifacts`, so the existing cleanup removes the HTML
+   and the PDF and keeps the markdown draft (spec 067), and the CLI's
+   existing `except ValueError` prints "cover letter failed: the candidate's
+   LinkedIn link must be an http or https URL" and exits 1.
+4. **Test shape for the byte-identical criterion.** The tests do not hold
+   a golden copy of "today's" output. They render the example CV, then the
+   same CV with each safe value, and require the two to differ only where
+   the value is written. The comparison against the pre-change output was
+   also run once by hand and is recorded in the pull request.

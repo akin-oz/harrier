@@ -488,6 +488,29 @@ def _check_link(path: str, url: str, errors: list[str]) -> None:
         errors.append(f"{path} must be an http or https URL")
 
 
+# What a browser reads as a URL's scheme: ASCII tab and line breaks are
+# dropped anywhere in the value, leading control characters and spaces are
+# trimmed, and the scheme is the letters, digits, `+`, `-` and `.` before the
+# first colon (the WHATWG URL parser).
+_URL_LINE_NOISE = dict.fromkeys(map(ord, "\t\n\r"))
+_URL_LEADING = "".join(chr(code) for code in range(0x21))
+_SCHEME = re.compile(r"^([A-Za-z][A-Za-z0-9+.\-]*):")
+_WEB_SCHEMES = frozenset({"http", "https"})
+
+
+def names_unsafe_scheme(value: str) -> bool:
+    """Whether a link value names a scheme other than http or https (spec 142).
+
+    A value with no scheme, such as `linkedin.com/in/example`, is not
+    refused: it renders as a relative link, as every existing document does.
+    `html.escape` does not disable a scheme, so `javascript:alert(1)` would
+    otherwise ship as a live href.
+    """
+    text = value.translate(_URL_LINE_NOISE).lstrip(_URL_LEADING)
+    match = _SCHEME.match(text)
+    return match is not None and match.group(1).lower() not in _WEB_SCHEMES
+
+
 def _strict_strings(data: dict[str, object], key: str, errors: list[str]) -> tuple[str, ...]:
     """An optional list of non-empty strings. An entry of another type is
     refused rather than dropped, so a framing is never accepted with an entry
@@ -653,12 +676,15 @@ def _parse_bundle(data: dict[str, object]) -> tuple[ResumeBundle, list[str]]:
         )
 
     presentation = _parse_presentation(data, candidate, bullet_pool, errors)
+    linkedin = _require_str(candidate, "linkedin", errors, "candidate")
+    if names_unsafe_scheme(linkedin):
+        errors.append("candidate.linkedin must be an http or https URL")
     bundle = ResumeBundle(
         name=_require_str(candidate, "name", errors, "candidate"),
         location=_require_str(candidate, "location", errors, "candidate"),
         email=_require_str(candidate, "email", errors, "candidate"),
         phone=str(candidate.get("phone") or ""),
-        linkedin=_require_str(candidate, "linkedin", errors, "candidate"),
+        linkedin=linkedin,
         primary_identity=_require_str(candidate, "primary_identity", errors, "candidate"),
         professional_career_start=_require_str(
             candidate, "professional_career_start", errors, "candidate"

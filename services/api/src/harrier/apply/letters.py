@@ -55,6 +55,7 @@ from harrier.resume.content import (
     load_forbidden_phrases,
     load_skill_vocabulary,
     load_truth_sources,
+    names_unsafe_scheme,
 )
 from harrier.resume.markdown import normalize_visible_role_title, normalize_visible_url_text
 from harrier.resume.pdf import render_pdf, render_validated_pdf, validate_rendered_pdf
@@ -547,6 +548,11 @@ def render_cover_letter_html(
     template = (directory / rules_for(kind).letter_template).read_text(encoding="utf-8")
     css = (directory / CSS_TEMPLATE).read_text(encoding="utf-8")
     contact = candidate_contact(conn)
+    # The value goes into an href, and escaping does not disable a scheme. A
+    # refused value is the operator's to correct, so nothing is rewritten
+    # (spec 142).
+    if names_unsafe_scheme(contact["linkedin_url"]):
+        raise ValueError("the candidate's LinkedIn link must be an http or https URL")
     html_text = template.replace(
         '<link rel="stylesheet" href="./cover-letter-template.css" />',
         f"<style>\n{css}\n</style>",
