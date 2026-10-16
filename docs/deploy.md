@@ -431,7 +431,8 @@ continues with the owners that remain. Each erase appends one line to
 `harrier store import-local` copies the local store, `data/tracker.db`, into one
 hosted account (spec 141). It copies the rows of `tracks`, `jobs`, `job_events`,
 `job_eligibility`, `contacts`, `profile_documents`, `user_config` and
-`job_runs`, and nothing else: artifacts and other files move in a later spec. The
+`job_runs`, and nothing else: the generated files move with
+`harrier store import-artifacts`, below. The
 account must be empty apart from track 1, which sign-up made. The command
 refuses anything else and writes nothing.
 
@@ -483,6 +484,78 @@ hosted connection that times out rolls back, and a larger store needs batching
 that the spec does not provide.
 
 The command's tests are in `services/api/tests/test_import_local.py`.
+
+### Importing the generated files
+
+`harrier store import-artifacts` copies the generated resumes, cover letters and
+answers (the files directly inside `data/resumes`, `data/cover-letters` and
+`data/answers`) into the same account's Storage prefix (spec 146). Run it after
+`import-local` has finished: it refuses an account that has no job, because
+every file is found by its job's company and role, and without a job no name
+resolves. Nothing else under `data/` is read: not logs, caches, reports, the
+corrupt backup or `resumes-corrected`.
+
+1. Keep the local container stopped, as for `import-local`.
+2. Keep `HARRIER_IMPORT_DATABASE_URL` exported as in step 4 above. The command
+   only reads the account's rows with it.
+3. Read the Storage project and its secret key into this shell only, never into
+   `.env` (a secret key defined there is refused, because the local container
+   reads that file):
+
+   ```
+   read -rs HARRIER_SUPABASE_SECRET_KEY   # the project's secret key
+   export HARRIER_SUPABASE_SECRET_KEY
+   export HARRIER_SUPABASE_URL=https://<ref>.supabase.co
+   ```
+
+4. Run it, with the same user id as the import:
+
+   ```
+   uv run --project services/api harrier store import-artifacts --owner <user id>
+   ```
+
+5. Clear the variables:
+   `unset HARRIER_SUPABASE_SECRET_KEY HARRIER_IMPORT_DATABASE_URL`.
+
+A run prints one line per family, then the counts of what was not copied, the
+counts of files that are attached to a job of the account and files that are
+not, and a verdict:
+
+```
+resumes: <count> copied, <count> already there
+cover-letters: <count> copied, <count> already there
+answers: <count> copied, <count> already there
+not copied, over the size limit: <count>
+not copied, other type or name: <count>
+not copied, differs from the hosted object: <count>
+attached: <count>
+unattached: <count>
+imported
+```
+
+The verdict is `imported` and the exit status 0 only when every file was copied
+or was already there. A file over the size limit (6,000,000 bytes), of a type
+the bucket does not accept, with a name outside its key grammar, or empty is
+skipped without a request and counted. An object already in Storage with other
+bytes is never overwritten: it is counted, and the verdict is `incomplete` with
+exit status 1, which a rerun does not change until the file or the object does.
+It prints no file name, owner id, key or host. A refusal prints one line on
+stderr and exits 1; a malformed `--owner` exits 2.
+
+There is no transaction. Each upload is whole or absent, so a run that stops
+(Storage unavailable, the credential refused) leaves the objects it finished.
+Run it again: it skips every object already there with the same bytes and
+continues. The command deletes nothing, locally or in Storage, so keep the local
+directories until the bucket has a backup. `harrier operator erase` for the
+account refuses while any object remains under its prefix.
+
+An `unattached` file was copied but no job of the account names it: its company
+or title, or the resume bundle's name, differs from the one the file was named
+for. It is found again when a job with that company and role exists.
+
+The command's tests are in `services/api/tests/test_import_artifacts.py`. That an
+account's own token reads what the secret key wrote is not proved by the tests
+(spec 146, Honest limitations): the staging check does.
 
 ## Writing one account from the command line
 

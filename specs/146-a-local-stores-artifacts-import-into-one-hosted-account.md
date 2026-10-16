@@ -9,10 +9,9 @@ depends: [047, 107, 111, 141]
 
 # Spec 146: A local store's artifacts import into one hosted account
 
-This spec waits. Nothing here is built until spec 107's second pull request
-(the hosted store and its operator binding) is built, because the
-`SupabaseFileStore` this command writes through does not exist before it.
-Approval of this text can come earlier.
+Spec 107's hosted store and its operator binding have merged (PR #363), so
+the `SupabaseFileStore` this command writes through exists and this spec is
+built.
 
 ## Problem
 
@@ -246,6 +245,7 @@ same bytes and continues. The only state is in Storage.
 | The hosted object is the same bytes | Skipped, counted "already there" |
 | Storage unavailable (`FileStoreUnavailable`: 5xx, timeout, refused) | The run stops at that file; the lines so far print; one line on stderr names the step and the family, exit 1; running again resumes |
 | Storage refuses the credential (`FileStoreDenied`) | The run stops the same way; the message says the key or the project is wrong |
+| Storage refuses a file under the limit as too large (413) | The run stops the same way, naming the step and the family (Amendment 2) |
 | The upload's size read back differs from the local file | The run stops, exit 1; the object is left as Storage holds it and a rerun finds it differs |
 | A local file cannot be read (permission, vanished) | The run stops, naming the family, exit 1 |
 | The process is killed | Objects finished stay, each whole; a rerun resumes |
@@ -260,52 +260,78 @@ service, with synthetic names and bytes only, like spec 141's.
 - [ ] With rows imported, files in the three directories copy into the
       account's prefix, and the artifact route for each hosted job then
       lists and serves them with the same bytes and the same media types
-      (planned test_import_artifacts_copies_the_three_families).
+      (`services/api/tests/test_import_artifacts.py::test_import_artifacts_copies_the_three_families`).
 - [ ] An imported artifact is found for its hosted job whose id differs from
       the local one, with no rename and no rewrite: the resume, letter and
       answers for one company and role resolve for the job that holds
-      them, and a job with another role does not see them (planned
-      test_import_artifacts_stay_attached_to_the_hosted_job).
+      them, and a job with another role does not see them (`services/api/tests/test_import_artifacts.py::test_import_artifacts_stay_attached_to_the_hosted_job`).
 - [ ] A second run uploads nothing, counts every file "already there" and
-      prints `imported` (planned test_import_artifacts_is_idempotent).
+      prints `imported` (`services/api/tests/test_import_artifacts.py::test_import_artifacts_is_idempotent`).
 - [ ] A hosted object with other bytes under a key is left unchanged,
       counted "differs from the hosted object", and the verdict is
-      `incomplete` (planned test_import_artifacts_never_overwrites_a_different_object).
+      `incomplete` (`services/api/tests/test_import_artifacts.py::test_import_artifacts_never_overwrites_a_different_object`).
 - [ ] A run stopped by an unavailable Storage after some uploads leaves
-      those objects whole, and a second run uploads only the rest (planned
-      test_import_artifacts_resumes_after_an_interruption).
+      those objects whole, and a second run uploads only the rest (`services/api/tests/test_import_artifacts.py::test_import_artifacts_resumes_after_an_interruption`).
 - [ ] A file over 6,000,000 bytes, a file with an extension outside the
       bucket's five, a name outside the key grammar and an empty file are
       each skipped without a request, counted under their reason, and the
-      run finishes the other files and ends `incomplete` (planned
-      test_import_artifacts_skips_what_storage_would_refuse).
+      run finishes the other files and ends `incomplete` (`services/api/tests/test_import_artifacts.py::test_import_artifacts_skips_what_storage_would_refuse`).
 - [ ] A dot file, a subdirectory, and the other `data/` directories (logs,
       LLM logs, caches, reports, the corrupt backup, and
-      `resumes-corrected`) are never read or counted (planned
-      test_import_artifacts_leaves_other_directories_alone).
+      `resumes-corrected`) are never read or counted (`services/api/tests/test_import_artifacts.py::test_import_artifacts_leaves_other_directories_alone`).
 - [ ] An account with a track and no job is refused with the
       `import-local` sentence and nothing uploaded; an unknown user id is
       refused; files that fit no job of the account are refused before the
-      first upload (planned test_import_artifacts_needs_the_rows_first).
+      first upload (`services/api/tests/test_import_artifacts.py::test_import_artifacts_needs_the_rows_first`).
 - [ ] Every upload goes under `<owner>/` for the `--owner` given and no
       other prefix, and no object name contains a local file name or a
-      slug (planned test_import_artifacts_writes_only_under_the_owners_prefix).
+      slug (`services/api/tests/test_import_artifacts.py::test_import_artifacts_writes_only_under_the_owners_prefix`).
 - [ ] The output and the captured log carry counts and family names only: no owner id, host, key, file name, company or candidate name
-      appears (planned test_import_artifacts_prints_no_file_name).
+      appears (`services/api/tests/test_import_artifacts.py::test_import_artifacts_prints_no_file_name`).
 - [ ] The local files' bytes and modification times are unchanged and none
-      is deleted (planned test_import_artifacts_never_writes_the_local_files).
+      is deleted (`services/api/tests/test_import_artifacts.py::test_import_artifacts_never_writes_the_local_files`).
 - [ ] A running container, an unset database URL, the migrator's URL,
       unset or malformed Storage variables and a secret key defined only in
       `.env` each exit 1 with nothing read from the data directory and
-      nothing uploaded; a malformed `--owner` exits 2 (planned
-      test_import_artifacts_refuses_before_writing).
+      nothing uploaded; a malformed `--owner` exits 2 (`services/api/tests/test_import_artifacts.py::test_import_artifacts_refuses_before_writing`).
 - [ ] A Storage that denies the credential stops the run with exit 1 and a
-      message that names neither the key nor the object (planned
-      test_import_artifacts_stops_when_storage_denies_it).
+      message that names neither the key nor the object (`services/api/tests/test_import_artifacts.py::test_import_artifacts_stops_when_storage_denies_it`).
 - [ ] `docs/deploy.md` says how to run it against staging and production,
       after `import-local`, in the section "Importing a local store into an
       account".
 - [ ] `just check` passes.
+
+## Amendments found while implementing (2026-10-16)
+
+1. **A symbolic link is not a regular file.** Scope says the command copies
+   "regular files directly inside" the three directories. The command reads
+   each entry with `lstat`, so a link is not listed, not counted and never
+   followed, and nothing outside the data directory can be sent
+   (`services/api/tests/test_import_artifacts.py::test_import_artifacts_leaves_other_directories_alone`).
+2. **A 413 for a file under the limit stops the run.** The seam's limit is
+   spec 107's guidance, so a bucket configured lower would answer 413 for a
+   file the command sent. The failure table had no row for it. It is a
+   refusal like any other: the run stops at that file, names the step and
+   the family, and a rerun stops at the same file until the bucket's limit
+   or the file changes. It is not counted as "over the size limit", because
+   the command did not measure it.
+3. **"Files exist" in check 6 means any regular file with no leading dot** in
+   the three directories, the ones the command would skip included. A
+   directory holding only a stray `.txt` is refused as fitting no job, not
+   copied as an empty run.
+4. **The lines printed before a stop are the families that finished.** A stop
+   in the middle of a family prints no line for that family; stderr names the
+   step and the family. Objects already sent stay, and the rerun reports them
+   as "already there"
+   (`services/api/tests/test_import_artifacts.py::test_import_artifacts_resumes_after_an_interruption`).
+5. **The account's rows are read in a transaction that sets `READ ONLY`.**
+   The owner connection has no read-only mode of its own, so the command
+   issues `SET TRANSACTION READ ONLY` first, as `harrier store check-deploy`
+   does, and the server refuses a write inside it.
+6. **The command imports the Storage client only when it runs.** `httpx` is a
+   development dependency, so `harrier_cli.main` imports
+   `harrier.artifactimport` inside the command, never at start
+   (`services/api/tests/test_import_artifacts.py::test_the_command_imports_no_httpx_until_it_runs`).
 
 ## Proof / origin
 
