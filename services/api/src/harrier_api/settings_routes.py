@@ -97,6 +97,11 @@ _IMPORT = (
     "One-time import (spec 141): it reads the local file and writes one hosted account, so it "
     "runs on the operator's machine with the run login's URL in the shell."
 )
+_IMPORT_ARTIFACTS = (
+    "One-time import (spec 146): it reads the local artifact directories and writes one "
+    "hosted account's Storage, so it runs on the operator's machine with the Storage "
+    "project's secret key in the shell."
+)
 _DEPLOY = (
     "Deploy checks (spec 110): the deploy workflow runs them, and the operator runs the cost "
     "projection once a month from a shell."
@@ -222,6 +227,7 @@ COMMAND_PLACES: dict[str, Place] = {
     "store grant-schedule-reader": TerminalOnly(_DEPLOY_STORE),
     "store check-deploy": TerminalOnly(_DEPLOY_STORE),
     "store import-local": TerminalOnly(_IMPORT),
+    "store import-artifacts": TerminalOnly(_IMPORT_ARTIFACTS),
     "deploy check-auth-settings": TerminalOnly(_DEPLOY),
     "deploy check-machine-count": TerminalOnly(_DEPLOY),
     "deploy check-scheduler-tick": TerminalOnly(_DEPLOY),

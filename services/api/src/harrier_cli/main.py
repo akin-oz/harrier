@@ -1962,6 +1962,8 @@ def _cmd_store(args: argparse.Namespace) -> int:
 
     if args.store_command == "import-local":
         return _store_import_local(args)
+    if args.store_command == "import-artifacts":
+        return _store_import_artifacts(args)
     try:
         target = store_target()
         if args.store_command in STORE_DEPLOY_COMMANDS:
@@ -2024,6 +2026,45 @@ def _store_import_local(args: argparse.Namespace) -> int:
         print(f"{table}: {written.counts[table]} copied")
     print("imported")
     return 0
+
+
+def _store_import_artifacts(args: argparse.Namespace) -> int:
+    """`harrier store import-artifacts --owner <user id>` (spec 146).
+
+    Copies the generated resumes, cover letters and answers of the local data
+    directory into one hosted account's Storage prefix, after
+    `harrier store import-local`. A host command: the Storage client is
+    imported here, never at start. The output names counts and families,
+    never the owner, a file, a key or the host. A refusal or a stop prints
+    one line to stderr and exits 1; so does a run that left a file uncopied.
+    """
+    from harrier.artifactimport import import_artifacts
+    from harrier.connection import StoreConnectionError, StoreError
+
+    try:
+        result = import_artifacts(args.owner, os.environ, print)
+    except DatabaseOwnedByContainer:
+        print(
+            f"error: the {CONTAINER_NAME} container owns the data directory; stop it first, "
+            "then run the import again",
+            file=sys.stderr,
+        )
+        return 1
+    except DatabaseOwnershipError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    except StoreConnectionError:
+        # Built from the host, which names the project: not printed.
+        print(
+            "error: harrier store import-artifacts could not connect to the hosted store; "
+            "check HARRIER_IMPORT_DATABASE_URL",
+            file=sys.stderr,
+        )
+        return 1
+    except StoreError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    return 0 if result.complete else 1
 
 
 def _owner_id(value: str) -> str:
@@ -3051,6 +3092,10 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     # applies itself, and writes the hosted account (spec 141). Never
     # delegated: a container that owns the file is a refusal.
     "store import-local": _HOST,
+    # Reads the three artifact directories and writes one hosted account's
+    # Storage prefix (spec 146). Never delegated: a container that owns the
+    # data directory is a refusal.
+    "store import-artifacts": _HOST,
     # Read no database: the project's Auth settings, a Fly listing on stdin,
     # Fly's events and figures typed in (spec 110).
     "deploy check-auth-settings": _HOST,
@@ -3572,6 +3617,18 @@ def build_parser() -> argparse.ArgumentParser:
         "(spec 141)",
     )
     import_local_cmd.add_argument(
+        "--owner",
+        required=True,
+        type=_owner_id,
+        metavar="USER_ID",
+        help="the account's Supabase user id, as the dashboard's Users page shows it",
+    )
+    import_artifacts_cmd = store_sub.add_parser(
+        "import-artifacts",
+        help="copy the local resumes, cover letters and answers into one hosted account's "
+        "Storage, after import-local (spec 146)",
+    )
+    import_artifacts_cmd.add_argument(
         "--owner",
         required=True,
         type=_owner_id,
