@@ -49,7 +49,7 @@ from harrier.apply.requirements import (
 )
 from harrier.apply.review import Review, render_review
 from harrier.connection import Connection
-from harrier.filestore import files_in, join_key, local_file, save_text
+from harrier.filestore import artifact_path, files_in, join_key, local_file, save_text
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
 from harrier.resume.content import (
@@ -710,8 +710,15 @@ def answers_path_for(company: str, role: str, output_dir: Path | None = None) ->
         return local_file(join_key(prefix, _answers_name(company, role)))
 
 
+def answers_review_path(company: str, role: str) -> Path:
+    """How the answers document names itself in its review section: the
+    local file `write_output` writes, or, for a store with no local files,
+    its name (`artifact_path`, spec 107)."""
+    return artifact_path(answers_key_for(company, role))
+
+
 def write_output(company: str, role: str, content: str, output_dir: Path | None = None) -> Path:
     with files_in(output_dir, ANSWERS) as prefix:
         key = join_key(prefix, _answers_name(company, role))
         save_text(key, content, atomic=False)
-        return local_file(key)
+        return artifact_path(key)

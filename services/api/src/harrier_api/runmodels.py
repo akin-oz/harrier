@@ -16,7 +16,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any, cast
 
 from fastapi import Depends, Request
@@ -110,6 +110,10 @@ class OwnedRuns:
     hosted: bool
     # The `exp` of the token that opened the request, hosted; None locally.
     expires_at: float | None
+    # The verified bearer token of the request, hosted; None locally. A run
+    # this request starts reaches its owner's Storage prefix with it (spec
+    # 107, Decision taken (2026-10-15)). Kept out of the repr.
+    token: str | None = field(default=None, repr=False)
 
     def sees(self, run: Run) -> bool:
         return not self.hosted or (run.owner != "" and run.owner == self.owner)
@@ -153,7 +157,7 @@ class OwnedRuns:
     async def start(self, kind: str, params: RunParams | None = None) -> Run:
         # The one place a route's run gets its owner, so no route passes
         # another (spec 132).
-        return await self.manager.start(kind, params, owner=self.owner)
+        return await self.manager.start(kind, params, owner=self.owner, storage_token=self.token)
 
     def stream(self, run_id: str, last_event_id: int = 0) -> AsyncIterator[str]:
         """The run's SSE messages after `last_event_id`. Hosted, the stream
@@ -218,7 +222,19 @@ def get_runs(request: Request, manager: Annotated[RunManager, Depends(get_manage
         owner=sub if isinstance(sub, str) else "",
         hosted=True,
         expires_at=_expiry(claims),
+        token=_verified_token(request, claims),
     )
+
+
+def _verified_token(request: Request, claims: dict[str, object]) -> str | None:
+    """The bearer token spec 104's middleware verified for this request:
+    its claims are attached only after the `Authorization` header's token
+    verified, so the header holds it. None without claims."""
+    if not claims:
+        return None
+    scheme, _, token = request.headers.get("authorization", "").strip().partition(" ")
+    token = token.strip()
+    return token if scheme.lower() == "bearer" and token else None
 
 
 Manager = Annotated[OwnedRuns, Depends(get_runs)]

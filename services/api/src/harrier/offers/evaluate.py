@@ -16,7 +16,7 @@ from typing import cast
 
 from harrier.apply.profile import load_candidate_document
 from harrier.connection import Connection
-from harrier.filestore import files_in, join_key, local_file, save_text
+from harrier.filestore import artifact_path, files_in, join_key, local_file, save_text
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
 from harrier.offers.report import ARCHETYPES, build_report
@@ -233,7 +233,7 @@ def evaluate_offer(
     with files_in(output_dir, REPORTS) as prefix:
         report_key = join_key(prefix, _report_name(company, role))
         save_text(report_key, build_report(data, company, role, job_url), atomic=False)
-        report_path = local_file(report_key)
+        report_path = artifact_path(report_key)
 
     stories_raw = data.get("block_e")
     stories = (

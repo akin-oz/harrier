@@ -30,7 +30,7 @@ from harrier.academic.search import (
 )
 from harrier.connection import Connection
 from harrier.demo import fixtures_dir, is_demo_mode
-from harrier.filestore import FileStoreUnbound, files, local_file, save_json
+from harrier.filestore import FileStoreUnbound, artifact_path, files, save_json
 from harrier.notify import build_academic_telegram_message, send_telegram_message
 from harrier.runoutcome import age_in_days, last_success, record_success
 from harrier.screening.normalized import dedupe_normalized_jobs
@@ -170,7 +170,7 @@ def save_dataset(scope: Scope, run_id: str, items: list[dict[str, Any]]) -> Path
     )
     for old in saved[SAVED_RUNS_CAP:]:
         store.delete(old.key)
-    return local_file(key)
+    return artifact_path(key)
 
 
 def _incoming_key(scope: Scope) -> str:

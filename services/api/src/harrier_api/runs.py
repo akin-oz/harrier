@@ -22,6 +22,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -339,11 +340,14 @@ class HostedAnswer:
         return () if self.unless is not None and self.unless in switches else self.needs
 
 
-def _until_107(kind: str) -> HostedAnswer:
-    # The result is a file, which no hosted route can serve until spec 107
-    # moves run files to Storage.
+def _no_hosted_reader(kind: str) -> HostedAnswer:
+    # Its files reach the owner's Storage prefix like every hosted run's, but
+    # no hosted route serves them, so a run would write what nobody can read
+    # (spec 107, Amendment (2026-10-16): PR 3's build).
     return HostedAnswer(
-        runs=False, refusal=f"{kind} runs are not available on the hosted API until spec 107"
+        runs=False,
+        refusal=f"{kind} runs are not available on the hosted API: "
+        "no hosted route serves their files (spec 107)",
     )
 
 
@@ -363,19 +367,17 @@ HOSTED_RUN_KINDS: dict[str, HostedAnswer] = {
     "reconsider": RUNS,
     "events-backfill": RUNS,
     "evaluate-prospects": HostedAnswer(runs=True, needs=("ai",)),
-    **{
-        kind: _until_107(kind)
-        for kind in (
-            "tailor",
-            "cover-letter",
-            "answers",
-            "evaluate",
-            "outreach-draft",
-            "find-contacts",
-            "backfill-posters",
-            "scoring-export",
-        )
-    },
+    # Lifted by spec 107's third pull request: each writes its files through
+    # the run's binding to its owner's Storage prefix, which the artifact and
+    # staged candidate routes read.
+    "tailor": HostedAnswer(runs=True, needs=("ai",), unless="--no-ai"),
+    "cover-letter": HostedAnswer(runs=True, needs=("ai",)),
+    "answers": HostedAnswer(runs=True, needs=("ai",)),
+    "evaluate": HostedAnswer(runs=True, needs=("ai",)),
+    "find-contacts": HostedAnswer(runs=True, needs=("apify",)),
+    "backfill-posters": RUNS,
+    "outreach-draft": _no_hosted_reader("outreach-draft"),
+    "scoring-export": _no_hosted_reader("scoring-export"),
     # Spec 109's refusal and text (spec 106, Amendment (2026-10-13,
     # implementation), item 9): `start` raises `GmailNotHosted` first.
     "gmail-watch": HostedAnswer(runs=False, refusal=GMAIL_NOT_HOSTED_DETAIL),
@@ -838,7 +840,14 @@ class RunManager:
 
     # -- lifecycle ----------------------------------------------------------
 
-    async def start(self, kind: str, params: RunParams | None = None, *, owner: str = "") -> Run:
+    async def start(
+        self,
+        kind: str,
+        params: RunParams | None = None,
+        *,
+        owner: str = "",
+        storage_token: str | None = None,
+    ) -> Run:
         """Start a run, return the active run it repeats, or refuse.
 
         `owner` is the caller's: the request's verified `sub` hosted, empty
@@ -863,6 +872,13 @@ class RunManager:
 
         Hosted, a `gmail-watch` is refused with `GmailNotHosted` first,
         before the owner and the table are read (spec 109).
+
+        `storage_token` is the bearer token of the verified request that
+        starts the run, hosted. It reaches the run's process in its
+        environment only, and the run binds its owner's Storage prefix with
+        it (spec 107, Decision taken (2026-10-15)). It is never part of the
+        command, the signature, the record or the run's repr. Without it a
+        hosted run binds no store and refuses at its first file.
         """
         if runs_hosted():
             try:
@@ -878,7 +894,7 @@ class RunManager:
                 self._discard_input(params)
                 raise
             async with self._start_lock:
-                return await self._start_hosted(kind, params, owner)
+                return await self._start_hosted(kind, params, owner, storage_token)
         # A kind that acts on everything locks on the empty target, which is
         # the one-at-a-time behaviour discovery always had. Kinds never
         # collide with each other because the lock is on the pair.
@@ -918,7 +934,9 @@ class RunManager:
         self._tasks[run.id] = asyncio.create_task(self._execute(run))
         return run
 
-    async def _start_hosted(self, kind: str, params: RunParams | None, owner: str) -> Run:
+    async def _start_hosted(
+        self, kind: str, params: RunParams | None, owner: str, storage_token: str | None
+    ) -> Run:
         """Spec 106, "Starting a hosted run", from step 3: the lock per
         owner, the binding, the record, then the spawn."""
         target = _target(params)
@@ -955,7 +973,9 @@ class RunManager:
         answer = HOSTED_RUN_KINDS[kind]
         needs = answer.needed(frozenset() if params is None else params.switches)
         try:
-            bound = await asyncio.to_thread(hosted.begin, run, needs)
+            bound = await asyncio.to_thread(
+                partial(hosted.begin, run, needs, storage_token=storage_token)
+            )
         except RunCredentialMissing as missing:
             self._discard_input(params)
             raise RunCredentialRefused(missing.kind, str(missing), missing=True) from None

@@ -17,13 +17,73 @@ import secrets
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
-from harrier.filestore import FileStore, LocalFileStore, bind_files, files
+from harrier.connection import URL_VARIABLE
+from harrier.filestore import FileStore, LocalFileStore, bind_files, files, hosted_files
 
 # The private directory a hosted render uses (spec 107, "PDF rendering").
 HOSTED_RENDER_DIRECTORY_MODE = 0o700
+
+# What Chromium and `pdfinfo` keep of a hosted run's environment: enough to
+# find the browser, fonts and a temporary directory, and nothing a run holds
+# as a secret (the run login's URL, the owner's credentials). The security
+# review of PR #368 found both tools inheriting them once `tailor` and
+# `cover-letter` ran hosted.
+RENDER_ENVIRONMENT: tuple[str, ...] = (
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+    "PLAYWRIGHT_BROWSERS_PATH",
+    "FONTCONFIG_PATH",
+    "FONTCONFIG_FILE",
+    "XDG_CACHE_HOME",
+    "XDG_CONFIG_HOME",
+)
+
+
+def render_environment() -> dict[str, str] | None:
+    """The environment a render tool starts with: None locally, where it
+    inherits the process's as before; in a hosted process, only
+    `RENDER_ENVIRONMENT`'s names, and the store's URL variable empty.
+
+    Empty, not absent: an absent `HARRIER_DATABASE_URL` lets a `.env` in the
+    working directory name the store (spec 103), and an empty one names
+    nothing secret."""
+    if not hosted_files():
+        return None
+    narrowed = {name: os.environ[name] for name in RENDER_ENVIRONMENT if name in os.environ}
+    narrowed[URL_VARIABLE] = ""
+    return narrowed
+
+
+@contextmanager
+def _render_environ() -> Generator[None]:
+    """The process environment narrowed to `render_environment()` for the
+    block, and restored after. Playwright's driver copies `os.environ` when
+    it starts and ignores `launch(env=...)` for itself, so the narrowing has
+    to be on the process. A run is one thread, so nothing else reads the
+    environment meanwhile."""
+    narrowed = render_environment()
+    if narrowed is None:
+        yield
+        return
+    saved = dict(os.environ)
+    for name in set(saved) - set(narrowed):
+        del os.environ[name]
+    os.environ.update(narrowed)
+    try:
+        yield
+    finally:
+        for name in set(os.environ) - set(saved):
+            del os.environ[name]
+        os.environ.update(saved)
 
 
 def render_pdf(html_text: str, pdf_path: Path, margin_mm: int = 10) -> None:
@@ -38,7 +98,7 @@ def render_pdf(html_text: str, pdf_path: Path, margin_mm: int = 10) -> None:
         ) from exc
 
     try:
-        with sync_playwright() as playwright:
+        with _render_environ(), sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             page = browser.new_page()
             page.set_content(html_text, wait_until="load")
@@ -92,7 +152,12 @@ def validate_rendered_pdf(
         errors.append("HTML contains unresolved template placeholders")
     try:
         result = subprocess.run(
-            ["pdfinfo", str(pdf_path)], capture_output=True, text=True, check=False, timeout=10
+            ["pdfinfo", str(pdf_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+            env=render_environment(),
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         errors.append("could not inspect PDF page count with pdfinfo")

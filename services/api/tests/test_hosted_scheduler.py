@@ -38,22 +38,35 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import jwt
 import psycopg
 import pytest
+from cryptography.hazmat.primitives.asymmetric import ec
 from pg_support import open_owner_store
-from test_hosted_auth import new_credentials_key_text
+from test_hosted_auth import (
+    PUBLISHABLE_KEY,
+    SUPABASE_URL,
+    new_credentials_key_text,
+    storage_signing_key,
+)
 from test_hosted_requests import LoginRole, Server, copied_server
 
 from harrier import connection
 from harrier.connection import URL_VARIABLE, Connection, owner_claims
 from harrier.credentials import CredentialUnreadable, parse_key, put_credential
 from harrier.discovery import apify_allowed_now
+from harrier.filestore import STORAGE_TOKEN_VARIABLE, run_store
 from harrier.hostedschedule import claim_slot, finish_slot, load_hosted_jobs
 from harrier.pgstore import postgres_connect
 from harrier.schedule import ScheduleJob
 from harrier.tracker.schema import SCHEDULE_READER_ROLE
 from harrier_api import hostedscheduler
-from harrier_api.hostedauth import RUN_DATABASE_URL_VARIABLE
+from harrier_api.hostedauth import (
+    PUBLISHABLE_KEY_VARIABLE,
+    RUN_DATABASE_URL_VARIABLE,
+    STORAGE_SIGNING_KEY_VARIABLE,
+    SUPABASE_URL_VARIABLE,
+)
 from harrier_api.hostedscheduler import (
     CONCURRENCY_VARIABLE,
     CREDENTIALS_KEY_VARIABLE,
@@ -262,6 +275,9 @@ class Rig:
     clock: FakeClock
     fleet: Fleet
     jobs: dict[str, ScheduleJob]
+    # The scheduler's Storage signing key, made for the test (spec 107).
+    signing_key_text: str
+    signing_key: ec.EllipticCurvePrivateKey
     calls: list[str] = field(default_factory=lambda: list[str]())
 
     def environ(self, **overrides: str | None) -> dict[str, str]:
@@ -273,6 +289,9 @@ class Rig:
             CREDENTIALS_KEY_VARIABLE: self.key_text,
             CONCURRENCY_VARIABLE: "2",
             TIMEOUT_VARIABLE: "60",
+            STORAGE_SIGNING_KEY_VARIABLE: self.signing_key_text,
+            SUPABASE_URL_VARIABLE: SUPABASE_URL,
+            PUBLISHABLE_KEY_VARIABLE: PUBLISHABLE_KEY,
             "PATH": os.environ.get("PATH", ""),
         }
         for name, value in overrides.items():
@@ -366,6 +385,7 @@ def rig_fixture(server: Server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     # data directory in the checkout.
     monkeypatch.delenv("HARRIER_DATA_DIR", raising=False)
     clock = FakeClock()
+    signing_key_text, signing_key = storage_signing_key()
     return Rig(
         server=server,
         scheduler=scheduler_login(server),
@@ -375,6 +395,8 @@ def rig_fixture(server: Server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         clock=clock,
         fleet=Fleet(clock, tmp_path),
         jobs=load_hosted_jobs(Path(__file__).resolve().parents[3] / "config" / "schedule.json"),
+        signing_key_text=signing_key_text,
+        signing_key=signing_key,
     )
 
 
@@ -1991,3 +2013,133 @@ def test_a_lock_in_another_database_is_not_a_tick_here(rig: Rig, server: Server)
     with psycopg.connect(server.url.rsplit("/", 1)[0] + "/postgres", autocommit=True) as other:
         other.execute("SELECT pg_advisory_lock(hashtext('harrier.scheduler'), 0)")
         assert report(rig)[1].splitlines()[0] == "scheduler: no tick running"
+
+
+# --- a scheduled run's Storage token (spec 107, Decision taken (2026-10-16)) ---
+
+
+def test_a_scheduled_run_binds_a_minted_token(rig: Rig) -> None:
+    """Through spec 106's real binding: each scheduled run carries one token
+    the scheduler minted for that run's owner, `ES256` under the key's `kid`,
+    with `sub` the owner, `role` and `aud` `authenticated`, issued at the
+    start and expiring no later than the run's timeout plus one minute. The
+    run binds its owner's Storage prefix with it, and the signing key never
+    reaches the run."""
+    first = rig.owner()
+    second = rig.owner()
+
+    def capture(argv: Sequence[str], env: Mapping[str, str], cwd: Path) -> Process:
+        return rig.fleet.spawn(argv, {"OWNER": env["HARRIER_RUN_OWNER"], **env}, cwd)
+
+    assert rig.run(bind=bind_run, spawn=capture) == 0
+
+    started = {s.owner: s for s in rig.fleet.spawned}
+    assert set(started) == {first, second}
+    tokens: set[str] = set()
+    for owner, spawned in started.items():
+        token = spawned.env[STORAGE_TOKEN_VARIABLE]
+        tokens.add(token)
+        assert jwt.get_unverified_header(token) == {
+            "alg": "ES256",
+            "kid": "scheduler-key",
+            "typ": "JWT",
+        }
+        claims = jwt.decode(
+            token,
+            rig.signing_key.public_key(),
+            algorithms=["ES256"],
+            audience="authenticated",
+            issuer=f"{SUPABASE_URL}/auth/v1",
+            # The fake clock is in the past; the times are checked below.
+            options={"verify_exp": False, "verify_iat": False},
+        )
+        assert claims["sub"] == owner
+        assert claims["role"] == "authenticated" and claims["aud"] == "authenticated"
+        issued = int(spawned.at.timestamp())
+        assert claims["iat"] == issued
+        # The rig's run timeout is 60 seconds.
+        assert issued < claims["exp"] <= issued + 60 + 60
+        # The run binds its owner's prefix with that token, and takes the
+        # token out of its environment as it does.
+        environ = dict(spawned.env)
+        store = run_store(environ)
+        assert store is not None
+        assert (store.owner, store.token, store.origin) == (owner, token, SUPABASE_URL)
+        assert store.apikey == PUBLISHABLE_KEY
+        assert STORAGE_TOKEN_VARIABLE not in environ
+        # The key stays the scheduler's.
+        assert STORAGE_SIGNING_KEY_VARIABLE not in spawned.env
+        private = json.loads(rig.signing_key_text)["d"]
+        assert not any(private in value for value in spawned.env.values())
+    assert len(tokens) == 2
+
+
+def test_a_scheduler_without_a_signing_key_starts_no_file_writing_run(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Spec 107, Decision taken (2026-10-16): with no
+    `HARRIER_STORAGE_SIGNING_KEY` the scheduler starts no run of a job that
+    writes files, which every hosted job is, binds nothing, claims no slot,
+    writes nothing to the machine's disk, and logs one line naming the
+    variable."""
+    rig.owner(jobs=("discovery", "academic-discovery"), apify=True)
+    rig.owner()
+    caplog.set_level(logging.INFO, logger=SCHEDULER_LOGGER)
+
+    assert rig.run(rig.environ(**{STORAGE_SIGNING_KEY_VARIABLE: None})) == 0
+
+    assert rig.fleet.bound == [] and rig.fleet.spawned == []
+    assert rig.state() == {}
+    assert not (rig.tmp_path / "owners").exists()
+    named = [
+        r.getMessage() for r in caplog.records if STORAGE_SIGNING_KEY_VARIABLE in r.getMessage()
+    ]
+    assert named == [
+        "scheduler starts no run that writes files: HARRIER_STORAGE_SIGNING_KEY is not set"
+    ]
+
+    # With the key, the same tick starts all three.
+    assert rig.run() == 0
+    assert len(rig.fleet.spawned) == 3
+
+
+def test_a_signing_key_the_scheduler_cannot_use_refuses_the_start(rig: Rig) -> None:
+    """A key that is not a private P-256 JSON Web Key with a `kid`, or one
+    without the project's URL or publishable key beside it, refuses the
+    start, naming the variable and never the key (spec 107, Amendment
+    (2026-10-16): PR 3's build)."""
+    text = rig.signing_key_text
+    jwk = json.loads(text)
+    public = {name: value for name, value in jwk.items() if name != "d"}
+    without_kid = {name: value for name, value in jwk.items() if name != "kid"}
+    for case in (
+        {STORAGE_SIGNING_KEY_VARIABLE: "not json"},
+        {STORAGE_SIGNING_KEY_VARIABLE: json.dumps(public)},
+        {STORAGE_SIGNING_KEY_VARIABLE: json.dumps(without_kid)},
+        {STORAGE_SIGNING_KEY_VARIABLE: json.dumps({**jwk, "crv": "P-384"})},
+        {SUPABASE_URL_VARIABLE: None},
+        {SUPABASE_URL_VARIABLE: "http://project-ref.supabase.co"},
+        # An https URL that is not an origin (data-integrity review of
+        # PR #368): a path, credentials, a query.
+        {SUPABASE_URL_VARIABLE: "https://project-ref.supabase.co/rest/v1"},
+        {SUPABASE_URL_VARIABLE: "https://user:pw@project-ref.supabase.co"},
+        {SUPABASE_URL_VARIABLE: "https://project-ref.supabase.co?x=1"},
+        {PUBLISHABLE_KEY_VARIABLE: None},
+    ):
+        with pytest.raises(hostedscheduler.StartRefused) as refused:
+            read_settings(rig.environ(**case))
+        assert STORAGE_SIGNING_KEY_VARIABLE in str(refused.value), case
+        assert jwk["d"] not in str(refused.value)
+    assert read_settings(rig.environ()).signer is not None
+    assert read_settings(rig.environ(**{STORAGE_SIGNING_KEY_VARIABLE: None})).signer is None
+    assert jwk["d"] not in repr(read_settings(rig.environ()))
+
+
+def test_every_hosted_job_is_known_to_write_files() -> None:
+    """Every job the hosted schedule offers is in `FILE_WRITING_JOBS`, so a
+    new hosted job cannot start without a minted token and fail at its first
+    file (data-integrity review of PR #368). A job that writes no file joins
+    by changing this test with its reason."""
+    from harrier.hostedschedule import FILE_WRITING_JOBS, HOSTED_JOBS
+
+    assert set(HOSTED_JOBS) <= FILE_WRITING_JOBS

@@ -181,6 +181,16 @@ def bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def storage_signing_key(kid: str = "scheduler-key") -> tuple[str, ec.EllipticCurvePrivateKey]:
+    """A private P-256 JSON Web Key with a `kid`, in the form
+    `HARRIER_STORAGE_SIGNING_KEY` takes (spec 107), and the key itself.
+    Made at run time; no private key is committed."""
+    key = new_ec_key()
+    jwk = json.loads(ECAlgorithm.to_jwk(key))
+    jwk["kid"] = kid
+    return json.dumps(jwk), key
+
+
 @dataclass
 class Hosted:
     app: FastAPI
@@ -309,7 +319,7 @@ def child_environment(tmp_path: Path, **overrides: str) -> dict[str, str]:
         name: value
         for name, value in os.environ.items()
         if not name.startswith(("HARRIER_AUTH", "HARRIER_SUPABASE", "HARRIER_ALLOWED"))
-        and not name.startswith(("HARRIER_CORS", "SUPABASE_"))
+        and not name.startswith(("HARRIER_CORS", "SUPABASE_", "HARRIER_STORAGE"))
         and not value.strip().startswith("sb_secret_")
         and name != "HARRIER_DEMO"
     }
@@ -497,6 +507,37 @@ def test_hosted_mode_needs_a_publishable_key(
     monkeypatch.setenv("HARRIER_SUPABASE_PUBLISHABLE_KEY", "not a key at all")
     assert hosted_config({"HARRIER_SUPABASE_PUBLISHABLE_KEY": "not a key"}) is None
     create_app()
+
+
+# What spec 107's Decision taken (2026-10-16) states: the API refuses to
+# start with the scheduler's signing key in its environment.
+STORAGE_SIGNING_KEY_TEXT = (
+    "the hosted API must not hold HARRIER_STORAGE_SIGNING_KEY; "
+    "only the scheduler mints tokens (spec 107)"
+)
+
+
+def test_the_api_refuses_the_storage_signing_key(tmp_path: Path) -> None:
+    """Spec 107, Decision taken (2026-10-16): a hosted API whose
+    environment holds `HARRIER_STORAGE_SIGNING_KEY`, a real key or an empty
+    one, refuses to start, exit 1, naming the variable and never printing
+    the key. Without it the start passes this check."""
+    text, _key = storage_signing_key()
+    private = json.loads(text)["d"]
+    for value in (text, ""):
+        environ = child_environment(
+            tmp_path, **complete_hosted_environment(), HARRIER_STORAGE_SIGNING_KEY=value
+        )
+        started = start_api(environ, tmp_path)
+        assert started.returncode == 1, started.stderr
+        last_line = started.stderr.strip().splitlines()[-1]
+        assert last_line == f"harrier_api.hostedauth.HostedConfigError: {STORAGE_SIGNING_KEY_TEXT}"
+        printed = started.stdout + started.stderr
+        assert private not in printed and text not in printed
+        assert not (tmp_path / "data").exists()
+
+    started = start_api(child_environment(tmp_path, **complete_hosted_environment()), tmp_path)
+    assert STORAGE_SIGNING_KEY_TEXT not in started.stderr
 
 
 # --- tokens ---

@@ -16,10 +16,11 @@ bytes, the file and its mode do not change
 `bind_files()` sets the store for the current context. A bound store wins
 over the local default.
 
-Hosted (`HARRIER_AUTH=supabase` in the process environment), there is no
-local default: `files()` returns the bound store or raises
-`FileStoreUnbound`, so a path that forgot to bind fails instead of writing a
-disk every owner shares. The store a request binds is `SupabaseFileStore`,
+Hosted (`HARRIER_AUTH=supabase` in the process environment, or a hosted
+run's `HARRIER_RUN_OWNER`), there is no local default: `files()` returns
+the bound store or raises `FileStoreUnbound`, so a path that forgot to bind
+fails instead of writing a disk every owner shares. The store a request or
+a hosted run binds (`run_store`) is `SupabaseFileStore`,
 which keeps each owner's files in the private bucket `harrier-files` under
 the owner's prefix, through Supabase Storage's HTTP API (spec 107, "The
 hosted store"). `httpx` is imported where a request is sent, never at module
@@ -37,7 +38,7 @@ import os
 import re
 import stat as stat_module
 import uuid
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Generator, Mapping, MutableMapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -46,6 +47,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from harrier.atomicio import DamagedStateError, parse_json_mapping, write_bytes_atomic
+from harrier.connection import RUN_OWNER_VARIABLE
 from harrier.db import data_dir
 
 if TYPE_CHECKING:
@@ -285,9 +287,13 @@ UNBOUND_TEXT = "no file store is bound here; a hosted process keeps no local fil
 
 
 def hosted_files(environ: Mapping[str, str] | None = None) -> bool:
-    """Whether this process serves hosted, so `files()` has no local
-    default. Read from the process environment at each call."""
-    return (os.environ if environ is None else environ).get(AUTH_VARIABLE, "") == HOSTED_AUTH
+    """Whether this process is hosted, so `files()` has no local default:
+    the hosted API (`HARRIER_AUTH=supabase`), or a hosted run, which spec 106
+    marks by `HARRIER_RUN_OWNER` and which carries no `HARRIER_AUTH` (spec
+    107, Amendment (2026-10-16): PR 3's build). Read from the process
+    environment at each call."""
+    env = os.environ if environ is None else environ
+    return env.get(AUTH_VARIABLE, "") == HOSTED_AUTH or RUN_OWNER_VARIABLE in env
 
 
 def files() -> FileStore:
@@ -338,6 +344,19 @@ def local_file(key: str) -> Path:
     if path is None:
         raise FileStoreError(f"{family_of(key)} has no local file in this store")
     return path
+
+
+def artifact_path(key: str) -> Path:
+    """How a writer reports a file it has just written, for a command to
+    print or a document to name: the local file, as `local_file` gives it;
+    for a store with no local files, the key's last segment, the file name a
+    person sees when they download it (spec 107, "Keys and object names").
+
+    For showing only. The hosted form is a bare name, never a path to open:
+    nothing on this machine's disk is behind it (spec 107, Amendment
+    (2026-10-16): PR 3's build)."""
+    path = files().local_path(key)
+    return Path(key_name(key)) if path is None else path
 
 
 # The errors `Path.is_file()` and `Path.exists()` read as "not there" rather
@@ -840,3 +859,35 @@ class SupabaseFileStore:
         for start in range(0, len(names), DELETE_BATCH_SIZE):
             self._remove("delete", "the owner's prefix", names[start : start + DELETE_BATCH_SIZE])
         return len(names)
+
+
+# --- a hosted run's binding (spec 107, Amendment (2026-10-13), and the
+# decisions taken 2026-10-15 and 2026-10-16) ---
+
+# What a hosted run's process finds in its environment, set by the run's
+# binding (`harrier_api.runenv`): the token the run reaches Storage with, the
+# project's origin and the publishable key. The last two names are
+# `harrier_api.hostedauth`'s, which this package may not import.
+STORAGE_TOKEN_VARIABLE = "HARRIER_STORAGE_TOKEN"
+SUPABASE_URL_VARIABLE = "HARRIER_SUPABASE_URL"
+PUBLISHABLE_KEY_VARIABLE = "HARRIER_SUPABASE_PUBLISHABLE_KEY"
+
+
+def run_store(environ: MutableMapping[str, str]) -> SupabaseFileStore | None:
+    """The store a hosted run binds before any domain code runs: its owner's
+    prefix, reached with the token its environment carries.
+
+    The token is taken out of `environ` whatever happens next, so no tool
+    the run starts (Chromium, `pdfinfo`) inherits it. None when the run
+    carries no token, or lacks the origin or the publishable key beside it:
+    then nothing is bound, and `files()` refuses with `FileStoreUnbound` at
+    the run's first file, because `HARRIER_RUN_OWNER` makes the process
+    hosted. A run that touches no file still runs.
+    """
+    token = environ.pop(STORAGE_TOKEN_VARIABLE, "").strip()
+    owner = environ.get(RUN_OWNER_VARIABLE, "")
+    origin = environ.get(SUPABASE_URL_VARIABLE, "").strip().removesuffix("/")
+    apikey = environ.get(PUBLISHABLE_KEY_VARIABLE, "").strip()
+    if not (token and owner and origin and apikey):
+        return None
+    return SupabaseFileStore.for_request(owner, token, origin=origin, publishable_key=apikey)

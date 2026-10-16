@@ -372,18 +372,13 @@ START_CASES: tuple[StartCase, ...] = (
 # Spec 106's table, "Which kinds run hosted", written out here rather than
 # read from the code: each refused kind's detail. A kind not listed runs.
 SPEC_REFUSALS: dict[str, str] = {
+    # Spec 107's third pull request lifted the other six of spec 106's
+    # "501 until spec 107" kinds; these two write files no hosted route
+    # serves (spec 107, Amendment (2026-10-16): PR 3's build).
     **{
-        kind: f"{kind} runs are not available on the hosted API until spec 107"
-        for kind in (
-            "tailor",
-            "cover-letter",
-            "answers",
-            "evaluate",
-            "outreach-draft",
-            "find-contacts",
-            "backfill-posters",
-            "scoring-export",
-        )
+        kind: f"{kind} runs are not available on the hosted API: "
+        "no hosted route serves their files (spec 107)"
+        for kind in ("outreach-draft", "scoring-export")
     },
     # Spec 109's text, which its own refusal answers (spec 106, Amendment
     # (2026-10-13, implementation), item 9).
@@ -458,9 +453,11 @@ def test_a_kind_not_offered_hosted_answers_501_naming_its_spec(
     given: list[str] = []
     refusing_start = manager.start
 
-    async def start(kind: str, params: Any = None, *, owner: str = "") -> Run:
+    async def start(
+        kind: str, params: Any = None, *, owner: str = "", storage_token: str | None = None
+    ) -> Run:
         given.append(owner)
-        return await refusing_start(kind, params, owner=owner)
+        return await refusing_start(kind, params, owner=owner, storage_token=storage_token)
 
     monkeypatch.setattr(manager, "start", start)
     caller = new_owner()
@@ -497,10 +494,12 @@ def test_a_kind_offered_hosted_reaches_its_start(
     monkeypatch = hosted_process
     job = northwind_job()
     manager = hosted_manager(tmp_path)
-    given: list[tuple[str, str]] = []
+    given: list[tuple[str, str, str | None]] = []
 
-    async def start(kind: str, params: Any = None, *, owner: str = "") -> Run:
-        given.append((kind, owner))
+    async def start(
+        kind: str, params: Any = None, *, owner: str = "", storage_token: str | None = None
+    ) -> Run:
+        given.append((kind, owner, storage_token))
         for path in () if params is None else params.files:
             path.unlink(missing_ok=True)
         return Run(id="offered", kind=kind, command=[], owner=owner)
@@ -509,11 +508,13 @@ def test_a_kind_offered_hosted_reaches_its_start(
     caller = new_owner()
     with owners(monkeypatch, manager) as hosted:
         path = case.path.replace("{job}", str(job))
-        response = hosted.client.request(
-            case.method, path, headers=hosted.as_owner(caller), **case.send
-        )
+        headers = hosted.as_owner(caller)
+        response = hosted.client.request(case.method, path, headers=headers, **case.send)
         assert response.status_code == 200, response.text
-    assert given == [(case.kind, caller)]
+    # The run gets the verified request's own token, which it reaches its
+    # owner's Storage prefix with (spec 107, Decision taken (2026-10-15)).
+    token = headers["Authorization"].removeprefix("Bearer ")
+    assert given == [(case.kind, caller, token)]
 
 
 def test_the_contract_declares_the_hosted_run_refusal() -> None:

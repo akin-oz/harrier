@@ -68,6 +68,13 @@ JOB_NEEDS: dict[str, tuple[CredentialKind, ...]] = {
     "academic-discovery": ("apify",),
 }
 
+# The jobs whose runs read and write files: seen state, incoming summaries,
+# academic datasets and the description cache. Hosted, a run reaches them in
+# its owner's Storage prefix with a token the scheduler mints, so without the
+# scheduler's signing key none of them starts (spec 107, Decision taken
+# (2026-10-16)). Every hosted job writes files today.
+FILE_WRITING_JOBS: frozenset[str] = frozenset({"discovery", "academic-discovery"})
+
 Outcome = Literal[
     "running",
     "ok",

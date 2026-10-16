@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from harrier.connection import Connection
-from harrier.filestore import FileStoreError, files, local_file, save_json
+from harrier.filestore import FileStoreError, artifact_path, files, local_file, save_json
 from harrier.outreach.contacts import upsert_contact
 from harrier.sources.apify_linkedin import (
     API_BASE_URL,
@@ -453,11 +453,11 @@ def load_candidates_artifact(
 
 
 def write_candidates_artifact(company: str, role: str, payload: dict[str, object]) -> Path:
-    """Write the staged candidates and return the local file, for a command
-    that prints it."""
+    """Write the staged candidates and return the file, for a command that
+    prints it: the local file, or hosted its name (`artifact_path`)."""
     key = candidates_key(company, role)
     _save_candidates(key, payload)
-    return local_file(key)
+    return artifact_path(key)
 
 
 def _save_candidates(key: str, payload: dict[str, object]) -> None:

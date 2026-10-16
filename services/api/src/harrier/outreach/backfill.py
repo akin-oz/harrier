@@ -66,7 +66,10 @@ def _stage_poster(row: dict[str, str], job_url: str, poster: dict[str, str]) -> 
     role = row.get("title", "")
     poster_url = str(poster.get("linkedin_url") or "").strip()
     poster_name = str(poster.get("name") or "").strip()
-    payload = load_candidates_artifact(company, role) or {
+    # Strict: a Storage error while reading must end this poster, not read
+    # as "nothing staged" and upload a fresh list over the candidates and
+    # their reviews (data-integrity review of PR #368).
+    payload = load_candidates_artifact(company, role, strict=True) or {
         "company": company,
         "role": role,
         "job_url": job_url,

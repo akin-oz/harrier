@@ -46,7 +46,7 @@ from harrier.apply.profile import (
 )
 from harrier.apply.review import Review, render_review
 from harrier.connection import Connection
-from harrier.filestore import files, files_in, join_key, local_file, save_text
+from harrier.filestore import artifact_path, files, files_in, join_key, local_file, save_text
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
 from harrier.resume.content import (
@@ -591,7 +591,7 @@ def write_cover_letter_artifacts(
     with files_in(output_dir, COVER_LETTERS) as prefix:
         keys = cover_letter_keys_for(company, role, prefix)
         store = files()
-        markdown_path = local_file(keys["markdown"])
+        markdown_path = artifact_path(keys["markdown"])
 
         # The review sections go in the markdown draft only. The HTML and PDF
         # are built from full_version alone, so no flag reaches a recruiter
@@ -641,6 +641,6 @@ def write_cover_letter_artifacts(
             raise
         return {
             "markdown": markdown_path,
-            "html": local_file(keys["html"]),
-            "pdf": local_file(keys["pdf"]),
+            "html": artifact_path(keys["html"]),
+            "pdf": artifact_path(keys["pdf"]),
         }

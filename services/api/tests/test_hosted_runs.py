@@ -150,7 +150,12 @@ class InMemoryRecords:
     begun: int = 0
 
     def begin(
-        self, run: Run, needs: Iterable[CredentialKind], extra: Mapping[str, str] | None = None
+        self,
+        run: Run,
+        needs: Iterable[CredentialKind],
+        extra: Mapping[str, str] | None = None,
+        *,
+        storage_token: str | None = None,
     ) -> BoundRun:
         self.begun += 1
         bound = bind_run(
@@ -161,6 +166,7 @@ class InMemoryRecords:
             key=self.key,
             needs=needs,
             extra=extra,
+            storage_token=storage_token,
         )
         self.rows[run.id] = {"owner": run.owner, "state": run.state}
         self.bound[run.id] = bound
@@ -204,7 +210,9 @@ def hosted_manager(
 
 def run_to_end(manager: RunManager, owner: str, kind: str = "demo", **kwargs: Any) -> Run:
     async def go() -> Run:
-        run = await manager.start(kind, kwargs.get("params"), owner=owner)
+        run = await manager.start(
+            kind, kwargs.get("params"), owner=owner, storage_token=kwargs.get("storage_token")
+        )
         return await manager.wait(run.id)
 
     return asyncio.run(go())
@@ -244,7 +252,16 @@ def test_every_run_kind_declares_its_hosted_answer() -> None:
     assert HOSTED_RUN_KINDS["digest"].needed(frozenset()) == ("telegram",)
     assert HOSTED_RUN_KINDS["digest"].needed(frozenset({"--dry-run"})) == ()
     assert HOSTED_RUN_KINDS["evaluate-prospects"].needed(frozenset()) == ("ai",)
-    assert "until spec 107" in HOSTED_RUN_KINDS["tailor"].refusal
+    # Spec 107's third pull request lifted these, each with what it needs.
+    assert HOSTED_RUN_KINDS["tailor"].needed(frozenset()) == ("ai",)
+    assert HOSTED_RUN_KINDS["tailor"].needed(frozenset({"--no-ai"})) == ()
+    for kind in ("cover-letter", "answers", "evaluate"):
+        assert HOSTED_RUN_KINDS[kind].needed(frozenset()) == ("ai",), kind
+    assert HOSTED_RUN_KINDS["find-contacts"].needed(frozenset()) == ("apify",)
+    assert HOSTED_RUN_KINDS["backfill-posters"].needed(frozenset()) == ()
+    assert "no hosted route serves their files (spec 107)" in (
+        HOSTED_RUN_KINDS["outreach-draft"].refusal
+    )
     assert "(spec 109)" in HOSTED_RUN_KINDS["gmail-watch"].refusal
     assert HOSTED_RUN_KINDS["backup"].refusal == "backup runs are local only"
 
@@ -421,8 +438,10 @@ EXCLUDED = (
     "HARRIER_RUN_DATABASE_URL",
     "HARRIER_CREDENTIALS_KEY",
     "HARRIER_AUTH",
-    "HARRIER_SUPABASE_URL",
     "HARRIER_ALLOWED_HOSTS",
+    # The scheduler's signing key never reaches a run (spec 107, Decision
+    # taken (2026-10-16)).
+    "HARRIER_STORAGE_SIGNING_KEY",
     "HARRIER_CORS_ORIGINS",
     "FLY_MACHINE_ID",
     "SUPABASE_SERVICE_ROLE_KEY",
@@ -459,6 +478,10 @@ SPEC_COPIED = (
     "APIFY_ACADEMIC_ACTOR",
     "APIFY_ACADEMIC_PORTALS",
     "ANTHROPIC_MAX_TOKENS",
+    # Spec 106's Note (2026-10-16, spec 107's third pull request): where a
+    # run's Storage requests go, and the key they carry.
+    "HARRIER_SUPABASE_URL",
+    "HARRIER_SUPABASE_PUBLISHABLE_KEY",
 )
 
 
@@ -519,6 +542,30 @@ def test_the_child_environment_holds_only_the_allowlist_and_its_owners_values(
     assert os.path.realpath(child["cwd"]) == run_dir
 
 
+def test_a_request_started_run_carries_its_token_in_its_environment_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Spec 107, Decision taken (2026-10-15): the starting request's token
+    reaches the run's process in its environment, as `HARRIER_STORAGE_TOKEN`,
+    and nowhere else: not its arguments, not a journal, not the run's repr,
+    and a line the run prints with it reaches the stream redacted."""
+    token = f"synthetic-session-{uuid.uuid4().hex}"
+    script = "import os\nprint('token is ' + os.environ['HARRIER_STORAGE_TOKEN'], flush=True)\n"
+    hosted = hosted_manager(tmp_path, monkeypatch, script)
+    owner = new_owner()
+
+    run = run_to_end(hosted.manager, owner, storage_token=token)
+
+    assert run.state == "succeeded", run.events
+    assert hosted.records.bound[run.id].env["HARRIER_STORAGE_TOKEN"] == token
+    lines = [str(event.data.get("line", "")) for event in run.events]
+    assert "token is REDACTED" in lines
+    assert all(token not in json.dumps(event.data) for event in run.events)
+    assert token not in " ".join(run.command) and token not in repr(run)
+    assert not (tmp_path / "journal.jsonl").exists()
+    assert run.secrets == frozenset() and run.env is None
+
+
 def test_a_hosted_run_carries_only_its_owners_telegram_settings(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -569,13 +616,20 @@ def test_the_credentials_key_never_reaches_a_run(
 def test_a_hosted_run_works_in_its_owners_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Spec 107: a hosted run keeps no domain file in its directory. Started
+    # with no Storage token, it binds no store, and its first file refuses.
     script = (
         "import json, os\n"
-        "from harrier.screening.seen import SeenDecision, save_seen, _state_path\n"
-        "save_seen('synthetic', {'k': SeenDecision('kept', 'r', 'p', '2026-10-13T00:00:00Z')}, 1)\n"
+        "from harrier.filestore import FileStoreUnbound\n"
+        "from harrier.screening.seen import SeenDecision, save_seen\n"
+        "try:\n"
+        "    decision = SeenDecision('kept', 'r', 'p', '2026-10-13T00:00:00Z')\n"
+        "    save_seen('synthetic', {'k': decision}, 1)\n"
+        "    refused = False\n"
+        "except FileStoreUnbound:\n"
+        "    refused = True\n"
         "print(json.dumps({'cwd': os.getcwd(), 'home': os.environ['HOME'], "
-        "'data': os.environ['HARRIER_DATA_DIR'], "
-        "'seen': str(_state_path('synthetic', 1))}), flush=True)\n"
+        "'data': os.environ['HARRIER_DATA_DIR'], 'refused': refused}), flush=True)\n"
     )
     hosted = hosted_manager(tmp_path, monkeypatch, script)
     owners = new_owner(), new_owner()
@@ -584,7 +638,6 @@ def test_a_hosted_run_works_in_its_owners_directory(
     early = tmp_path / "api-data" / "owners" / owners[0]
     early.mkdir(parents=True)
     early.chmod(0o755)
-    seen: list[str] = []
     for owner in owners:
         run = run_to_end(hosted.manager, owner)
         assert run.state == "succeeded", run.events
@@ -593,11 +646,8 @@ def test_a_hosted_run_works_in_its_owners_directory(
         for where in (child["cwd"], child["home"], child["data"]):
             assert os.path.realpath(where) == str(directory.resolve())
         assert stat.S_IMODE(directory.stat().st_mode) == 0o700
-        assert Path(child["seen"]).is_file()
-        assert directory.resolve() in Path(child["seen"]).resolve().parents
-        seen.append(child["seen"])
-    # Track 1 of each owner: two files.
-    assert seen[0] != seen[1]
+        assert child["refused"] is True
+        assert not (directory / "discovery").exists()
 
 
 def test_a_hosted_run_reads_no_env_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -682,6 +732,13 @@ RUN_VERBS: dict[str, list[str]] = {
     "reconsider": ["reconsider"],
     "events backfill": ["events", "backfill", "--dry-run"],
     "evaluate-prospects": ["evaluate-prospects"],
+    # Spec 107's third pull request.
+    "tailor": ["tailor", "--job-id", "1"],
+    "cover-letter": ["cover-letter", "--job-id", "1"],
+    "answers": ["answers", "--job-id", "1", "--question", "Why?"],
+    "evaluate": ["evaluate", "--job-id", "1"],
+    "find-contacts": ["find-contacts", "--job-id", "1"],
+    "backfill-posters": ["backfill-posters", "--dry-run"],
 }
 
 

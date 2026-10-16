@@ -66,6 +66,14 @@ RUN_DATABASE_URL_VARIABLE = "HARRIER_RUN_DATABASE_URL"
 # The `apikey` header of every Storage request (spec 107, Configuration).
 PUBLISHABLE_KEY_VARIABLE = "HARRIER_SUPABASE_PUBLISHABLE_KEY"
 PUBLISHABLE_KEY_PREFIX = "sb_publishable_"
+# The private key the hosted scheduler alone holds, which mints each scheduled
+# run's Storage token (spec 107, Decision taken (2026-10-16)). The API refuses
+# to start with it in its environment, as it refuses a secret key.
+STORAGE_SIGNING_KEY_VARIABLE = "HARRIER_STORAGE_SIGNING_KEY"
+STORAGE_SIGNING_KEY_REFUSAL = (
+    f"the hosted API must not hold {STORAGE_SIGNING_KEY_VARIABLE}; "
+    "only the scheduler mints tokens (spec 107)"
+)
 HOSTED_AUTH = "supabase"
 
 # A service credential on a request path is the service role on a request
@@ -205,6 +213,7 @@ def hosted_config(environ: Mapping[str, str]) -> HostedConfig | None:
         publishable_key=_publishable_key(environ.get(PUBLISHABLE_KEY_VARIABLE, "")),
     )
     _refuse_a_service_credential(environ)
+    _refuse_the_storage_signing_key(environ)
     _refuse_prompt_logging(environ)
     _refuse_operator_notification_settings(environ)
     return config
@@ -256,7 +265,7 @@ def _supabase_url(raw: str) -> str:
     # The issuer is this URL plus /auth/v1, compared exactly, so anything
     # but a host (credentials, a path, a query) would make an issuer no
     # token carries.
-    origin = _https_origin(raw.removesuffix("/"))
+    origin = https_origin(raw.removesuffix("/"))
     if origin is None:
         raise HostedConfigError(SUPABASE_URL_REFUSAL)
     return origin
@@ -285,10 +294,10 @@ def _is_exact_origin(origin: str) -> bool:
     The comparison is exact, so a path or a pattern could never match, and
     a wildcard is refused rather than read as a host (spec 104, Open
     decision 7)."""
-    return "*" not in origin and _https_origin(origin) == origin
+    return "*" not in origin and https_origin(origin) == origin
 
 
-def _https_origin(text: str) -> str | None:
+def https_origin(text: str) -> str | None:
     """The text as `https://host[:port]`, or None when it is anything else."""
     try:
         parts = urlsplit(text)
@@ -310,6 +319,15 @@ def _refuse_a_service_credential(environ: Mapping[str, str]) -> None:
     for name in sorted(environ):
         if environ[name].strip().startswith(SECRET_KEY_PREFIX):
             raise HostedConfigError(_service_credential_refusal(name))
+
+
+def _refuse_the_storage_signing_key(environ: Mapping[str, str]) -> None:
+    """Refuse a start whose environment holds the scheduler's signing key,
+    set or empty, naming it and never its value. A token signed with it is
+    accepted as any owner, by Storage and by this API's own verification
+    (spec 107, Decision taken (2026-10-16))."""
+    if STORAGE_SIGNING_KEY_VARIABLE in environ:
+        raise HostedConfigError(STORAGE_SIGNING_KEY_REFUSAL)
 
 
 def _refuse_operator_notification_settings(environ: Mapping[str, str]) -> None:
