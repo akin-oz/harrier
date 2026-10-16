@@ -188,16 +188,14 @@ found three ways past them, each closed above:
       8-character window of it through any of the four sinks of the first
       criterion. The same password holding both `'` and `"` is a second
       case, so both readings of `'` are proved
-      (planned test_a_password_quoted_by_ascii_is_masked_at_every_sink,
-      in `services/api/tests/test_store_password_scrub.py`, one case per
-      sink, quoting and password; Amendment (2026-10-15): a password
-      quoted by `ascii()`).
+      (`services/api/tests/test_store_password_scrub.py::test_a_password_quoted_by_ascii_is_masked_at_every_sink`,
+      one case per sink, quoting and password; Amendment (2026-10-15): a
+      password quoted by `ascii()`).
 - [ ] With spec 145's user and host forms in place, a log record that
       quotes a store's non-ASCII user and non-ASCII host with `ascii()`
       or `%a` prints neither; `scrub_outbound` still keeps the host
-      (planned test_a_non_ascii_user_and_host_are_masked_as_ascii_writes_them,
-      in `services/api/tests/test_logging.py`; Amendment (2026-10-15): a
-      password quoted by `ascii()`).
+      (`services/api/tests/test_logging.py::test_a_non_ascii_user_and_host_are_masked_as_ascii_writes_them`;
+      Amendment (2026-10-15): a password quoted by `ascii()`).
 - [ ] Each new behavior has a test that fails when the code it proves is
       removed, and the pull request records each mutation and its result.
 - [ ] `uv run ruff check`, `uv run pyright` and `uv run lint-imports`
@@ -585,17 +583,17 @@ host (spec 145).
 criterion needs spec 145's code, so this amendment is implemented after
 PR #360 merges.
 
-**Proof.** (planned test_a_password_quoted_by_ascii_is_masked_at_every_sink)
-in `services/api/tests/test_store_password_scrub.py` runs the four sinks
-of the first criterion with a password made at run time, quoted alone by
-`ascii()`, by `%a`, and inside a dict by `!a`. One password holds `'`, a
-backslash and a non-ASCII character of each escape width; the other holds
-the same and `"`. Each case finds no 8-character window of the password
-in what the sink wrote. Removing either `ascii()` form fails at least one
-case. (planned test_a_non_ascii_user_and_host_are_masked_as_ascii_writes_them)
-in `services/api/tests/test_logging.py` logs a record that quotes a
-non-ASCII user and host with `ascii()` and with `%a`, and finds neither
-in the output.
+**Proof.**
+`services/api/tests/test_store_password_scrub.py::test_a_password_quoted_by_ascii_is_masked_at_every_sink`
+runs the four sinks of the first criterion with a password made at run
+time, quoted alone by `ascii()`, by `%a`, and inside a dict by `!a`.
+One password holds `'`, a backslash and a non-ASCII character of each
+escape width; the other holds the same and `"`. Each case finds no
+8-character window of the password in what the sink wrote. Removing either `ascii()` form fails at least one
+case.
+`services/api/tests/test_logging.py::test_a_non_ascii_user_and_host_are_masked_as_ascii_writes_them`
+logs a record that quotes a non-ASCII user and host with `ascii()` and
+with `%a`, and finds neither in the output.
 
 **Limitations.**
 
