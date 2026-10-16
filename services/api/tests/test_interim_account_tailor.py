@@ -1,4 +1,5 @@
-"""`tailor` and `cover-letter` run against a hosted account, interim (spec 147).
+"""`tailor` and `cover-letter` against a hosted account (spec 147), after its
+Removal: `--owner` refuses both again, and without it both stay local.
 
 Each test runs on its own copy of the migrated Postgres template
 (`postgres_template`, spec 126), with a run login made for it, and drives
@@ -22,12 +23,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pg_support import open_owner_store
 from resume_support import REPO_ROOT, example_documents, store_documents
 from test_academic_applications import _no_browser
 from test_account_writes import Account, as_account, seed_resume, truth_lines
 from test_apply_claims import (
-    CHECKOUT,
     COMPANY,
     PARAGRAPH_THREE,
     PROFILE_JSON_PATH,
@@ -38,9 +37,7 @@ from test_apply_claims import (
     stub_letter,
 )
 from test_hosted_requests import Server, copied_server, run_login_for
-from test_import_local import hosted_query
 
-import harrier.logsetup as logsetup
 import harrier_cli.main as cli
 from harrier.accountstore import ACCOUNT_COMMANDS, ACCOUNT_URL_VARIABLE
 from harrier.connection import Connection
@@ -138,38 +135,10 @@ def add_job(conn: Connection) -> int:
     return int(row["id"])
 
 
-def seed_account_with_job(account: Account, *, letter: bool = False) -> int:
-    conn = open_owner_store(account.server.url, account.owner)
-    try:
-        seed_resume(conn)
-        if letter:
-            seed_letter(conn)
-        return add_job(conn)
-    finally:
-        conn.close()
-
-
 def posting_file(directory: Path) -> str:
     path = directory / "posting.txt"
     path.write_text(POSTING, encoding="utf-8")
     return str(path)
-
-
-def hosted_job(account: Account, job_id: int) -> dict[str, Any]:
-    [row] = hosted_query(
-        account.server,
-        "SELECT status FROM jobs WHERE owner_id = %s AND id = %s",
-        (account.owner, job_id),
-    )
-    return row
-
-
-def hosted_events(account: Account, job_id: int) -> list[dict[str, Any]]:
-    return hosted_query(
-        account.server,
-        "SELECT kind FROM job_events WHERE owner_id = %s AND job_id = %s ORDER BY id",
-        (account.owner, job_id),
-    )
 
 
 def refuse_local_store(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -190,78 +159,24 @@ def refuse_local_store(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 # --- the tests the spec names ---
 
 
-def test_tailor_with_owner_reads_and_records_in_the_account(
+def test_tailor_and_cover_letter_with_owner_are_refused_again(
     account: Account,
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    job_id = seed_account_with_job(account)
-    posting = posting_file(tmp_path)
-    _no_browser(monkeypatch, pages=1)
+    """Spec 147's Removal: once spec 107's PR 3 let the hosted API run both,
+    `--owner` refuses them as it refuses any command outside spec 144's set,
+    before anything opens, local or hosted."""
     opened = refuse_local_store(monkeypatch)
-    before = hosted_events(account, job_id)
-    assert hosted_job(account, job_id)["status"] == "prospect"
-
-    ran = as_account(
-        monkeypatch, capsys, account.login, account.owner,
-        "tailor", "--job-id", str(job_id), "--jd-file", posting, "--no-ai",
-    )  # fmt: skip
-
-    assert ran.code == 0, ran.err
-    out = dict(line.split("=", 1) for line in ran.out.splitlines())
-    pdf = Path(out["tailored_pdf"])
-    metadata = Path(out["metadata"])
-    data = tmp_path / "data"
-    # Files stay local, under the test's data directory.
-    assert pdf.is_file()
-    assert pdf.is_relative_to(data)
-    assert metadata.is_file()
-    # The job and the profile documents came from the account.
-    meta = json.loads(metadata.read_text(encoding="utf-8"))
-    assert (meta["company"], meta["requested_role"]) == (COMPANY, ROLE)
-    facts, _ = example_documents()
-    assert str(facts["candidate"]["name"]) in pdf.with_suffix(".md").read_text(encoding="utf-8")
-    # The status change is in the account, with its event, and in no local store.
-    assert hosted_job(account, job_id)["status"] == "tailored_cv_requested"
-    assert len(hosted_events(account, job_id)) > len(before)
-    assert opened == []
-    assert not default_db_path().exists()
-
-
-def test_cover_letter_with_owner_reads_and_records_in_the_account(
-    account: Account,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    job_id = seed_account_with_job(account, letter=True)
-    posting = posting_file(tmp_path)
-    _no_browser(monkeypatch, pages=1)
-    stub_letter(monkeypatch, letter_json(last=PARAGRAPH_THREE))
-    opened = refuse_local_store(monkeypatch)
-    status = hosted_job(account, job_id)["status"]
-    before = hosted_events(account, job_id)
-
-    ran = as_account(
-        monkeypatch, capsys, account.login, account.owner,
-        "cover-letter", "--job-id", str(job_id), "--jd-file", posting,
-    )  # fmt: skip
-
-    assert ran.code == 0, ran.err
-    out = dict(line.split("=", 1) for line in ran.out.splitlines())
-    pdf = Path(out["pdf"])
-    # Files stay local, under the test's data directory.
-    assert pdf.is_file()
-    assert pdf.is_relative_to(tmp_path / "data")
-    # The job came from the account (its company is in the letter) and so did
-    # the candidate document (its name is in the letter's file).
-    letter = Path(out["markdown"]).read_text(encoding="utf-8")
-    assert CHECKOUT in letter
-    assert CANDIDATE in Path(out["html"]).read_text(encoding="utf-8")
-    # A letter changes no status, as locally: the account's row is as it was.
-    assert hosted_job(account, job_id)["status"] == status
-    assert hosted_events(account, job_id) == before
+    for command in ("tailor", "cover-letter"):
+        result = as_account(
+            monkeypatch, capsys, account.login, account.owner, command, "--job-id", "1"
+        )
+        assert result.code == 1
+        assert (
+            result.err
+            == f"error: harrier {command} does not run against a hosted account (spec 144)\n"
+        )
     assert opened == []
     assert not default_db_path().exists()
 
@@ -306,38 +221,5 @@ def test_tailor_and_cover_letter_without_owner_stay_local(
     assert row[0] == "tailored_cv_requested"
 
 
-def test_tailor_with_owner_never_opens_the_local_store(
-    account: Account,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """With `connect` and SQLite's own `connect` refused for the whole run,
-    each command still succeeds and no local database file appears. Logging
-    setup is the usual hidden opener: spec 144 skips it for `--owner`."""
-    job_id = seed_account_with_job(account, letter=True)
-    posting = posting_file(tmp_path)
-    _no_browser(monkeypatch, pages=1)
-    stub_letter(monkeypatch, letter_json(last=PARAGRAPH_THREE))
-    refuse_local_store(monkeypatch)
-    # Collecting the API's tests configured logging already, which makes
-    # `configure_logging` return at once. Unset, a command that ran it would
-    # open the local store to load its redaction values, as it does locally.
-    monkeypatch.setattr(logsetup, "_configured", False)
-
-    tailored = as_account(
-        monkeypatch, capsys, account.login, account.owner,
-        "tailor", "--job-id", str(job_id), "--jd-file", posting, "--no-ai",
-    )  # fmt: skip
-    lettered = as_account(
-        monkeypatch, capsys, account.login, account.owner,
-        "cover-letter", "--job-id", str(job_id), "--jd-file", posting,
-    )  # fmt: skip
-
-    assert (tailored.code, lettered.code) == (0, 0), tailored.err + lettered.err
-    assert not default_db_path().exists()
-    assert not list((tmp_path / "data").glob("*.db*"))
-
-
-def test_account_commands_hold_spec_144_plus_tailor_and_cover_letter() -> None:
-    assert SPEC_144_COMMANDS | {"tailor", "cover-letter"} == ACCOUNT_COMMANDS
+def test_account_commands_are_spec_144s_again() -> None:
+    assert SPEC_144_COMMANDS == ACCOUNT_COMMANDS

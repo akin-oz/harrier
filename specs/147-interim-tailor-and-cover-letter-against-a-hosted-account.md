@@ -87,16 +87,16 @@ Spec 146's `import-artifacts` copies them to Storage when wanted.
       the account's job and profile documents, writes its files under the
       test's data directory, and records the status change in the account
       and not in any local store
-      (`services/api/tests/test_interim_account_tailor.py::test_tailor_with_owner_reads_and_records_in_the_account`).
+      (held until the Removal; its test was deleted with the commands, PR #369 has it).
 - [ ] The same holds for `harrier --owner <id> cover-letter --job-id <job>`
-      (`services/api/tests/test_interim_account_tailor.py::test_cover_letter_with_owner_reads_and_records_in_the_account`).
+      (held until the Removal; its test was deleted with the commands, PR #369 has it).
 - [ ] Without `--owner`, both still open the local store
       (`services/api/tests/test_interim_account_tailor.py::test_tailor_and_cover_letter_without_owner_stay_local`).
 - [ ] With `--owner`, neither opens the local SQLite file
-      (`services/api/tests/test_interim_account_tailor.py::test_tailor_with_owner_never_opens_the_local_store`).
-- [ ] `ACCOUNT_COMMANDS` holds exactly spec 144's commands plus `tailor`
-      and `cover-letter`
-      (`services/api/tests/test_interim_account_tailor.py::test_account_commands_hold_spec_144_plus_tailor_and_cover_letter`).
+      (held until the Removal; its test was deleted with the commands, PR #369 has it).
+- [ ] `ACCOUNT_COMMANDS` held exactly spec 144's commands plus `tailor`
+      and `cover-letter` until the Removal; it holds spec 144's commands
+      again (`services/api/tests/test_interim_account_tailor.py::test_account_commands_are_spec_144s_again`).
 
 Tests use synthetic owners, rows and documents only, on the CI Postgres
 service, with the AI step off (`--no-ai` or the test provider).
@@ -121,6 +121,20 @@ after it removes `tailor` and `cover-letter` from `ACCOUNT_COMMANDS` and
 records the removal here. From then the hosted API runs them and writes to
 Storage. Akin may instead keep them; that is a decision for that change,
 not this one.
+
+### Removed (2026-10-16)
+
+Spec 107's PR 3 (PR #368) lifted the hosted refusal for `tailor` and
+`cover-letter`, and Akin chose removal the same day. `ACCOUNT_COMMANDS`
+(`services/api/src/harrier/accountstore.py`) holds spec 144's six commands
+again, so `harrier --owner <id> tailor` and `cover-letter` are refused
+before anything opens, with spec 144's text
+(`services/api/tests/test_interim_account_tailor.py::test_tailor_and_cover_letter_with_owner_are_refused_again`).
+Both commands still open their store through `_open_store()`: a hosted run
+of either, which PR 3 made possible, needs it, and without `--owner` it is
+the local store as before
+(`services/api/tests/test_interim_account_tailor.py::test_tailor_and_cover_letter_without_owner_stay_local`).
+`docs/deploy.md` no longer names them among the account commands.
 
 ## Proof / origin
 
