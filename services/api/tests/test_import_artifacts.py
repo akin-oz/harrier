@@ -36,7 +36,7 @@ from storage_support import BUCKET, FakeStorage
 from test_hosted_requests import Server, copied_server, run_login_for, serving
 from test_import_local import hosted_query
 
-from harrier import container, db
+from harrier import artifactimport, container, db
 from harrier.container import ContainerState
 from harrier.db import connect, data_dir, default_db_path
 from harrier.filestore import CONTENT_TYPES, SIZE_LIMIT
@@ -809,3 +809,58 @@ def test_the_command_imports_no_httpx_until_it_runs() -> None:
     )
     assert done.returncode == 0, done.stderr
     assert done.stdout.split() == ["import-artifacts", "False"]
+
+
+# --- a rate-limited copy (spec 146, Amendment (2026-10-16)) ---
+
+
+def record_waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Each wait the copy asked for, instead of waiting it."""
+    waits: list[float] = []
+    monkeypatch.setattr(artifactimport, "_sleep", waits.append)
+    return waits
+
+
+def test_import_artifacts_waits_out_a_rate_limit(
+    imported: Account,
+    storage: FakeStorage,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Storage answered 429 on staging part way through the resumes, and the
+    run stopped. A 429 now waits and asks again: the look, the upload and the
+    look after it each recover, and the run ends as an unlimited one does."""
+    put_good_files()
+    waits = record_waits(monkeypatch)
+    storage.failures["info"] = [429, 429]
+    storage.failures["upload"] = [429]
+
+    result = run(capsys, imported)
+
+    assert (result.code, result.err) == (0, "")
+    assert waits == [2, 4, 2]
+    assert result.out.count("Storage asked the import to slow down") == 3
+    assert result.out.splitlines()[-1] == "imported"
+    assert uploads(storage)
+    for secret in (SECRET_KEY, imported.owner, PROJECT_HOST, BUCKET, RESUME_STEM):
+        assert secret not in result.out
+
+
+def test_import_artifacts_stops_when_the_rate_limit_outlasts_the_waits(
+    imported: Account,
+    storage: FakeStorage,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 429 after the last wait stops the run as any other answer does, and
+    a rerun resumes."""
+    put_good_files()
+    waits = record_waits(monkeypatch)
+    storage.failures["info"] = [429] * (len(artifactimport.RETRY_WAITS) + 1)
+
+    result = run(capsys, imported)
+
+    assert result.code == 1
+    assert waits == list(artifactimport.RETRY_WAITS)
+    assert result.err == "error: check resumes: Storage answered 429\n"
+    assert uploads(storage) == []

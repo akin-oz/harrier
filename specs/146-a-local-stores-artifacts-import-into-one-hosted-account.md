@@ -333,6 +333,29 @@ service, with synthetic names and bytes only, like spec 141's.
    `harrier.artifactimport` inside the command, never at start
    (`services/api/tests/test_import_artifacts.py::test_the_command_imports_no_httpx_until_it_runs`).
 
+## Amendment (2026-10-16): a rate-limited copy waits and asks again
+
+The first import into staging stopped part way through the resumes with
+`upload resumes: Storage answered 429`. The failure table above treats every
+answer that is not a success as a stop, and this spec said nothing about a
+rate limit. A rerun resumes, but each rerun asks about every file it copied
+before, so a large directory can take many reruns.
+
+**Behavior after the change.** When Storage answers 429 to a look, a read or
+an upload, the copy waits and asks the same thing again, after 2, 4, 8, 16,
+32 and 60 seconds in turn (`RETRY_WAITS` in
+`services/api/src/harrier/artifactimport.py`). Each wait prints one line,
+`Storage asked the import to slow down; waiting <n> s`, naming no file. A 429
+after the last wait stops the run with the line it printed before, and a
+rerun resumes. The waits are the command's own: the seam's error carries the
+status, not Storage's `Retry-After`. Spec 107's store is unchanged.
+
+`services/api/tests/test_import_artifacts.py::test_import_artifacts_waits_out_a_rate_limit`
+and
+`services/api/tests/test_import_artifacts.py::test_import_artifacts_stops_when_the_rate_limit_outlasts_the_waits`
+prove both halves, with the waits recorded instead of slept. Both fail with
+the retry removed.
+
 ## Proof / origin
 
 - Akin's decision of 2026-10-14: artifacts come too, meaning generated
