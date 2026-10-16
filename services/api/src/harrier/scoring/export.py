@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from harrier.connection import Connection
-from harrier.filestore import files, join_key, local_file
+from harrier.filestore import artifact_path, files, join_key, local_file
 from harrier.scoring.features import FEATURE_ORDER, extract
 from harrier.scoring.labels import BLOCKED, EXCLUSIONS, Labelled, label_job
 from harrier.scoring.model import NO_MODEL, SCORING
@@ -145,7 +145,7 @@ def export_features(conn: Connection, scope: Scope, *, today: str | None = None)
     key = join_key(prefix, f"features-{stamp.replace('-', '')}.jsonl")
     files().put(key, ("\n".join(lines) + "\n").encode("utf-8"), atomic=True)
     return ExportResult(
-        path=local_file(key),
+        path=artifact_path(key),
         rows=len(rows),
         positives=sum(1 for row in rows if row["label"] == 1),
         excluded=dict(sorted(excluded.items())),

@@ -8,7 +8,7 @@ import os
 import sqlite3
 import sys
 from collections.abc import Callable, Sequence
-from contextlib import closing
+from contextlib import closing, nullcontext
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -122,6 +122,14 @@ RUN_CLASS: frozenset[str] = frozenset(
         "reconsider",
         "events backfill",
         "evaluate-prospects",
+        # Lifted by spec 107's third pull request: their files go to the
+        # owner's Storage prefix through the run's binding.
+        "tailor",
+        "cover-letter",
+        "answers",
+        "evaluate",
+        "find-contacts",
+        "backfill-posters",
     }
 )
 
@@ -319,23 +327,37 @@ def _run_hosted(args: argparse.Namespace) -> int:
     if subcommand_name(args) not in RUN_CLASS:
         print(f"error: {POSTGRES_NOT_YET}", file=sys.stderr)
         return 1
-    # The run's own log file, under its owner's directory, with the owner's
-    # identity values read from the run's store (spec 106).
-    configure_logging()
-    try:
-        refused = _check_track(args)
-        if refused is not None:
-            return refused
-        result: int = args.func(args)
-    except TrackerError as error:
-        print(f"error: {error}", file=sys.stderr)
-        return 1
-    except StoreError:
-        # One line, naming nothing of the store: the run's output reaches its
-        # owner, and the store's text names the run login's host and
-        # database (data integrity review of PR #316).
-        print(f"error: {RUN_STORE_REFUSED}", file=sys.stderr)
-        return 1
+    from harrier.filestore import FileStoreError, FileStoreUnbound, bind_files, run_store
+
+    # The owner's Storage prefix, bound before any domain code runs, with
+    # the token the run's binding put in its environment and took out again
+    # here (spec 107). Without one nothing is bound, and the run's first
+    # file refuses: a hosted run never writes the machine's disk.
+    store = run_store(os.environ)
+    with bind_files(store) if store is not None else nullcontext():
+        # The run's own log file, under its owner's directory, with the
+        # owner's identity values read from the run's store (spec 106).
+        configure_logging()
+        try:
+            refused = _check_track(args)
+            if refused is not None:
+                return refused
+            result: int = args.func(args)
+        except TrackerError as error:
+            print(f"error: {error}", file=sys.stderr)
+            return 1
+        except StoreError:
+            # One line, naming nothing of the store: the run's output reaches
+            # its owner, and the store's text names the run login's host and
+            # database (data integrity review of PR #316).
+            print(f"error: {RUN_STORE_REFUSED}", file=sys.stderr)
+            return 1
+        except (FileStoreError, FileStoreUnbound) as error:
+            # A denied write (an expired token), Storage unavailable, or no
+            # binding: one line, which names the operation and the family
+            # only (spec 107, "The hosted store").
+            print(f"error: {error}", file=sys.stderr)
+            return 1
     return result
 
 
@@ -744,7 +766,7 @@ def _cmd_tailor(args: argparse.Namespace) -> int:
             print(f"tailor failed: cannot read --jd-file: {error}", file=sys.stderr)
             return 1
 
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         # An unknown job raises here as it did inside run_tailor; `main`
         # reports it.
@@ -792,7 +814,7 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
         except (OSError, UnicodeError) as error:
             print(f"cover letter failed: cannot read --notes-file: {error}", file=sys.stderr)
             return 1
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         try:
             row = get_job(conn, scope, args.job_id)
@@ -841,7 +863,7 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
 
 def _cmd_answers(args: argparse.Namespace) -> int:
     from harrier.apply import generate_answer_set, parse_questions, render_markdown, write_output
-    from harrier.apply.answers import answers_path_for
+    from harrier.apply.answers import answers_review_path
     from harrier.apply.brief import load_brief
     from harrier.apply.claims import find_placeholders
     from harrier.apply.profile import ApplicationProfileError
@@ -852,7 +874,7 @@ def _cmd_answers(args: argparse.Namespace) -> int:
     jd_text, error_code = _read_jd_file(args.jd_file)
     if error_code is not None:
         return error_code
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         try:
             row = get_job(conn, scope, args.job_id)
@@ -878,7 +900,7 @@ def _cmd_answers(args: argparse.Namespace) -> int:
                 row.get("url", ""),
                 row,
                 drafts,
-                review_path=answers_path_for(row.get("company", ""), row.get("title", "")),
+                review_path=answers_review_path(row.get("company", ""), row.get("title", "")),
                 flags=requirement_flags(jd_text or "", brief.employer_guidance),
             )
             output_path = write_output(row.get("company", ""), row.get("title", ""), content)
@@ -941,7 +963,7 @@ def _cmd_evaluate(args: argparse.Namespace) -> int:
         return error_code
     if args.jd_text:
         jd_text = args.jd_text
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         try:
             row = get_job(conn, scope, args.job_id)
@@ -997,7 +1019,7 @@ def _cmd_find_contacts(args: argparse.Namespace) -> int:
     from harrier.outreach import find_best_contacts_for_job, find_contacts_for_job
     from harrier.tracker import get_job
 
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         try:
             row = get_job(conn, scope, args.job_id)
@@ -1120,7 +1142,7 @@ def _cmd_outreach(args: argparse.Namespace) -> int:
 def _cmd_backfill_posters(args: argparse.Namespace) -> int:
     from harrier.outreach import backfill_posters
 
-    with closing(connect()) as conn:
+    with closing(_open_store()) as conn:
         scope = _scope(conn, args)
         summary = backfill_posters(conn, scope, limit=args.limit, dry_run=args.dry_run)
         for line in summary.lines:

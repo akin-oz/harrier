@@ -17,8 +17,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
+import re
 import stat
 import uuid
+from collections.abc import Callable
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
@@ -35,6 +38,9 @@ from harrier.db import connect, data_dir
 from harrier.filestore import (
     CONTENT_TYPES,
     SIZE_LIMIT,
+    STORAGE_TOKEN_VARIABLE,
+    UNBOUND_TEXT,
+    FileStore,
     FileStoreDenied,
     FileStoreError,
     FileStoreUnavailable,
@@ -768,3 +774,174 @@ def test_academic_discovery_never_reads_an_unbound_store_as_a_failed_source(
     finally:
         conn.close()
     assert fetched == ["run"]
+
+
+# --- a hosted run's binding (spec 107, PR 3) -------------------------------------------
+
+
+def test_a_hosted_run_binds_its_owners_storage(
+    storage: FakeStorage,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Spec 107, Amendment (2026-10-13): in a hosted run, `files()` is bound
+    to the run's owner before any domain code runs, writes only under that
+    owner's prefix with the token the run was given, and never returns the
+    local store. The token leaves the run's environment as it is bound.
+    Without a token the run binds nothing and its first file refuses, in one
+    line, with nothing on the machine's disk."""
+    from harrier_cli import main as cli
+
+    data = data_dir()
+    monkeypatch.delenv("HARRIER_AUTH", raising=False)
+    monkeypatch.setenv("HARRIER_DATABASE_URL", "postgresql://run:synthetic@127.0.0.1:1/postgres")
+    monkeypatch.setenv("HARRIER_RUN_OWNER", OWNER_A)
+    monkeypatch.setenv("HARRIER_SUPABASE_URL", SUPABASE_URL)
+    monkeypatch.setenv("HARRIER_SUPABASE_PUBLISHABLE_KEY", PUBLISHABLE_KEY)
+    monkeypatch.setenv(STORAGE_TOKEN_VARIABLE, TOKEN)
+    # Its setup opens the run's store, which this test has none of.
+    monkeypatch.setattr(cli, "configure_logging", lambda: None)
+    seen: list[tuple[FileStore, str | None]] = []
+
+    def domain(_args: object) -> int:
+        seen.append((files(), os.environ.get(STORAGE_TOKEN_VARIABLE)))
+        save_text("answers/example-co-senior-frontend-engineer.md", "# Drafted\n", atomic=False)
+        return 0
+
+    monkeypatch.setattr(cli, "_cmd_demo_run", domain)
+    argv = ["demo-run", "--steps", "1", "--delay", "0"]
+
+    assert cli.main(argv) == 0
+
+    [(store, left)] = seen
+    assert isinstance(store, SupabaseFileStore)
+    assert (store.owner, store.token) == (OWNER_A, TOKEN)
+    assert left is None
+    key = "answers/example-co-senior-frontend-engineer.md"
+    assert storage.names() == [f"{OWNER_A}/answers/{sha(key)}.md"]
+    assert {r.headers["authorization"] for r in storage.requests} == {f"Bearer {TOKEN}"}
+    assert not data.exists() or not any(path.is_file() for path in data.rglob("*"))
+
+    # No token: nothing bound, and the first file refuses.
+    seen.clear()
+    storage.requests.clear()
+    assert cli.main(argv) == 1
+    assert capsys.readouterr().err.strip().splitlines()[-1] == f"error: {UNBOUND_TEXT}"
+    assert seen == [] and storage.requests == []
+    assert not data.exists() or not any(path.is_file() for path in data.rglob("*"))
+
+
+def _hosted_academic_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from test_filestore import _academic_scope  # pyright: ignore[reportPrivateUsage]
+
+    from harrier.academic.discovery import save_dataset
+
+    with closing(connect()) as conn:
+        scope = _academic_scope(monkeypatch, conn)
+    for run_id in ("run01", "run02"):
+        save_dataset(scope, run_id, [{"id": "porta_0001", "title": "Researcher"}])
+
+
+def _hosted_scoring_exports(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from harrier.scoring.export import export_features
+    from harrier.tracks import add_track, resolve_scope
+
+    with closing(connect()) as conn:
+        export_features(conn, default_scope(conn), today="2026-10-15")
+        add_track(conn, "bounded", "focused", "Bounded roles")
+        export_features(conn, resolve_scope(conn, "bounded"), today="2026-10-15")
+
+
+def _hosted_scoring_models(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from test_filestore import _training_export  # pyright: ignore[reportPrivateUsage]
+
+    import harrier.scoring.train as train_module
+
+    # The training input is made beside, never in, the data directory, and
+    # placed in the owner's prefix as an export run would have left it.
+    elsewhere = tmp_path / "training-input"
+    with monkeypatch.context() as scoped:
+        scoped.setenv("HARRIER_DATA_DIR", str(elsewhere))
+        with bind_files(LocalFileStore(elsewhere)):
+            _training_export()
+    name = "scoring/exports/features-20261006.jsonl"
+    files().put(name, (elsewhere / name).read_bytes(), atomic=True)
+    metrics = {"model": 0.9, "baseline": 0.5, "delta_ci95": [0.1, 0.2]}
+
+    def evaluate(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return dict(metrics)
+
+    monkeypatch.setattr(train_module, "evaluate", evaluate)
+    assert train_module.train(activate=True, today="2026-10-15").activated
+
+
+def _hosted_cases() -> dict[str, Callable[[pytest.MonkeyPatch, Path], object]]:
+    """Every family of spec 107's first table, through the writer PR 1's
+    characterization test runs (`tests/test_filestore.py`), except the three
+    whose cases read the local files they wrote; those run their writers
+    here."""
+    from test_filestore import CASES
+
+    cases: dict[str, Callable[[pytest.MonkeyPatch, Path], object]] = dict(CASES)
+    cases["academic-runs"] = _hosted_academic_runs
+    cases["scoring-exports"] = _hosted_scoring_exports
+    cases["scoring-models"] = _hosted_scoring_models
+    return cases
+
+
+# The families each case must reach in the owner's prefix.
+HOSTED_FAMILIES: dict[str, set[str]] = {
+    "academic-incoming": {"incoming"},
+    "academic-runs": {"discovery"},
+    "answers": {"answers"},
+    "cover-letters": {"cover-letters"},
+    "descriptions": {"descriptions"},
+    "discovery-seen": {"discovery"},
+    "evaluations": {"evaluations"},
+    "gmail-watch": {"gmail-watch"},
+    "incoming": {"incoming"},
+    "linkedin-page-verdicts": {"linkedin-page-verdicts"},
+    "outreach": {"outreach"},
+    "reports": {"reports"},
+    "resumes": {"resumes"},
+    "resumes-focused": {"resumes"},
+    "scoring-exports": {"scoring"},
+    "scoring-models": {"scoring"},
+}
+
+# The local tracker database: the store, not a file the seam writes.
+STORE_FILES = re.compile(r"tracker\.db(-wal|-shm|-journal)?")
+
+
+@pytest.mark.parametrize("family", sorted(HOSTED_FAMILIES))
+def test_a_hosted_store_writes_nothing_under_the_data_directory(
+    family: str, storage: FakeStorage, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Spec 107, PR 2's criterion, built by PR 3: every writer in the first
+    table, run hosted against the fake Storage server, writes nothing under
+    `data_dir()` and uploads only under `<owner>/`. The process is a hosted
+    run (`HARRIER_RUN_OWNER`), so a writer that forgot the binding would
+    refuse rather than fall back to the disk. The local tracker database is
+    the only file left there: it is the store these writers record into, not
+    one of their files."""
+    assert set(_hosted_cases()) == set(HOSTED_FAMILIES)
+    monkeypatch.setenv("HARRIER_RUN_OWNER", OWNER_A)
+    with bind_files(store_for()):
+        _hosted_cases()[family](monkeypatch, tmp_path)
+
+    root = data_dir()
+    left = sorted(
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file() and not STORE_FILES.fullmatch(path.name)
+    )
+    assert left == []
+    names = storage.names()
+    assert names and all(name.startswith(f"{OWNER_A}/") for name in names), names
+    uploaded = {name.split("/", 2)[1] for name in names}
+    assert HOSTED_FAMILIES[family] <= uploaded, uploaded
+    # And none of them reached Storage under another prefix or none.
+    sent = [storage.operation(request) for request in storage.requests]
+    assert all(
+        name.startswith(f"{OWNER_A}/") for operation, name in sent if operation != "remove" and name
+    )

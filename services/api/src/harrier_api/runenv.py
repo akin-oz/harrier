@@ -40,6 +40,11 @@ from harrier.credentials import (
     StoredCredential,
     decrypt,
 )
+from harrier.filestore import (
+    PUBLISHABLE_KEY_VARIABLE,
+    STORAGE_TOKEN_VARIABLE,
+    SUPABASE_URL_VARIABLE,
+)
 from harrier.logredact import store_password_forms_of
 
 # The run login's URL on the API, passed to the run as its
@@ -63,6 +68,11 @@ COPIED_VARIABLES: tuple[str, ...] = (
     "APIFY_ACADEMIC_ACTOR",
     "APIFY_ACADEMIC_PORTALS",
     "ANTHROPIC_MAX_TOKENS",
+    # Where the run's Storage requests go, and the key they carry in
+    # `apikey`: the project's origin and its publishable key, both public
+    # (spec 107, Amendment (2026-10-16): PR 3's build).
+    SUPABASE_URL_VARIABLE,
+    PUBLISHABLE_KEY_VARIABLE,
 )
 
 # What a caller may add beyond the allowlist: the owner's timezone, which a
@@ -143,6 +153,7 @@ def build_run_env(
     credentials: Mapping[CredentialKind, Mapping[str, str]],
     *,
     extra: Mapping[str, str] | None = None,
+    storage_token: str | None = None,
 ) -> dict[str, str]:
     """The whole environment of a hosted run of `owner`.
 
@@ -151,6 +162,12 @@ def build_run_env(
     `HARRIER_RUN_DATABASE_URL` when it is absent, which the hosted start
     refuses before any run (spec 106), and ExtraVariableRefused for an
     `extra` name outside `EXTRA_VARIABLES`.
+
+    `storage_token` is the token the run reaches Storage with (spec 107):
+    the session token of the request that started it, or the token the
+    scheduler minted for it. It is set as `HARRIER_STORAGE_TOKEN`, which the
+    run takes out of its environment when it binds its store; never an
+    argument, never the journal.
     """
     env = {name: server_env[name] for name in COPIED_VARIABLES if name in server_env}
     for name, value in (extra or {}).items():
@@ -165,6 +182,8 @@ def build_run_env(
     env["PYTHONSAFEPATH"] = "1"
     env[URL_VARIABLE] = server_env[RUN_DATABASE_URL_VARIABLE]
     env[RUN_OWNER_VARIABLE] = str(uuid.UUID(owner))
+    if storage_token:
+        env[STORAGE_TOKEN_VARIABLE] = storage_token
     for kind, fields in credentials.items():
         env.update(credential_variables(kind, fields))
     return env
@@ -190,6 +209,7 @@ def bind_run(
     key: CredentialsKey,
     needs: Iterable[CredentialKind] = (),
     extra: Mapping[str, str] | None = None,
+    storage_token: str | None = None,
 ) -> BoundRun:
     """Bind a run to `owner`: decrypt `stored`, the owner's ciphertexts read
     as the owner, and build the environment and working directory.
@@ -198,6 +218,9 @@ def bind_run(
     has not set, and `harrier.credentials.CredentialUnreadable` for a stored
     credential that does not decrypt, both before a directory exists. The
     caller logs the latter's kind and key id, never a value or the owner.
+
+    `storage_token`, when given, reaches the run as `build_run_env` says,
+    and joins the values scrubbed from its events.
     """
     decrypted: dict[CredentialKind, dict[str, str]] = {}
     for credential in stored:
@@ -206,9 +229,14 @@ def bind_run(
         if kind not in decrypted:
             raise RunCredentialMissing(kind)
     run_dir = owner_run_dir(root, owner)
-    env = build_run_env(server_env, owner, run_dir, decrypted, extra=extra)
+    env = build_run_env(
+        server_env, owner, run_dir, decrypted, extra=extra, storage_token=storage_token
+    )
     # The run login's password, in every form a driver or `repr` can print
     # it: the child holds it, and its output reaches the stream (privacy
     # review of PR #316).
     login = store_password_forms_of(server_env[RUN_DATABASE_URL_VARIABLE])
-    return BoundRun(env=env, cwd=run_dir, secrets=secret_values(decrypted) | frozenset(login))
+    token = frozenset({storage_token}) if storage_token else frozenset[str]()
+    return BoundRun(
+        env=env, cwd=run_dir, secrets=secret_values(decrypted) | frozenset(login) | token
+    )

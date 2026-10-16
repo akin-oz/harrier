@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from harrier.connection import Connection
-from harrier.filestore import files, local_file, save_json, save_text
+from harrier.filestore import artifact_path, files, local_file, save_json, save_text
 from harrier.profile.store import get_document
 
 OUTREACH_CONFIG_DIR = Path("config") / "outreach"
@@ -459,7 +459,7 @@ def save_generated_bundle(
     md_key = f"{MESSAGES}/{stem}.md"
     save_json(json_key, render_bundle_json(request, bundle), atomic=False)
     save_text(md_key, render_bundle_markdown(request, bundle), atomic=False)
-    return {"json": local_file(json_key), "markdown": local_file(md_key)}
+    return {"json": artifact_path(json_key), "markdown": artifact_path(md_key)}
 
 
 def target_store_path() -> Path:

@@ -20,7 +20,7 @@ from harrier.apply.profile import (
     load_profile_markdown,
 )
 from harrier.connection import Connection
-from harrier.filestore import local_file, save_json, save_text
+from harrier.filestore import artifact_path, save_json, save_text
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
 from harrier.outreach.messages import (
@@ -527,4 +527,4 @@ def write_outreach_draft(company: str, role: str, payload: dict[str, object]) ->
     md_key = f"{OUTREACH}/{slug}.md"
     save_json(json_key, payload, atomic=False)
     save_text(md_key, render_outreach_markdown(payload), atomic=False)
-    return {"json": local_file(json_key), "markdown": local_file(md_key)}
+    return {"json": artifact_path(json_key), "markdown": artifact_path(md_key)}

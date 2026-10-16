@@ -15,7 +15,7 @@ from pathlib import Path
 
 from harrier.apply.brief import load_brief
 from harrier.connection import Connection
-from harrier.filestore import files, files_in, join_key, local_file, save_text
+from harrier.filestore import artifact_path, files, files_in, join_key, local_file, save_text
 from harrier.resume.ai import build_ai_tailored_content
 from harrier.resume.content import load_bundle, load_truth_sources
 from harrier.resume.evaluation import evaluate_resume_fit, format_fit_evaluation_markdown
@@ -218,8 +218,8 @@ def run_tailor(
                 format_fit_evaluation_markdown(fit_evaluation, company, requested_role),
                 atomic=False,
             )
-            evaluation_path = local_file(keys["evaluation"])
-        paths = {artifact: local_file(key) for artifact, key in keys.items()}
+            evaluation_path = artifact_path(keys["evaluation"])
+        paths = {artifact: artifact_path(key) for artifact, key in keys.items()}
 
     # The PDF gate passed; only now does the tracker row change. The candidate
     # asked for this CV, so the move is theirs (spec 079).

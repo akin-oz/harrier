@@ -38,7 +38,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
 
-from harrier.filestore import files, join_key, key_name, local_file, save_json
+from harrier.filestore import artifact_path, files, join_key, key_name, local_file, save_json
 from harrier.scoring.export import EXPORT_FORMAT_VERSION, EXPORTS
 from harrier.scoring.features import FEATURE_ORDER, NUMERIC_FEATURES
 from harrier.scoring.model import (
@@ -366,7 +366,7 @@ def selection_bias(rows: Sequence[Row]) -> list[dict[str, Any]]:
 def _write_report(report: dict[str, Any], stamp: str) -> Path:
     key = join_key(REPORTS, f"report-{stamp.replace('-', '')}.json")
     save_json(key, report, atomic=True)
-    return local_file(key)
+    return artifact_path(key)
 
 
 def train(
@@ -492,7 +492,7 @@ def train(
     identity = model_identity(data)
     model_key = join_key(MODELS, f"job-fit-{stamp.replace('-', '')}-{identity}.json")
     files().put(model_key, data, atomic=True)
-    model_path = local_file(model_key)
+    model_path = artifact_path(model_key)
 
     messages: list[str] = []
     activated = False

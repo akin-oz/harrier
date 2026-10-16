@@ -101,11 +101,18 @@ class HostedRuns:
             self._pool.release(driver)
 
     def begin(
-        self, run: Run, needs: Iterable[CredentialKind], extra: Mapping[str, str] | None = None
+        self,
+        run: Run,
+        needs: Iterable[CredentialKind],
+        extra: Mapping[str, str] | None = None,
+        *,
+        storage_token: str | None = None,
     ) -> BoundRun:
         """Bind `run` to its owner and insert its row, in one transaction
         as the owner. Raises `RunCredentialMissing` or
-        `CredentialUnreadable` before anything is written."""
+        `CredentialUnreadable` before anything is written. `storage_token`
+        is the starting request's own token, which the run reaches its
+        owner's Storage prefix with (spec 107)."""
         with self.as_owner(run.owner) as conn:
             bound = bind_run(
                 server_env=self._server_env,
@@ -115,6 +122,7 @@ class HostedRuns:
                 key=self._key,
                 needs=needs,
                 extra=extra,
+                storage_token=storage_token,
             )
             conn.execute(
                 "INSERT INTO run_records (run_id, kind, target, state, api_instance, created_at) "
