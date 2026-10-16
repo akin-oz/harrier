@@ -56,6 +56,7 @@ from harrier.credentials import (
 )
 from harrier.db import data_dir
 from harrier.hostedschedule import (
+    FILE_WRITING_JOBS,
     JOB_NEEDS,
     SQL_I_HOLD_THE_LOCK,
     SQL_LOCK_IS_HELD,
@@ -80,12 +81,22 @@ from harrier.schedule import ScheduleJob
 from harrier.sources import scrub_secrets
 from harrier.userconfig.store import ConfigError
 from harrier_api.hostedauth import (
+    PUBLISHABLE_KEY_PREFIX,
+    PUBLISHABLE_KEY_VARIABLE,
     RUN_DATABASE_URL_VARIABLE,
     SECRET_KEY_PREFIX,
     SERVICE_ROLE_KEY_VARIABLE,
+    STORAGE_SIGNING_KEY_VARIABLE,
+    SUPABASE_URL_VARIABLE,
 )
 from harrier_api.hostedstore import HostedStartRefused, check_run_login_role
 from harrier_api.runenv import BoundRun, ExtraVariableRefused, RunCredentialMissing, bind_run
+from harrier_api.storagetoken import (
+    SigningKeyRefused,
+    StorageSigner,
+    parse_signing_key,
+    token_lifetime,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +218,10 @@ class Settings:
     # carries no password (as `BoundRun` keeps its environment out).
     run_database_url: str = field(repr=False)
     key: CredentialsKey
+    # The key each scheduled run's Storage token is minted with, or None
+    # when `HARRIER_STORAGE_SIGNING_KEY` is not set: then no run of a job
+    # that writes files starts (spec 107, Decision taken (2026-10-16)).
+    signer: StorageSigner | None = field(default=None, repr=False)
 
 
 def _positive(environ: Mapping[str, str], name: str) -> int:
@@ -242,7 +257,35 @@ def read_settings(environ: Mapping[str, str]) -> Settings:
             f"{CREDENTIALS_KEY_VARIABLE} is missing or not {KEY_SHAPE}; "
             "the scheduler decrypts each owner's credentials to bind a run"
         )
-    return Settings(concurrency, timeout, run_url, key)
+    return Settings(concurrency, timeout, run_url, key, read_signer(environ))
+
+
+def read_signer(environ: Mapping[str, str]) -> StorageSigner | None:
+    """The scheduled runs' Storage signer, or None when
+    `HARRIER_STORAGE_SIGNING_KEY` is absent (spec 107, Decision taken
+    (2026-10-16)). With the key set, a malformed key, or a missing project
+    URL or publishable key beside it, refuses the start: a token minted
+    there would reach no Storage. No refusal quotes a value."""
+    text = environ.get(STORAGE_SIGNING_KEY_VARIABLE)
+    if text is None:
+        return None
+    origin = environ.get(SUPABASE_URL_VARIABLE, "").strip().removesuffix("/")
+    if not origin.startswith("https://") or origin == "https://":
+        raise StartRefused(
+            f"{STORAGE_SIGNING_KEY_VARIABLE} is set but {SUPABASE_URL_VARIABLE} is missing "
+            "or not an https:// URL; a scheduled run reaches Storage there"
+        )
+    publishable = environ.get(PUBLISHABLE_KEY_VARIABLE, "").strip()
+    if not publishable.startswith(PUBLISHABLE_KEY_PREFIX) or publishable == PUBLISHABLE_KEY_PREFIX:
+        raise StartRefused(
+            f"{STORAGE_SIGNING_KEY_VARIABLE} is set but {PUBLISHABLE_KEY_VARIABLE} is missing "
+            f"or does not begin {PUBLISHABLE_KEY_PREFIX}; a scheduled run's Storage requests "
+            "carry it"
+        )
+    try:
+        return parse_signing_key(text, issuer=f"{origin}/auth/v1")
+    except SigningKeyRefused as refused:
+        raise StartRefused(str(refused)) from None
 
 
 def check_function_owner(conn: Connection) -> None:
@@ -402,9 +445,25 @@ class Scheduler:
             logger.error("scheduler could not list schedules: %s", describe(error))
             return 1
         views = self._sweep(views)
-        self._queue = due_slots(views, self.jobs, self.clock.now())
+        self._queue = self._startable(due_slots(views, self.jobs, self.clock.now()))
         status = self._drive()
         return 1 if self._unrecorded and status == 0 else status
+
+    def _startable(self, due: list[DueSlot]) -> list[DueSlot]:
+        """The due slots this tick may start. Without a signing key, none
+        of a job that writes files: its run would have no Storage token and
+        would fail at its first file. One line names the variable, never a
+        value; the slots stay unclaimed (spec 107, Decision taken
+        (2026-10-16))."""
+        if self.settings.signer is not None:
+            return due
+        kept = [entry for entry in due if entry.job not in FILE_WRITING_JOBS]
+        if len(kept) < len(due):
+            logger.error(
+                "scheduler starts no run that writes files: %s is not set",
+                STORAGE_SIGNING_KEY_VARIABLE,
+            )
+        return kept
 
     # --- the owner's transaction ---
 
@@ -522,6 +581,19 @@ class Scheduler:
         if not claimed:
             return
         try:
+            # The owner's Storage token for this run, minted now and living
+            # the run's timeout plus one minute (spec 107, Decision taken
+            # (2026-10-16)). It reaches the run in its environment only.
+            signer = self.settings.signer
+            token = (
+                None
+                if signer is None
+                else signer.mint(
+                    entry.owner,
+                    now=self.clock.now(),
+                    lifetime_seconds=token_lifetime(self.settings.timeout_seconds),
+                )
+            )
             bound = self.bind(
                 server_env=self.server_env,
                 owner=entry.owner,
@@ -530,6 +602,7 @@ class Scheduler:
                 key=self.settings.key,
                 needs=JOB_NEEDS.get(entry.job, ()),
                 extra={"TZ": entry.timezone},
+                storage_token=token,
             )
         except RunCredentialMissing:
             self._record(entry, "not_configured", None)

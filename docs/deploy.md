@@ -82,6 +82,7 @@ is downtime. Nothing checks this rule.
 | `harrier_run`'s URL | Fly secret `HARRIER_RUN_DATABASE_URL` on the API app | GitHub, Vercel, `.env`, git |
 | `HARRIER_CREDENTIALS_KEY` | Fly secret on the API app and on the scheduler app | GitHub, Vercel, `.env`, git |
 | `harrier_scheduler`'s URL | Fly secret `HARRIER_DATABASE_URL` on the scheduler app (with `HARRIER_RUN_DATABASE_URL`, the run login's, the scheduler starts runs with) | GitHub, Vercel, `.env`, git |
+| `HARRIER_STORAGE_SIGNING_KEY`, the private key that mints each scheduled run's Storage token (spec 107) | Fly secret on the scheduler app only, once Akin has taken spec 107's open decision on the key's state | the API app (it refuses to start with it), GitHub, Vercel, `.env`, git |
 | A Fly deploy token for the API app | GitHub environment secret `FLY_API_TOKEN` | Fly, Vercel, git |
 | A Fly deploy token for the scheduler app | GitHub environment secret `FLY_SCHEDULER_API_TOKEN` | Fly, Vercel, git |
 | Production only: a Fly deploy token for the staging API app | GitHub `production` environment secret `FLY_STAGING_API_TOKEN` (it reads staging's image) | Fly, Vercel, git |
@@ -262,6 +263,51 @@ fly secrets set --stage --app harrier-scheduler-staging \
   "HARRIER_CREDENTIALS_KEY=<the same key>"
 ```
 
+**The scheduler's Storage signing key (spec 107).** A scheduled run reaches
+its owner's files in Storage with a token the scheduler mints for that owner,
+signed with `HARRIER_STORAGE_SIGNING_KEY`. Without the key the scheduler
+starts no discovery or academic discovery run, logs `scheduler starts no run
+that writes files: HARRIER_STORAGE_SIGNING_KEY is not set` on each tick, and
+the report shows the slots unclaimed. Nothing is written anywhere
+(`services/api/tests/test_hosted_scheduler.py::test_a_scheduler_without_a_signing_key_starts_no_file_writing_run`).
+
+Do not set the key yet. Supabase imports a signing key as a private JWK and
+creates it as a standby key, whose tokens its guide does not list as
+accepted; spec 107's Amendment (2026-10-16): PR 3's build leaves which state
+the key sits in to Akin. Once that is decided, the steps are:
+
+1. Make the key on your own machine, outside the repository, as a private
+   P-256 JWK with a `kid`:
+
+   ```
+   uv run --project services/api python -c "import json, uuid; from cryptography.hazmat.primitives.asymmetric import ec; from jwt.algorithms import ECAlgorithm; k = json.loads(ECAlgorithm.to_jwk(ec.generate_private_key(ec.SECP256R1()))); k['kid'] = str(uuid.uuid4()); print(json.dumps(k))" > "$HOME/scheduler-signing-key.jwk"
+   chmod 600 "$HOME/scheduler-signing-key.jwk"
+   ```
+
+2. In the Supabase dashboard, Project Settings, JWT Keys: create a new
+   standby key by importing that JWK (paste the file's one line). Keep the
+   `kid` Supabase shows equal to the file's: the scheduler's tokens name it.
+   Then put the key in the state spec 107's decision names.
+3. Set it on the scheduler app only, from the file, never typed into a
+   command line:
+
+   ```
+   fly secrets set --stage --app harrier-scheduler-staging \
+     "HARRIER_STORAGE_SIGNING_KEY=$(cat "$HOME/scheduler-signing-key.jwk")"
+   ```
+
+4. Delete the file: `rm "$HOME/scheduler-signing-key.jwk"`. Supabase and the
+   Fly secret now hold the key; nothing else should.
+
+The key goes nowhere else. The API refuses to start with it in its
+environment
+(`services/api/tests/test_hosted_auth.py::test_the_api_refuses_the_storage_signing_key`),
+and a run's environment never carries it. Whoever holds it can
+act as any owner in Storage and in the API until it is removed from the
+project (spec 107, Decision taken (2026-10-16)). With the key set, the
+scheduler also needs the project's URL and publishable key in its machine's
+environment (below), and refuses to start without them.
+
 One deploy token per app, so the staging token cannot deploy production. Pick an
 expiry you will renew:
 
@@ -290,10 +336,17 @@ fly machine run "registry.fly.io/harrier-scheduler-production@<the digest the ru
   --vm-size shared-cpu-1x --vm-memory 1024 \
   --env HARRIER_SCHEDULER_CONCURRENCY=<n> \
   --env HARRIER_SCHEDULED_RUN_TIMEOUT_SECONDS=<seconds> \
+  --env HARRIER_SUPABASE_URL=<the project URL, the GitHub variable's value> \
+  --env HARRIER_SUPABASE_PUBLISHABLE_KEY=<the publishable key, the GitHub variable's value> \
   harrier operator scheduler
 
 # staging: the same, without --schedule hourly
 ```
+
+The last two are public. Each scheduled run gets them, with its token, to
+reach Storage (spec 107). A machine made before them takes them with `fly
+machine update <id> --app <scheduler app> --env
+HARRIER_SUPABASE_URL=<...> --env HARRIER_SUPABASE_PUBLISHABLE_KEY=<...>`.
 
 The two limits are the operator's choice per environment; this runbook sets
 none. The run timeout also bounds what one tick can cost. Then re-run the
@@ -558,6 +611,7 @@ it; deploy forward again.
 | The migrator's URL | Reset the `postgres` role's password in the Supabase dashboard (database settings); update `HARRIER_MIGRATE_DATABASE_URL`. |
 | A login role's password | As the migrator, set a new one from a shell variable as in step 2 (`ALTER ROLE ... PASSWORD` with the verifier); end its pooled sessions first (`pg_terminate_backend`); `fly secrets set` the new URL; the machines restart. |
 | `HARRIER_CREDENTIALS_KEY` | Rotation is spec 116's, not this pipeline's; setting a new one makes stored credentials unreadable until they are re-entered. |
+| `HARRIER_STORAGE_SIGNING_KEY` | Make a new key and import it as above; set it on the scheduler app (`fly secrets set`); after the next tick, move the old key to revoked in the dashboard's JWT Keys, which ends every token it signed. A leaked key is revoked first: scheduled runs then fail at their first file until the new key is set. |
 | A Vercel token | Delete it in the account's tokens; make a new one; update `VERCEL_TOKEN`. |
 | The publishable key | It is public by design; rotate it in the project's API keys, then update the GitHub variable and the Vercel variable. |
 
