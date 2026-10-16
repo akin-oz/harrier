@@ -992,3 +992,18 @@ def test_a_staging_failure_does_not_fail_the_run(
     # The poster's identity never reaches the log.
     assert "Sam Sample" not in caplog.text
     assert "sam-sample" not in caplog.text
+
+
+def test_a_repeated_url_keeps_the_poster_of_the_item_screening_kept(
+    discovery_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Screening keeps the first of two items with one URL, so the poster
+    is read from the first too (review of PR #381)."""
+    repeat = _apify_item(1, id="400000009")
+    for key in ("jobPosterName", "jobPosterTitle", "jobPosterProfileUrl", "jobPosterPhoto"):
+        del repeat[key]
+
+    _run_apify(monkeypatch, [_apify_item(1), repeat])
+
+    staged = _staged("Exampleco1")
+    assert [candidate["person_name"] for candidate in staged] == ["Sam Sample"]

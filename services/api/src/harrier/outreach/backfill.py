@@ -15,7 +15,7 @@ from typing import cast
 
 from harrier.connection import Connection
 from harrier.outreach.contacts import normalize
-from harrier.outreach.posters import contact_url_keys, stage_poster
+from harrier.outreach.posters import contact_url_keys, profile_url, stage_poster
 from harrier.screening.linkedin import fetch_linkedin_job_details, linkedin_job_id
 from harrier.tracker import list_jobs
 from harrier.tracks import Scope
@@ -73,7 +73,9 @@ def backfill_posters(
             if not poster_url and not poster_name:
                 summary.no_poster += 1
                 continue
-            key = normalize(poster_url or poster_name)
+            # Canonical, so a contact stored under www. matches a poster the
+            # guest page links on a country subdomain.
+            key = normalize(profile_url(poster_url) or poster_url or poster_name)
             if key in existing:
                 summary.skipped_existing += 1
                 continue

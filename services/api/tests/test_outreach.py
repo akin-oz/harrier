@@ -507,6 +507,59 @@ def test_backfill_stages_posters_without_writing_contacts(
     assert len(list_contacts(db)) == 1
 
 
+def test_backfill_skips_a_poster_already_a_contact_under_another_subdomain(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A contact stored under www. is the poster the guest page links on a
+    country subdomain (review of PR #381, spec 150)."""
+    import harrier.outreach.backfill as backfill_module
+    from harrier.outreach import backfill_posters
+    from harrier.tracker import add_job
+
+    scope = default_scope(db)
+    job_url = "https://www.linkedin.com/jobs/view/12345"
+    add_job(
+        db,
+        {
+            "company": "Acme",
+            "title": "Senior Frontend Engineer",
+            "url": job_url,
+            "source": "apify_linkedin",
+            "status": "applied",
+        },
+        scope=scope,
+    )
+    upsert_contact(
+        db,
+        scope,
+        company="Acme",
+        role="Senior Frontend Engineer",
+        job_url=job_url,
+        person_name="Poster Person",
+        person_title="Engineering Manager",
+        linkedin_url="https://www.linkedin.com/in/poster-person",
+        source="manual",
+    )
+
+    def fake_details(urls: list[str], **kwargs: object) -> dict[str, dict[str, object]]:
+        return {
+            url: {
+                "poster": {
+                    "name": "Poster Person",
+                    "linkedin_url": "https://uk.linkedin.com/in/poster-person",
+                    "title": "Engineering Manager",
+                }
+            }
+            for url in urls
+        }
+
+    monkeypatch.setattr(backfill_module, "fetch_linkedin_job_details", fake_details)
+    summary = backfill_posters(db, scope)
+    assert summary.staged == 0
+    assert summary.skipped_existing == 1
+    assert load_candidates_artifact("Acme", "Senior Frontend Engineer") is None
+
+
 def test_hunter_functions_require_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     from harrier.outreach import domain_search, find_email, verify_email
 

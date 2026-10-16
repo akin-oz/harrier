@@ -84,6 +84,11 @@ candidate with the same URL, or with the same name when neither has a URL.
 It is not staged when the contacts table already holds that profile URL.
 Both checks are the ones `backfill-posters` already makes.
 
+**Amendment (review of PR #381).** Both checks compare profile URLs in
+their canonical form, for both callers. So `backfill-posters` also stops
+staging a poster already staged, or already a contact, under another
+subdomain. Before, it compared the URL as the guest page gave it.
+
 ### What the run reports
 
 The run logs one line per run: `apify posters staged: <n>`. The line
@@ -100,6 +105,7 @@ carries no name, title or URL. The per-source summary does not change.
 | The name is present and the URL is a company page, or not `https` | Staged by name, with no URL. |
 | Reading or writing the candidates artifact fails | Logged by error class only. That job's poster is not staged. The run continues and the job stays added. |
 | The same poster posted several jobs in one run | Staged once per job, because candidates are kept per job. Approval links the one contact to each job (spec 036). |
+| Two items with one URL | The first one's poster, as screening keeps the first job (review of PR #381). |
 | A dataset-file replay (`--dataset-file`) | Stages as a live run does. It is not a dry run. |
 | A focused-track placement (spec 139) | Staged against the job on the track it was placed in. |
 | Hosted run | The artifact goes through `files()`, the owner's Storage (spec 107). |
@@ -127,8 +133,12 @@ carries no name, title or URL. The per-source summary does not change.
       contacts table).
 - [x] `extract_publisher_contact` reads `jobPosterProfileUrl`
       (an added case in `services/api/tests/test_apify_linkedin.py::test_extract_publisher_contact_flat_and_nested`).
-- [x] `backfill-posters` behaves as before
-      (`services/api/tests/test_outreach.py::test_backfill_stages_posters_without_writing_contacts`).
+- [x] Of two items with one URL, the first one's poster is staged
+      (`services/api/tests/test_discovery.py::test_a_repeated_url_keeps_the_poster_of_the_item_screening_kept`).
+- [x] `backfill-posters` behaves as before, except that it compares
+      profile URLs in canonical form
+      (`services/api/tests/test_outreach.py::test_backfill_stages_posters_without_writing_contacts`,
+      `services/api/tests/test_outreach.py::test_backfill_skips_a_poster_already_a_contact_under_another_subdomain`).
 
 ## Proof / origin
 

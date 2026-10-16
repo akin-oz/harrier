@@ -254,9 +254,13 @@ class PosterStaging:
 
     def __init__(self, conn: Connection, jobs: list[NormalizedJob]) -> None:
         self._conn = conn
-        self._items: dict[str, object] = {
-            job["url"].strip(): job["raw_payload"] for job in jobs if job["url"].strip()
-        }
+        # The first item per URL, as screening's dedupe keeps the first job:
+        # a later repeat must not replace the payload of the row it added.
+        self._items: dict[str, object] = {}
+        for job in jobs:
+            url = job["url"].strip()
+            if url:
+                self._items.setdefault(url, job["raw_payload"])
         self._contact_keys: set[str] | None = None
         self.staged = 0
 
