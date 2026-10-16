@@ -108,6 +108,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/apply/{selector}/description": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Description
+         * @description `description show`: what the application operations will read.
+         */
+        get: operations["getDescription"];
+        /**
+         * Put Description
+         * @description `description set`, with the text as the body instead of a host file.
+         */
+        put: operations["putDescription"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/apply/{selector}/evaluate": {
         parameters: {
             query?: never;
@@ -1981,6 +2005,25 @@ export interface components {
             subcommand: string;
         };
         /**
+         * DescriptionIn
+         * @description The text to store as the job's description, replacing any.
+         */
+        DescriptionIn: {
+            /** Text */
+            text: string;
+        };
+        /**
+         * DescriptionOut
+         * @description A job's stored description. `stored` is false, and `text` empty, when
+         *     discovery captured none and none was pasted.
+         */
+        DescriptionOut: {
+            /** Stored */
+            stored: boolean;
+            /** Text */
+            text: string;
+        };
+        /**
          * DigestIn
          * @description A dry run unless the body says otherwise: a dropped body, or a client
          *     that forgot the field, must not send a message to a real person.
@@ -2987,7 +3030,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
+            /** @description application documents from the browser are the default track's; or no job description is given or stored for the job; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3411,7 +3454,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
+            /** @description application documents from the browser are the default track's; or no job description is given or stored for the job; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read */
             409: {
                 headers: {
                     [name: string]: unknown;
@@ -3436,6 +3479,168 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
+                };
+            };
+        };
+    };
+    getDescription: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DescriptionOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description the selector named no job, or more than one; or the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
+                };
+            };
+        };
+    };
+    putDescription: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path: {
+                selector: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DescriptionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DescriptionOut"];
+                };
+            };
+            /** @description the text is empty, too long, or not storable text; never quoted */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description the selector named no job, or more than one; or the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description the job has no URL, and a description is stored by URL */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
@@ -3595,7 +3800,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorOut"];
                 };
             };
-            /** @description application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track is archived */
+            /** @description application documents from the browser are the default track's; or no job description is given or stored for the job; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track is archived */
             409: {
                 headers: {
                     [name: string]: unknown;

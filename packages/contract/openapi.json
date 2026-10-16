@@ -1054,6 +1054,39 @@
         "title": "DatabaseHoldOut",
         "type": "object"
       },
+      "DescriptionIn": {
+        "description": "The text to store as the job's description, replacing any.",
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "DescriptionIn",
+        "type": "object"
+      },
+      "DescriptionOut": {
+        "description": "A job's stored description. `stored` is false, and `text` empty, when\ndiscovery captured none and none was pasted.",
+        "properties": {
+          "stored": {
+            "title": "Stored",
+            "type": "boolean"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "stored"
+        ],
+        "title": "DescriptionOut",
+        "type": "object"
+      },
       "DigestIn": {
         "description": "A dry run unless the body says otherwise: a dropped body, or a client\nthat forgot the field, must not send a message to a real person.",
         "properties": {
@@ -3216,7 +3249,7 @@
                 }
               }
             },
-            "description": "application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read"
+            "description": "application documents from the browser are the default track's; or no job description is given or stored for the job; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read"
           },
           "422": {
             "content": {
@@ -3921,7 +3954,7 @@
                 }
               }
             },
-            "description": "application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read"
+            "description": "application documents from the browser are the default track's; or no job description is given or stored for the job; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read"
           },
           "422": {
             "content": {
@@ -3968,6 +4001,274 @@
           }
         ],
         "summary": "Draft Cover Letter"
+      }
+    },
+    "/apply/{selector}/description": {
+      "get": {
+        "description": "`description show`: what the application operations will read.",
+        "operationId": "getDescription",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DescriptionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Getdescription"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the selector named no job, or more than one; or the track parameter named no track"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Getdescription"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get Description"
+      },
+      "put": {
+        "description": "`description set`, with the text as the body instead of a host file.",
+        "operationId": "putDescription",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "selector",
+            "required": true,
+            "schema": {
+              "title": "Selector",
+              "type": "string"
+            }
+          },
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DescriptionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DescriptionOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the text is empty, too long, or not storable text; never quoted"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Putdescription"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the selector named no job, or more than one; or the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the job has no URL, and a description is stored by URL"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Putdescription"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Put Description"
       }
     },
     "/apply/{selector}/evaluate": {
@@ -4220,7 +4521,7 @@
                 }
               }
             },
-            "description": "application documents from the browser are the default track's; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track is archived"
+            "description": "application documents from the browser are the default track's; or no job description is given or stored for the job; or refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track is archived"
           },
           "422": {
             "content": {

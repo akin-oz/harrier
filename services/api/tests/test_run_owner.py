@@ -493,6 +493,14 @@ def test_a_kind_offered_hosted_reaches_its_start(
     PR #316)."""
     monkeypatch = hosted_process
     job = northwind_job()
+
+    # The owner's Storage is not served here, so the stored description the
+    # apply routes require (spec 149) is given; this test is about the
+    # run's owner, not the description.
+    def stored_description(url: str) -> str:
+        return "A synthetic posting."
+
+    monkeypatch.setattr("harrier.apply.description.stored_description", stored_description)
     manager = hosted_manager(tmp_path)
     given: list[tuple[str, str, str | None]] = []
 

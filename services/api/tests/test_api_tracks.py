@@ -281,6 +281,10 @@ def test_the_cli_and_the_api_share_one_allowlist() -> None:
         "answers",
         # The selected track's jobs.csv download (spec 096).
         "export",
+        # A description is posting data, whatever track holds the row
+        # (spec 149).
+        "description show",
+        "description set",
     }
 
 

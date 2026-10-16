@@ -57,6 +57,9 @@ function stubApi(options: {
   /** What GET /runs/{id} reports, which a real server would keep in step
    * with the state_change on the stream. */
   runState?: string;
+  /** The stored description (spec 149); stored by default, as discovery
+   * leaves most jobs. */
+  description?: { text: string; stored: boolean };
 }): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal(
@@ -88,6 +91,12 @@ function stubApi(options: {
       }
       // No brief stored, as the API answers it (spec 095).
       if (url.pathname.endsWith("/brief")) return reply(404, { detail: "no brief" });
+      if (url.pathname.endsWith("/description")) {
+        return reply(
+          200,
+          options.description ?? { text: "An invented posting for a remote role.", stored: true },
+        );
+      }
       if (url.pathname.startsWith("/api/apply/")) {
         const answer = options.start ?? {
           code: 200,
@@ -146,7 +155,44 @@ test("tailoring posts to the resume route for this job", async () => {
   });
   const sent = calls.find((call) => call.url === "/api/apply/7/resume");
   expect(sent?.method).toBe("POST");
-  expect(sent?.body).toEqual({ jd_text: "", no_ai: false });
+  // No description in the body: the run reads the stored one (spec 149).
+  expect(sent?.body).toEqual({ no_ai: false });
+});
+
+test("the resume and evaluate operations ask for no description", async () => {
+  stubApi({});
+  const user = userEvent.setup();
+  renderPage();
+
+  // The panel holds the description, once, for every operation (spec 149).
+  expect(await screen.findByLabelText("Stored description")).toBeTruthy();
+  expect(screen.queryByLabelText("Job description (optional)")).toBeNull();
+  await user.click(screen.getByRole("radio", { name: "Evaluate offer" }));
+  expect(screen.queryByLabelText("Job description (optional)")).toBeNull();
+});
+
+test("tailoring a job with no description is refused in the API's words", async () => {
+  stubApi({
+    description: { text: "", stored: false },
+    start: {
+      code: 409,
+      body: { detail: "no job description is stored for job 7; paste one on the Apply page" },
+    },
+  });
+  const user = userEvent.setup();
+  renderPage();
+
+  expect(
+    await screen.findByText(
+      "No description was captured for this job. Paste it to use it for every operation.",
+    ),
+  ).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Run tailoring" }));
+
+  const alert = await screen.findByRole("alert");
+  expect(alert.textContent).toBe(
+    "no job description is stored for job 7; paste one on the Apply page",
+  );
 });
 
 test("each operation posts to its own route", async () => {

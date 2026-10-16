@@ -5,6 +5,7 @@ import type { Job } from "../../entities/job";
 import { StatusPill } from "../../entities/job";
 import { ArtifactList } from "../../features/apply/ArtifactList";
 import { BriefPanel } from "../../features/brief/BriefPanel";
+import { DescriptionPanel } from "../../features/description/DescriptionPanel";
 import { TERMINAL_STATES, useRunStream } from "../../features/runs/useRunStream";
 import type { RunOut } from "../../features/runs/useRunStream";
 import { api } from "../../shared/api/client";
@@ -40,12 +41,9 @@ const OPERATIONS: readonly OperationSpec[] = [
     cost: "One model call, then a headless browser renders the PDF",
     explainer:
       "Selects and orders content from the verified truth sources, then renders a PDF. The tracker row changes only once that PDF validates.",
-    input: {
-      field: "jd_text",
-      label: "Job description (optional)",
-      placeholder: "Leave empty to use the description captured at import.",
-      required: false,
-    },
+    // The description comes from the panel above, stored once for every
+    // operation (spec 149).
+    input: null,
     hasNoAi: true,
   },
   {
@@ -84,12 +82,7 @@ const OPERATIONS: readonly OperationSpec[] = [
     cost: "One model call",
     explainer:
       "Evaluates a recorded offer for this job. Refuses when there is no offer to evaluate.",
-    input: {
-      field: "jd_text",
-      label: "Job description (optional)",
-      placeholder: "Leave empty to use the description captured at import.",
-      required: false,
-    },
+    input: null,
     hasNoAi: false,
   },
 ];
@@ -126,7 +119,7 @@ async function startOperation(
   if (operation === "resume") {
     const { data, error } = await api.POST("/apply/{selector}/resume", {
       params: { path },
-      body: { jd_text: text, no_ai: noAi },
+      body: { no_ai: noAi },
     });
     if (error !== undefined) throw new Error(refusalMessage(error, operation));
     return data;
@@ -149,7 +142,7 @@ async function startOperation(
   }
   const { data, error } = await api.POST("/apply/{selector}/evaluate", {
     params: { path },
-    body: { jd_text: text },
+    body: {},
   });
   if (error !== undefined) throw new Error(refusalMessage(error, operation));
   return data;
@@ -216,6 +209,8 @@ export function ApplyPage({ job, track, onBack }: { job: Job; track: Track; onBa
         <span className="apply-page__title">{job.title}</span>
         <StatusPill status={job.status} label={statusLabel(track, job.status)} />
       </div>
+
+      <DescriptionPanel jobId={job.id} />
 
       <div className="apply-page__layout">
         {/* A single choice, so radios rather than four buttons. As buttons
