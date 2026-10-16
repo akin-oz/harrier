@@ -417,6 +417,61 @@ def _render(raw: dict[str, object], plan_from: dict[str, object] | None = None) 
     return render_html(markdown, parsed, template_dir=REPO_ROOT / "templates", kind="industry")
 
 
+# ---------------------------------------------------------------------------
+# The LinkedIn link names no unsafe scheme (spec 142)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "javascript:alert(1)",
+        "JavaScript:alert(1)",
+        "JAVASCRIPT:alert(1)",
+        "   javascript:alert(1)",
+        "\tjavascript:alert(1)",
+        "java\tscript:alert(1)",
+        "data:text/html,x",
+        "vbscript:x",
+        "ftp://linkedin.com/in/deniz-ornek",
+    ],
+)
+def test_an_unsafe_linkedin_scheme_is_refused(value: str) -> None:
+    message = "candidate.linkedin must be an http or https URL"
+    with pytest.raises(ResumeBundleError, match=re.escape(message)):
+        parse_bundle(_mutated(("candidate.linkedin", value)))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "https://linkedin.com/in/deniz-ornek",
+        "HTTP://linkedin.com/in/deniz-ornek",
+        "  https://linkedin.com/in/deniz-ornek",
+        "linkedin.com/in/deniz-ornek",
+        "www.linkedin.com/in/deniz-ornek",
+    ],
+)
+def test_a_safe_linkedin_renders_as_before(value: str) -> None:
+    """A scheme-less value is accepted and prints as the same link, so the
+    industry CV differs from the example's only where the value is written."""
+    example = "https://linkedin.com/in/deniz-ornek"
+    expected_markdown = _render_pair(_mutated())
+    markdown, html = _render_pair(_mutated(("candidate.linkedin", value)))
+    shown = normalize_visible_url_text(value)
+    assert markdown == expected_markdown[0].replace(normalize_visible_url_text(example), shown)
+    assert f'href="{value.strip()}"' in html
+    assert html == expected_markdown[1].replace(
+        f'href="{example}"', f'href="{value.strip()}"'
+    ).replace(f">{normalize_visible_url_text(example)}<", f">{shown}<")
+
+
+def _render_pair(raw: dict[str, object]) -> tuple[str, str]:
+    parsed, markdown = _markdown(raw)
+    html = render_html(markdown, parsed, template_dir=REPO_ROOT / "templates", kind="industry")
+    return markdown, html
+
+
 @pytest.mark.parametrize("path", EMITTED_PATHS)
 def test_line_break_in_any_emitted_bundle_string_is_refused_by_name(path: str) -> None:
     """The markdown is line-oriented and the renderer parses it back, so a
