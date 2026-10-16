@@ -1,8 +1,8 @@
 ---
 spec: 120
 title: The owner sees and sets their schedule
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [050, 096, 106, 108, 114]
 ---
@@ -242,6 +242,12 @@ Locally the section renders exactly as today.
 - **Spec 050** lists `GET /ops/schedule` as tokenless. That stays true
   locally. Hosted it already needs a session (spec 114); this spec makes
   the hosted answer the owner's own.
+
+## Decisions taken (2026-10-16)
+
+Akin approved the spec as written on 2026-10-16. The hosted answer extends
+`GET /ops/schedule` with nullable fields, rather than adding a separate
+hosted endpoint.
 
 ## Migration
 
