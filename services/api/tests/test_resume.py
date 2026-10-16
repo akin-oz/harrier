@@ -1163,6 +1163,32 @@ def _fake_render(html_text: str, pdf_path: Path) -> None:
     pdf_path.write_bytes(b"%PDF-1.4 fake")
 
 
+def test_a_stored_description_is_recorded_as_the_cache(tailor_env: int) -> None:
+    """`harrier tailor` with no text and a stored description: the sidecar
+    says the text came from the cache (spec 149, local review of PR #383)."""
+    from unittest.mock import patch
+
+    from harrier.resume import tailor as tailor_module
+    from harrier.screening.descriptions import save_description_cache
+    from harrier_cli.main import main
+
+    save_description_cache("https://example.test/job", "React and TypeScript product role.")
+    real_run = tailor_module.run_tailor
+    results: list[Any] = []
+
+    def run(*args: Any, **kwargs: Any) -> Any:
+        result = real_run(
+            *args, **kwargs, render=_fake_render, validate=lambda pdf_path, html_text: []
+        )
+        results.append(result)
+        return result
+
+    with patch.object(tailor_module, "run_tailor", side_effect=run):
+        assert main(["tailor", "--job-id", str(tailor_env), "--no-ai"]) == 0
+    metadata = json.loads(results[0].metadata_path.read_text(encoding="utf-8"))
+    assert metadata["jd_source"] == "cache"
+
+
 def test_failing_pdf_gate_leaves_tracker_row_unchanged(tailor_env: int) -> None:
     conn = connect()
     before = get_job(conn, default_scope(conn), tailor_env)

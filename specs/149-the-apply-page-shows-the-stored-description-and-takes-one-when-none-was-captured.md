@@ -1,7 +1,7 @@
 ---
 spec: 149
 title: The Apply page shows the stored description and takes one when none was captured
-status: accepted
+status: shipped
 approved: yes
 milestone: M6
 depends: [009, 013, 047, 079, 094, 095]
@@ -72,7 +72,8 @@ adds no new store and no new column.
   same `DescriptionOut` as the read. The text is stripped of surrounding
   whitespace first.
 - Both routes resolve the selector as the brief routes do and require the
-  token. Their operations, `description show` and `description set`, are
+  token. The browser client sends it on the read as it does on the brief's
+  (`TOKENED_READS` in `apps/web/src/shared/api/client.ts`). Their operations, `description show` and `description set`, are
   allowed on every track kind (spec 094): a description is posting data,
   whatever track holds the row.
 - The CLI gets the same two verbs, which the routes mirror (spec 095):
@@ -109,13 +110,16 @@ given no text and none is stored for the job's URL:
 
 - The CLI verb prints
   `<verb> failed: no job description is stored for job <id>; store one with harrier description set <id> --file PATH`
-  on stderr and exits 1. Nothing is generated and no tracker row changes.
+  on stderr and exits 1. `<verb>` is the prefix each verb already prints
+  on failure: `tailor`, `cover letter`, `answers`. Nothing is generated and no tracker row changes.
 - The browser route refuses with 409 before starting a run, with the
   detail `no job description is stored for job <id>; paste one on the Apply page`.
   No run is started and no run input file is written.
 
 Both use one check in the domain. `tailor --no-ai` refuses the same way:
-its content plan also ranks by the description.
+its content plan also ranks by the description. The check does not hand
+the stored text to `run_tailor`; it reads the text itself, so the CV's
+sidecar still records `jd_source: "cache"` (local review of PR #383).
 
 `evaluate` does not refuse. It evaluates a recorded offer, and it already
 runs without a description today.
@@ -140,31 +144,38 @@ No log line carries the description text.
 
 ## Acceptance criteria
 
-- [ ] For a job whose URL has a cached description, the read route answers
+- [x] For a job whose URL has a cached description, the read route answers
       `stored: true` and that text; for a job with none, `stored: false`
-      and empty text (planned test_the_description_route_reads_the_cache).
-- [ ] The write route stores the text so that `load_cached_description`
+      and empty text (`services/api/tests/test_stored_description.py::test_the_description_route_reads_the_cache`).
+- [x] The write route stores the text so that `load_cached_description`
       for the job's URL returns it, and a second write replaces it
-      (planned test_the_description_route_stores_and_replaces).
-- [ ] The write route refuses empty text, text over the limit, and a job
+      (`services/api/tests/test_stored_description.py::test_the_description_route_stores_and_replaces`).
+- [x] The write route refuses empty text, text over the limit, and a job
       with no URL, and stores nothing in each case
-      (planned test_the_description_route_refuses_what_it_cannot_store).
-- [ ] `tailor`, `cover-letter` and `answers` with no text and no stored
+      (`services/api/tests/test_stored_description.py::test_the_description_route_refuses_what_it_cannot_store`,
+      `services/api/tests/test_stored_description.py::test_a_job_with_no_url_takes_no_description`;
+      the limit itself: `services/api/tests/test_stored_description.py::test_a_description_of_exactly_the_limit_is_stored`).
+- [x] `tailor`, `cover-letter` and `answers` with no text and no stored
       description exit 1 with the message above and write no artifact and
-      no tracker change (planned test_an_operation_without_a_description_refuses).
-- [ ] The resume, cover-letter and answers routes answer 409 with the
+      no tracker change (`services/api/tests/test_stored_description.py::test_an_operation_without_a_description_refuses`);
+      with one stored, it reaches the operation
+      (`services/api/tests/test_stored_description.py::test_a_stored_description_reaches_the_operation`,
+      `services/api/tests/test_stored_description.py::test_tailor_leaves_the_stored_description_to_run_tailor`,
+      `services/api/tests/test_resume.py::test_a_stored_description_is_recorded_as_the_cache`).
+- [x] The resume, cover-letter and answers routes answer 409 with the
       detail above and start no run when no description is stored
-      (planned test_an_apply_route_without_a_description_starts_no_run).
-- [ ] `evaluate` with no description still starts its run
-      (planned test_evaluate_runs_without_a_description).
-- [ ] The Apply page shows the stored text when there is one, the paste
+      (`services/api/tests/test_stored_description.py::test_an_apply_route_without_a_description_starts_no_run`).
+- [x] `evaluate` with no description still starts its run
+      (`services/api/tests/test_stored_description.py::test_evaluate_runs_without_a_description`).
+- [x] The Apply page shows the stored text when there is one, the paste
       box when there is none, and the stored text after a save
-      (planned DescriptionPanel tests in `apps/web`).
-- [ ] The resume and evaluate operations on the Apply page no longer show
-      a description box (planned ApplyPage test).
-- [ ] `harrier description show` and `harrier description set` print and
-      store as above (planned test_the_description_verbs).
-- [ ] The contract is regenerated and declares both routes and every
+      (the tests in `apps/web/src/features/description/DescriptionPanel.test.tsx`).
+- [x] The resume and evaluate operations on the Apply page no longer show
+      a description box (the test "the resume and evaluate operations ask for no description" in
+      `apps/web/src/pages/apply/ApplyPage.test.tsx`).
+- [x] `harrier description show` and `harrier description set` print and
+      store as above (`services/api/tests/test_stored_description.py::test_the_description_verbs`).
+- [x] The contract is regenerated and declares both routes and every
       refusal cause (`just contract`).
 
 ## Proof / origin

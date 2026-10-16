@@ -674,6 +674,24 @@ def test_every_new_request_calls_the_cli_verbs_function(
     assert cli_call.args[1] == api_call.args[1] == job
     assert json.loads(cli_call.args[2]) == json.loads(api_call.args[2]) == brief
 
+    # description show and set (spec 149): the CLI reads a file, the route
+    # takes the body
+    with patch("harrier.apply.description.stored_description", return_value="") as domain:
+        main(["description", "show", str(job)])
+        client.get(f"/apply/{job}/description", headers=auth())
+    cli_call, api_call = domain.call_args_list
+    assert cli_call.args == api_call.args
+    posting = "An invented posting."
+    description_file = tmp_path / "description.txt"
+    description_file.write_text(posting, encoding="utf-8")
+    with patch("harrier.apply.description.store_description", return_value=posting) as domain:
+        main(["description", "set", str(job), "--file", str(description_file)])
+        client.put(f"/apply/{job}/description", json={"text": posting}, headers=auth())
+    cli_call, api_call = domain.call_args_list
+    assert cli_call.args == api_call.args
+    assert cli_call.args[0] == job
+    assert cli_call.args[2] == posting
+
     # check, and check --link-contacts
     with (
         patch("harrier.tracker.invariants.check_rows", return_value=[]) as rows,

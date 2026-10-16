@@ -1,0 +1,89 @@
+.description-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-raised);
+}
+.description-panel__heading {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.description-panel__note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.description-panel__error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-danger);
+}
+.description-panel__text {
+  margin: 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+}
+.description-panel__text--collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  overflow: hidden;
+}
+.description-panel__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.description-panel__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.description-panel__field textarea {
+  font: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+}
+.description-panel__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+.description-panel button {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+}
+.description-panel button:focus-visible,
+.description-panel__field textarea:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+.description-panel .description-panel__save {
+  font-weight: 600;
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+.description-panel button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

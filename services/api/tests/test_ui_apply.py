@@ -32,6 +32,7 @@ from conftest import auth
 from fastapi.testclient import TestClient
 
 from harrier.db import connect
+from harrier.screening.descriptions import save_description_cache
 from harrier.tracker.store import add_job
 from harrier.tracks import default_scope
 from harrier_api.app import create_app
@@ -54,19 +55,23 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _add(company: str, title: str, slug: str) -> int:
+    url = f"https://boards.example.com/{slug}"
     conn = connect()
     identifier = add_job(
         conn,
         {
             "company": company,
             "title": title,
-            "url": f"https://boards.example.com/{slug}",
+            "url": url,
             "source": "greenhouse",
             "location": "Remote, Europe",
         },
         scope=default_scope(conn),
     )
     conn.close()
+    # As discovery leaves a job: its description stored, so the operations
+    # that refuse without one (spec 149) start.
+    save_description_cache(url, "A synthetic posting for a remote engineering role.")
     return identifier
 
 

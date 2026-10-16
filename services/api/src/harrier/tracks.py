@@ -299,6 +299,9 @@ NON_DEFAULT_OPERATIONS: frozenset[str] = frozenset(
         "answers",
         # Spec 138: a row moves between an industry and a focused track.
         "move",
+        # Spec 149: a description is posting data, whatever track holds the row.
+        "description show",
+        "description set",
     }
 )
 

@@ -40,7 +40,8 @@ const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 // operator, which is the only content here about someone who never chose to
 // use this tool (spec 048). The API requires the token on both. A brief is
 // the operator's own notes about an application, and the data check names
-// contacts, so both are read with it too (spec 095).
+// contacts, so both are read with it too (spec 095). The stored description
+// is read with it as its route requires (spec 149).
 //
 // Configuration is the watchlist, the searches and the hold list, which
 // describe the operator's own search (spec 097 closed spec 023's open item).
@@ -51,6 +52,7 @@ const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const TOKENED_READS = [
   /\/apply\/[^/]+\/artifacts(\/|$)/,
   /\/apply\/[^/]+\/brief$/,
+  /\/apply\/[^/]+\/description$/,
   /\/ops\/check$/,
   /\/outreach\//,
   /\/config(\/|$)/,

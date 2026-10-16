@@ -875,11 +875,13 @@ APPLY_ERRORS: dict[int | str, dict[str, str]] = {
 }
 
 # What an apply run route can answer 409 for: the track refusal every scoped
-# route has, a non-default track from the browser (spec 101), and a run of
-# the kind already active. Joined, so the contract names every cause.
+# route has, a non-default track from the browser (spec 101), no description
+# to generate from (spec 149), and a run of the kind already active. Joined,
+# so the contract names every cause.
 APPLY_RUN_RESPONSES = merge_responses(
     APPLY_ERRORS,
     {409: {"description": "application documents from the browser are the default track's"}},
+    {409: {"description": "no job description is given or stored for the job"}},
     RUN_CONFLICT_RESPONSES,
 )
 # `evaluate` never runs on another track: the track refusal answers first.
@@ -900,6 +902,23 @@ def _job_id_for(conn: Connection, scope: TrackScope, selector: str) -> int:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
+def _refuse_without_description(
+    conn: Connection, scope: TrackScope, job_id: int, given: str
+) -> None:
+    """409 before a run starts when the job has no description, given or
+    stored: the run would generate from an empty posting (spec 149)."""
+    from harrier.apply.description import NoDescriptionError, require_description
+    from harrier.tracker import get_job
+
+    try:
+        require_description(job_id, get_job(conn, scope, job_id).get("url", ""), given)
+    except NoDescriptionError as error:
+        raise HTTPException(
+            status_code=409,
+            detail=f"no job description is stored for job {job_id}; paste one on the Apply page",
+        ) from error
+
+
 def _apply_params(
     conn: Connection,
     scope: TrackScope,
@@ -908,12 +927,15 @@ def _apply_params(
     text: str,
     *,
     no_ai: bool,
+    description: str | None = None,
 ) -> RunParams:
-    """Refuse another track, resolve the selector and stage the free text, in
-    that order.
+    """Refuse another track, resolve the selector, refuse a job with no
+    description, and stage the free text, in that order.
 
     The order matters: staging first would write a file for a job that does
-    not exist, and nothing would ever consume or remove it.
+    not exist, or for a run that is refused, and nothing would ever consume
+    or remove it. `description` is the description the body gave, "" for
+    none; None for an operation that does not need one (spec 149).
     """
     if scope.track.id != DEFAULT_TRACK_ID:
         # These run on an academic track from the command line (spec 101);
@@ -923,6 +945,8 @@ def _apply_params(
             status_code=409, detail=f"{operation} is not available on track {scope.track.slug}"
         )
     job_id = _job_id_for(conn, scope, selector)
+    if description is not None:
+        _refuse_without_description(conn, scope, job_id, description)
     stripped = text.strip()
     return RunParams(
         job_id=job_id,
@@ -945,7 +969,15 @@ async def tailor_resume(
     manager: Manager,
 ) -> RunOut:
     """The same `tailor` verb the CLI runs, as a run (spec 047)."""
-    params = _apply_params(conn, scope, "tailor", selector, body.jd_text, no_ai=body.no_ai)
+    params = _apply_params(
+        conn,
+        scope,
+        "tailor",
+        selector,
+        body.jd_text,
+        no_ai=body.no_ai,
+        description=body.jd_text,
+    )
     return run_out(await manager.start("tailor", params))
 
 
@@ -962,7 +994,9 @@ async def draft_cover_letter(
     scope: Annotated[TrackScope, Depends(scope_for("cover-letter"))],
     manager: Manager,
 ) -> RunOut:
-    params = _apply_params(conn, scope, "cover-letter", selector, body.notes, no_ai=False)
+    params = _apply_params(
+        conn, scope, "cover-letter", selector, body.notes, no_ai=False, description=""
+    )
     return run_out(await manager.start("cover-letter", params))
 
 
@@ -979,7 +1013,9 @@ async def draft_answers(
     scope: Annotated[TrackScope, Depends(scope_for("answers"))],
     manager: Manager,
 ) -> RunOut:
-    params = _apply_params(conn, scope, "answers", selector, body.questions, no_ai=False)
+    params = _apply_params(
+        conn, scope, "answers", selector, body.questions, no_ai=False, description=""
+    )
     return run_out(await manager.start("answers", params))
 
 
@@ -1215,6 +1251,96 @@ def put_brief(
     except BriefError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return _brief_out(stored)
+
+
+# --- apply: the stored description (spec 149) ---
+
+
+class DescriptionOut(BaseModel):
+    """A job's stored description. `stored` is false, and `text` empty, when
+    discovery captured none and none was pasted."""
+
+    text: str
+    stored: bool
+
+
+class DescriptionIn(BaseModel):
+    """The text to store as the job's description, replacing any."""
+
+    text: str
+
+
+DESCRIPTION_SELECTOR_CAUSE = "the selector named no job, or more than one"
+
+GET_DESCRIPTION_ERRORS: dict[int | str, dict[str, Any]] = {
+    404: {"model": ErrorOut, "description": DESCRIPTION_SELECTOR_CAUSE},
+    **TOKEN_RESPONSES,
+}
+
+PUT_DESCRIPTION_ERRORS: dict[int | str, dict[str, Any]] = {
+    400: {
+        "model": ErrorOut,
+        "description": "the text is empty, too long, or not storable text; never quoted",
+    },
+    404: {"model": ErrorOut, "description": DESCRIPTION_SELECTOR_CAUSE},
+    409: {
+        "model": ErrorOut,
+        "description": "the job has no URL, and a description is stored by URL",
+    },
+    **TOKEN_RESPONSES,
+}
+
+
+def _job_for(conn: Connection, scope: TrackScope, selector: str) -> dict[str, str]:
+    from harrier.tracker.selector import resolve_selector
+
+    try:
+        return resolve_selector(conn, scope, selector)
+    except SelectorError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@apply_router.get(
+    "/apply/{selector}/description",
+    operation_id="getDescription",
+    dependencies=[Depends(require_token)],
+    responses=GET_DESCRIPTION_ERRORS,
+)
+def get_description(
+    selector: str,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("description show"))],
+) -> DescriptionOut:
+    """`description show`: what the application operations will read."""
+    from harrier.apply.description import stored_description
+
+    text = stored_description(_job_for(conn, scope, selector).get("url", ""))
+    return DescriptionOut(text=text, stored=bool(text))
+
+
+@apply_router.put(
+    "/apply/{selector}/description",
+    operation_id="putDescription",
+    dependencies=[Depends(require_token)],
+    responses=PUT_DESCRIPTION_ERRORS,
+)
+def put_description(
+    selector: str,
+    body: DescriptionIn,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("description set"))],
+) -> DescriptionOut:
+    """`description set`, with the text as the body instead of a host file."""
+    from harrier.apply.description import DescriptionError, JobHasNoUrlError, store_description
+
+    job = _job_for(conn, scope, selector)
+    try:
+        stored = store_description(int(job["id"]), job.get("url", ""), body.text)
+    except JobHasNoUrlError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except DescriptionError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return DescriptionOut(text=stored, stored=True)
 
 
 runs_router = APIRouter(route_class=DatabaseRoute)

@@ -752,6 +752,7 @@ def _warn_if_deadline_passed(row: dict[str, str]) -> None:
 
 
 def _cmd_tailor(args: argparse.Namespace) -> int:
+    from harrier.apply.description import require_description
     from harrier.resume.content import ResumeBundleError
     from harrier.resume.tailor import run_tailor
     from harrier.tracker import get_job
@@ -770,8 +771,13 @@ def _cmd_tailor(args: argparse.Namespace) -> int:
         scope = _scope(conn, args)
         # An unknown job raises here as it did inside run_tailor; `main`
         # reports it.
-        _warn_if_deadline_passed(get_job(conn, scope, args.job_id))
+        row = get_job(conn, scope, args.job_id)
+        _warn_if_deadline_passed(row)
         try:
+            # No description, given or stored, refuses: a CV tailored to an
+            # empty posting is not tailored (spec 149). Checked only: run_tailor
+            # reads the stored one itself, so its sidecar says `cache`.
+            require_description(args.job_id, row.get("url", ""), jd_text)
             result = run_tailor(conn, scope, args.job_id, jd_text=jd_text, no_ai=args.no_ai)
         except (ResumeBundleError, ValueError, RuntimeError) as error:
             print(f"tailor failed: {error}", file=sys.stderr)
@@ -798,10 +804,10 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
     from harrier.apply import generate_cover_letter, write_cover_letter_artifacts
     from harrier.apply.brief import load_brief
     from harrier.apply.claims import NeedsInputError
+    from harrier.apply.description import require_description
     from harrier.apply.profile import ApplicationProfileError
     from harrier.apply.requirements import requirement_flags
     from harrier.apply.review import Review
-    from harrier.screening.descriptions import load_cached_description
     from harrier.tracker import get_job
 
     jd_text, error_code = _read_jd_file(args.jd_file)
@@ -819,8 +825,7 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
         try:
             row = get_job(conn, scope, args.job_id)
             _warn_if_deadline_passed(row)
-            if not jd_text:
-                jd_text = load_cached_description(row.get("url", "")) or None
+            jd_text = require_description(args.job_id, row.get("url", ""), jd_text)
             brief = load_brief(conn, args.job_id)
             letter = generate_cover_letter(
                 conn,
@@ -866,9 +871,9 @@ def _cmd_answers(args: argparse.Namespace) -> int:
     from harrier.apply.answers import answers_review_path
     from harrier.apply.brief import load_brief
     from harrier.apply.claims import find_placeholders
+    from harrier.apply.description import require_description
     from harrier.apply.profile import ApplicationProfileError
     from harrier.apply.requirements import requirement_flags
-    from harrier.screening.descriptions import load_cached_description
     from harrier.tracker import get_job
 
     jd_text, error_code = _read_jd_file(args.jd_file)
@@ -879,8 +884,7 @@ def _cmd_answers(args: argparse.Namespace) -> int:
         try:
             row = get_job(conn, scope, args.job_id)
             _warn_if_deadline_passed(row)
-            if not jd_text:
-                jd_text = load_cached_description(row.get("url", "")) or None
+            jd_text = require_description(args.job_id, row.get("url", ""), jd_text)
             questions = parse_questions(args.question, args.questions_file)
             brief = load_brief(conn, args.job_id)
             drafts = generate_answer_set(
@@ -939,6 +943,48 @@ def _cmd_brief_set(args: argparse.Namespace) -> int:
             return 1
         print(f"brief stored for job {args.job_id}")
         return 0
+
+
+def _cmd_description_show(args: argparse.Namespace) -> int:
+    """Print a job's stored description (spec 149)."""
+    from harrier.apply.description import stored_description
+    from harrier.tracker import get_job
+
+    with closing(_open_store()) as conn:
+        scope = _scope(conn, args)
+        try:
+            row = get_job(conn, scope, args.job_id)
+        except TrackerError as error:
+            print(f"description failed: {error}", file=sys.stderr)
+            return 1
+    text = stored_description(row.get("url", ""))
+    if not text:
+        print(f"no description stored for job {args.job_id}", file=sys.stderr)
+        return 1
+    print(text)
+    return 0
+
+
+def _cmd_description_set(args: argparse.Namespace) -> int:
+    """Store a job's description from a file, replacing any (spec 149)."""
+    from harrier.apply.description import DescriptionError, store_description
+    from harrier.tracker import get_job
+
+    try:
+        text = Path(args.file).read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        print(f"description failed: cannot read --file: {error}", file=sys.stderr)
+        return 1
+    with closing(_open_store()) as conn:
+        scope = _scope(conn, args)
+        try:
+            row = get_job(conn, scope, args.job_id)
+            store_description(args.job_id, row.get("url", ""), text)
+        except (DescriptionError, TrackerError, OSError) as error:
+            print(f"description failed: {error}", file=sys.stderr)
+            return 1
+    print(f"description stored for job {args.job_id}")
+    return 0
 
 
 def _cmd_brief_show(args: argparse.Namespace) -> int:
@@ -3064,6 +3110,7 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "evaluate": CommandClass(DATABASE, path_options=("jd_file",)),
     "outreach-draft": CommandClass(DATABASE, path_options=("jd_file", "input_file")),
     "brief set": CommandClass(DATABASE, path_options=("file",)),
+    "description set": CommandClass(DATABASE, path_options=("file",)),
     "profile put": CommandClass(DATABASE, path_options=("file",)),
     # Its default destination is mounted at /app/backups (spec 064).
     "backup": CommandClass(DATABASE, path_options=("dest",)),
@@ -3073,6 +3120,7 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "profile split-resume": _DB,
     "profile check": _DB,
     "brief show": _DB,
+    "description show": _DB,
     "evaluate-prospects": _DB,
     "find-contacts": _DB,
     "contacts list": _DB,
@@ -3345,6 +3393,18 @@ def build_parser() -> argparse.ArgumentParser:
     brief_show = brief_sub.add_parser("show", help="print a job's stored brief")
     brief_show.add_argument("job_id", type=int)
     brief_show.set_defaults(func=_cmd_brief_show)
+
+    description = sub.add_parser("description", help="a job's stored description (spec 149)")
+    description_sub = description.add_subparsers(dest="description_command", required=True)
+    description_set = description_sub.add_parser(
+        "set", help="store a job's description from a text file, replacing any"
+    )
+    description_set.add_argument("job_id", type=int)
+    description_set.add_argument("--file", required=True, help="path to the description text")
+    description_set.set_defaults(func=_cmd_description_set)
+    description_show = description_sub.add_parser("show", help="print a job's stored description")
+    description_show.add_argument("job_id", type=int)
+    description_show.set_defaults(func=_cmd_description_show)
 
     evaluate = sub.add_parser(
         "evaluate", help="six-block offer evaluation for a tracker job (spec 015)"
