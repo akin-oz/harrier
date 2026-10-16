@@ -38,6 +38,9 @@ ACCOUNT_COMMANDS: frozenset[str] = frozenset(
         "profile list",
         "profile check",
         "move",
+        # Interim, until spec 107's PR 3 lets the hosted API run them (spec 147).
+        "tailor",
+        "cover-letter",
     }
 )
 

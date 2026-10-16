@@ -405,7 +405,8 @@ def test_account_writes_refuses_before_writing(
     [
         (["discover"], "discover"),
         (["tracks", "archive", SLUG], "tracks archive"),
-        (["tailor", "--job-id", "1"], "tailor"),
+        # `tailor` and `cover-letter` joined the commands in spec 147.
+        (["answers", "--job-id", "1"], "answers"),
         (["store", "status"], "store status"),
     ],
 )

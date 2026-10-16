@@ -35,6 +35,8 @@ and removed once PR 3 lets the hosted API run both.
    when `--owner` is given, instead of `connect()`, which always opens the
    local file.
 3. Their files stay local: nothing here binds Storage.
+4. `docs/deploy.md`'s list of the commands `--owner` runs names these two
+   (amendment 1).
 
 ## Behavior
 
@@ -42,8 +44,9 @@ With `--owner` and `HARRIER_ACCOUNT_DATABASE_URL` in the shell, as spec 144
 requires:
 
 - **Rows.** Each command reads the job, its track, the profile documents
-  and the brief from the account, and records its status change and events
-  there, through the tracker's write path under the owner's row policy.
+  and the brief from the account. `tailor` records its status change and
+  events there, through the tracker's write path under the owner's row
+  policy. `cover-letter` changes no row, as locally: it only reads.
 - **Files.** On the operator's machine nothing is bound, so `files()`
   (`services/api/src/harrier/filestore.py`) returns the local data
   directory, as it does today. The tailored resume, its metadata and the
@@ -84,18 +87,32 @@ Spec 146's `import-artifacts` copies them to Storage when wanted.
       the account's job and profile documents, writes its files under the
       test's data directory, and records the status change in the account
       and not in any local store
-      (planned test_tailor_with_owner_reads_and_records_in_the_account).
+      (`services/api/tests/test_interim_account_tailor.py::test_tailor_with_owner_reads_and_records_in_the_account`).
 - [ ] The same holds for `harrier --owner <id> cover-letter --job-id <job>`
-      (planned test_cover_letter_with_owner_reads_and_records_in_the_account).
+      (`services/api/tests/test_interim_account_tailor.py::test_cover_letter_with_owner_reads_and_records_in_the_account`).
 - [ ] Without `--owner`, both still open the local store
-      (planned test_tailor_and_cover_letter_without_owner_stay_local).
+      (`services/api/tests/test_interim_account_tailor.py::test_tailor_and_cover_letter_without_owner_stay_local`).
 - [ ] With `--owner`, neither opens the local SQLite file
-      (planned test_tailor_with_owner_never_opens_the_local_store).
+      (`services/api/tests/test_interim_account_tailor.py::test_tailor_with_owner_never_opens_the_local_store`).
 - [ ] `ACCOUNT_COMMANDS` holds exactly spec 144's commands plus `tailor`
-      and `cover-letter`.
+      and `cover-letter`
+      (`services/api/tests/test_interim_account_tailor.py::test_account_commands_hold_spec_144_plus_tailor_and_cover_letter`).
 
 Tests use synthetic owners, rows and documents only, on the CI Postgres
 service, with the AI step off (`--no-ai` or the test provider).
+
+## Amendment (2026-10-16, implementation)
+
+1. `docs/deploy.md` ("Writing one account from the command line") said
+   `--owner` runs six commands. Leaving it would make a doc claim false, so
+   the change names the two added commands there and marks them interim.
+2. The Rows bullet said each command records a status change. A cover letter
+   records none locally (`write_cover_letter_artifacts` writes files only),
+   so with `--owner` it records none either. The cover-letter criterion
+   therefore checks that the account's job row and events are unchanged,
+   not that a status moved.
+3. Spec 144's `test_account_writes_refuses_other_commands` named `tailor` as
+   a refused command. It names `answers` now: `tailor` runs.
 
 ## Removal
 
