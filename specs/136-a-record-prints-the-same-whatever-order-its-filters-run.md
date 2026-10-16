@@ -1,8 +1,8 @@
 ---
 spec: 136
 title: A log record prints the same whatever order its filters run in
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [045, 133, 135]
 ---
