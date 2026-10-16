@@ -21,12 +21,14 @@ owner-prefixed paths.
 
 A track id is no longer unique across owners on Postgres (spec 105), so
 every path built from one, such as academic discovery's run and incoming
-directories (`services/api/src/harrier/academic/discovery.py:153`, `:172`),
+directories (`services/api/src/harrier/academic/discovery.py:152`, `:177`),
 must sit under the owner's prefix hosted.
 
 Line numbers below are from `main` at commit `44ac0d7` (2026-10-10),
-except the `harrier_cli/main.py` and `harrier_api/app.py` ones, refreshed
-to `main` at `524dd8a` on 2026-10-11. Counts say how they were taken.
+except the `harrier_cli/main.py` ones, refreshed to `main` at `524dd8a` on
+2026-10-11, and those in files PR 1 changed, refreshed by PR 1 on
+2026-10-15 (Amendment (2026-10-15): PR 1's build). The counts are the
+2026-10-10 survey, before PR 1, and say how they were taken.
 
 ### Every file the domain writes today
 
@@ -44,7 +46,7 @@ Writes were found with three greps over `services/api/src`:
   `write_bytes_atomic(` (`services/api/src/harrier/atomicio.py:41-79`):
   9 lines.
 - Other writers: Playwright's `page.pdf(` (one line,
-  `services/api/src/harrier/resume/pdf.py:38`) and `shutil` copies
+  `services/api/src/harrier/resume/pdf.py:40`) and `shutil` copies
   (`backup.py`, `cutover.py`, `mail/run.py:161`).
 
 They fall into two groups.
@@ -54,23 +56,23 @@ key family: the path relative to `data_dir()`.
 
 | Family | Writer | Read by | Write kind today |
 |---|---|---|---|
-| `resumes/<slug>.{md,html,pdf,metadata.json,evaluation.md}` | `resume/tailor.py:51-76`, `:135-176` | `artifacts.py:85-144`, `harrier_api/app.py:921-981` | plain write; the PDF through `render_validated_pdf` (`resume/pdf.py:87-111`) |
-| `cover-letters/<slug>.{md,html,pdf}` | `apply/letters.py:197-215`, `:573-599` | the same artifact routes | plain write; PDF as above |
-| `answers/<slug>.md` | `apply/answers.py:169-170`, `:695-699` | the artifact routes | plain write |
-| `reports/<slug>.md` | `offers/evaluate.py:107-117`, `:227-229` | the artifact routes | plain write |
-| `evaluations/audit.jsonl` | `offers/batch.py:34-62` | nothing in the code | append |
-| `outreach/<slug>-candidates.json` | `outreach/discovery.py:423-442`, `:471-520`, `outreach/backfill.py:69-107` | `harrier_api/outreach_routes.py:166-190`, `outreach/discovery.py:446-520` | plain write, read-modify-write |
-| `outreach/<slug>.{json,md}` | `outreach/drafts.py:122-123`, `:523-531` | nothing in the code | plain write |
-| `outreach/messages/<slug>.{json,md}`, `outreach/targets.json` | `outreach/messages.py:450-494` | `outreach/messages.py:474-488` | plain write, read-modify-write |
-| `descriptions/<hash>.json` | `screening/descriptions.py:62-85`, called from `capture.py:108`, `:155`, `screening/pipeline.py:330`, `screening/linkedin.py:266` | `tracker/store.py:495-508` (inside `set_status`), `resume/tailor.py:99`, `offers/batch.py:89`, `scoring/export.py:84` and others | atomic |
-| `linkedin-page-verdicts/<hash>.json` | `screening/linkedin.py:126-147` | `screening/linkedin.py:131-141` | plain write |
-| `discovery/<source>_seen.json`, `discovery/<track id>/<source>_seen.json` | `screening/seen.py:79-85`, `:154` | `screening/seen.py:100-160` | atomic |
-| `incoming/<source>_latest.json`, `incoming/job_imports_run.json` | `discovery.py:75-76`, `:226-228`, `:485-487` | nothing in the code | plain write |
-| `discovery/<track id>/<source>/runs/<run id>.json` | `academic/discovery.py:152-168`, pruned by modification time at `:165-167` | the pruning itself | atomic |
-| `incoming/<track id>/<source>_latest.json` | `academic/discovery.py:171-172`, `:346-347` | nothing in the code | atomic |
-| `scoring/active-model.json`, `scoring/models/*.json`, `scoring/reports/*.json` | `scoring/train.py:102-107`, `:333-335`, `:451-462` | `scoring/model.py:70-76`, `:284-313`, cached by `stat` at `:255`; `active_model_info` (`:337`) for the settings page (`harrier_api/settings_routes.py:514-516`) | atomic |
-| `scoring/exports/[<track slug>/]features-<date>.jsonl` | `scoring/export.py:42`, `:140-147` | `scoring/train.py:110-112` (newest by name); `newest_export_date` (`scoring/export.py:49`) for the settings page (`harrier_api/settings_routes.py:536-542`) | atomic |
-| `gmail-watch/seen_messages.json`, `gmail-watch/events.jsonl` | `mail/watch.py:163-172`, `:459-460`, `:513-523` | `mail/watch.py:448-456`, `harrier_api/mail_routes.py` | atomic; append and rotate |
+| `resumes/<slug>.{md,html,pdf,metadata.json,evaluation.md}` | `resume/tailor.py:53-87`, `:164-222` | `artifacts.py:91-140`, `harrier_api/app.py:986-1049` | plain write; the PDF through `render_validated_pdf` (`resume/pdf.py:106-144`) |
+| `cover-letters/<slug>.{md,html,pdf}` | `apply/letters.py:164-187`, `:576-646` | the same artifact routes | plain write; PDF as above |
+| `answers/<slug>.md` | `apply/answers.py:166`, `:694-717` | the artifact routes | plain write |
+| `reports/<slug>.md` | `offers/evaluate.py:107-124`, `:233-236` | the artifact routes | plain write |
+| `evaluations/audit.jsonl` | `offers/batch.py:30-55` | nothing in the code | append |
+| `outreach/<slug>-candidates.json` | `outreach/discovery.py:422-444`, `:472-523`, `outreach/backfill.py:69-107` | `harrier_api/outreach_routes.py:166-190`, `outreach/discovery.py:447-523` | plain write, read-modify-write |
+| `outreach/<slug>.{json,md}` | `outreach/drafts.py:123`, `:524-530` | nothing in the code | plain write |
+| `outreach/messages/<slug>.{json,md}`, `outreach/targets.json` | `outreach/messages.py:450-487` | `outreach/messages.py:469-483` | plain write, read-modify-write |
+| `descriptions/<hash>.json` | `screening/descriptions.py:60-79`, called from `capture.py:108`, `:155`, `screening/pipeline.py:330`, `screening/linkedin.py:264` | `tracker/store.py:495-508` (inside `set_status`), `resume/tailor.py:121`, `offers/batch.py:79`, `scoring/export.py:85` and others | atomic |
+| `linkedin-page-verdicts/<hash>.json` | `screening/linkedin.py:125-145` | `screening/linkedin.py:130-140` | plain write |
+| `discovery/<source>_seen.json`, `discovery/<track id>/<source>_seen.json` | `screening/seen.py:105-111`, `:184-201` | `screening/seen.py:141-181` | atomic |
+| `incoming/<source>_latest.json`, `incoming/job_imports_run.json` | `discovery.py:76`, `:234`, `:559` | nothing in the code | plain write |
+| `discovery/<track id>/<source>/runs/<run id>.json` | `academic/discovery.py:151-173`, pruned by modification time at `:165-172` | the pruning itself | atomic |
+| `incoming/<track id>/<source>_latest.json` | `academic/discovery.py:176-177`, `:351` | nothing in the code | atomic |
+| `scoring/active-model.json`, `scoring/models/*.json`, `scoring/reports/*.json` | `scoring/train.py:106-115`, `:362-365`, `:489-500` | `scoring/model.py:73-82`, `:296-334`, cached by `stat` at `:263`; `active_model_info` (`:354`) for the settings page (`harrier_api/settings_routes.py:514-516`) | atomic |
+| `scoring/exports/[<track slug>/]features-<date>.jsonl` | `scoring/export.py:42-46`, `:144-146` | `scoring/train.py:118-128` (newest by name); `newest_export_date` (`scoring/export.py:52`) for the settings page (`harrier_api/settings_routes.py:536-542`) | atomic |
+| `gmail-watch/seen_messages.json`, `gmail-watch/events.jsonl` | `mail/watch.py:162-175`, `:462-463`, `:509-529` | `mail/watch.py:451-459`, `harrier_api/mail_routes.py`, `digest.py:177-182` | atomic; append and rotate |
 
 All paths above are under `services/api/src/harrier/` unless they start
 with `harrier_api/`.
@@ -92,7 +94,7 @@ another spec:
 | `harrier_api/localauth.py:64-95` (local API token) | hosted mode has no token file (spec 104) |
 | `harrier/llm/providers.py:46-54` (LLM debug log, opt-in by `*_DEBUG`, `llm/config.py:161-167`) | hosted log rules are spec 110's |
 | `harrier/logsetup.py:52-53` (log file) | hosted log rules are spec 110's |
-| `harrier/mail/watch.py:645`, `harrier_cli/main.py:950` (Gmail OAuth token) | a credential: specs 106 and 109 |
+| `harrier/mail/watch.py:651`, `harrier_cli/main.py:950` (Gmail OAuth token) | a credential: specs 106 and 109 |
 | `harrier/mail/run.py:153-162` (copy of the old system's seen state) | local only |
 | `harrier/tracker/export.py:85-104`, `harrier/profile/store.py:156-158`, `:196-212` (CSV and profile exports to a chosen directory) | local CLI; a hosted export is spec 111's |
 | `harrier/backup.py`, `harrier/cutover.py`, `harrier/hostlease.py:91-98`, `harrier/schedule.py:369-371`, `harrier/reviewfollowup.py:404-503`, `harrier/parity/checklist.py:173-174`, `harrier_api/export_openapi.py:19-20`, `harrier_api/demo.py:64-68`, `harrier/db.py` | the local machine, development tools, or the SQLite store itself |
@@ -103,18 +105,18 @@ another spec:
   every owner's resumes into one machine's `data/`, readable by any code
   path that builds the same name, and gone when the machine is replaced.
 - **Names collide across owners.** Artifact names are built from company
-  and role (`resume/tailor.py:55-76`, `apply/letters.py:201-215`), and
-  run state from a track id (`screening/seen.py:85`,
-  `academic/discovery.py:153`, `:172`). Two owners applying to the same
+  and role (`resume/tailor.py:56-75`, `apply/letters.py:167-178`), and
+  run state from a track id (`screening/seen.py:111`,
+  `academic/discovery.py:152`, `:177`). Two owners applying to the same
   role, or two owners' track 2, would share one file.
-- **One cache is keyed by path.** `scoring/model.py:255` caches the
+- **One cache is keyed by path.** `scoring/model.py:263` caches the
   parsed model by the file's path string. With one key per family and no
   owner in it, owner A's model would score owner B's jobs.
 - **PDF rendering needs a local file.** Chromium writes the PDF to a path
-  (`resume/pdf.py:38`) and the gate runs `pdfinfo` on a path (`:70-71`).
+  (`resume/pdf.py:40`) and the gate runs `pdfinfo` on a path (`:88-89`).
 - **File names carry people's names.** The resume name includes the
-  candidate's name (`resume/tailor.py:69`), and outreach draft and message
-  names include the contact's name (`outreach/drafts.py:508-520`,
+  candidate's name (`resume/tailor.py:66`), and outreach draft and message
+  names include the contact's name (`outreach/drafts.py:509-521`,
   `outreach/messages.py:90-94`). Hosted, an object name travels in request
   paths to a vendor.
 
@@ -528,8 +530,8 @@ PR 1 (refactor):
       a data path; the pull request shows the grep before and after.
 - [ ] For every key family, a local write through the seam produces the
       same relative path, bytes and file mode as before the refactor
-      (planned test_the_local_store_writes_what_it_wrote_before), written
-      and passing on the commit before the refactor.
+      (`services/api/tests/test_filestore.py::test_the_local_store_writes_what_it_wrote_before`),
+      written and passing on the commit before the refactor.
 - [ ] Every existing test passes unchanged, including
       `services/api/tests/test_ui_apply.py::test_an_artifact_is_served_with_its_own_media_type`,
       `services/api/tests/test_resume.py::test_passing_pdf_gate_updates_tracker_and_writes_artifacts`,
@@ -537,7 +539,8 @@ PR 1 (refactor):
       and
       `services/api/tests/test_job_events.py::test_a_damaged_description_file_does_not_block_a_decision`.
 - [ ] An invalid key is refused on both stores before any file is touched
-      (planned test_a_key_outside_the_grammar_is_refused).
+      (`services/api/tests/test_filestore.py::test_a_key_outside_the_grammar_is_refused`;
+      PR 1 builds the local store, and PR 2 adds the hosted one to it).
 - [ ] `just check` passes.
 
 PR 2 (hosted):
@@ -1005,3 +1008,52 @@ ban has lapsed passes again.
 - [ ] The definer function is executable by `authenticated` and by no other
       grantee, and returns only a boolean
       (planned test_the_storage_policy_function_is_narrow).
+
+## Amendment (2026-10-15): PR 1's build
+
+Found while building PR 1. Local behavior is unchanged
+(`services/api/tests/test_filestore.py::test_the_local_store_writes_what_it_wrote_before`),
+and nothing here changes what PR 2 builds.
+
+- **Line numbers.** Refreshed under Problem for the files PR 1 changed
+  (decision D9). The survey missed one reader: the digest reads the events
+  archive (`services/api/src/harrier/digest.py:177-182`). The first table
+  now names it, and it reads through the seam.
+- **The PDF gate also takes a path.** `render_validated_pdf` takes a key,
+  or a `Path` for a file the caller chose, which
+  `services/api/tests/test_pdf_gate.py` passes. A path is rendered beside
+  itself the same way, through a `LocalFileStore` rooted at its directory.
+- **A caller's output directory.** `run_tailor`,
+  `write_cover_letter_artifacts`, `write_output` and `evaluate_offer` take
+  an `output_dir`, which only tests pass. For the write, `files_in` in
+  `harrier.filestore` binds a `LocalFileStore` rooted there, and the keys
+  carry no family prefix.
+- **Path helpers stay.** The functions that returned a path
+  (`state_path`, `events_path`, `resume_paths_for`, `active_model_path`,
+  `exports_dir` and the like) are kept: commands print the paths and
+  existing tests use them. Each returns `local_file(key)` from
+  `harrier.filestore`, the local file behind the key, which raises
+  `FileStoreError` for a store with no local files.
+- **`FileStoreUnbound` is not an `OSError`.** It subclasses
+  `RuntimeError`, so no caller's `except OSError` can read a missing
+  binding as an absent file or a rules score. PR 1 never raises it:
+  `files()` falls back to the local store in every mode. Two kinds of
+  caller catch `RuntimeError` and so would absorb it once PR 2 raises it,
+  which PR 2 settles: academic discovery's `save_dataset`
+  (`services/api/src/harrier/academic/discovery.py`) records it as a failed
+  source, and the CLI's `RuntimeError` handlers in
+  `services/api/src/harrier_cli/main.py` print it and exit nonzero. The
+  second is acceptable; the first must not read an unbound store as a
+  source failure (data-integrity review of PR #361).
+- **Presence keeps `is_file()`'s tolerance.** The artifact list and the
+  batch evaluator asked `is_file()` and `exists()`, which read a file where
+  a directory should be as absent. They ask `is_present` in
+  `services/api/src/harrier/filestore.py`, which keeps that, while `stat`
+  still raises it for the model cache. Listing the scoring exports reads an
+  unreadable directory as no export, as `glob` did
+  (data-integrity review of PR #361).
+- **Paths that stay in the first table's modules.** An export named with
+  `harrier scoring train --export` is read from that path
+  (`services/api/src/harrier/scoring/train.py:131-133`). The PDF gate's
+  temporary file is a local path by design (Behavior, "PDF rendering").
+  Templates, configuration files and the Gmail token are not data paths.

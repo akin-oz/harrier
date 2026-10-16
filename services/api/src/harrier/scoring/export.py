@@ -23,11 +23,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from harrier.atomicio import write_bytes_atomic
 from harrier.connection import Connection
+from harrier.filestore import files, join_key, local_file
 from harrier.scoring.features import FEATURE_ORDER, extract
 from harrier.scoring.labels import BLOCKED, EXCLUSIONS, Labelled, label_job
-from harrier.scoring.model import NO_MODEL, scoring_dir
+from harrier.scoring.model import NO_MODEL, SCORING
 from harrier.screening.config import load_candidate_config
 from harrier.screening.descriptions import load_cached_description
 from harrier.screening.normalized import make_normalized_job
@@ -39,8 +39,11 @@ from harrier.tracks import DEFAULT_TRACK_ID, Scope
 EXPORT_FORMAT_VERSION = 1
 
 
+EXPORTS = f"{SCORING}/exports"
+
+
 def exports_dir() -> Path:
-    return scoring_dir() / "exports"
+    return local_file(EXPORTS)
 
 
 _EXPORT_NAME = re.compile(r"features-(\d{4})(\d{2})(\d{2})\.jsonl")
@@ -51,7 +54,7 @@ def newest_export_date() -> str | None:
     None when there is none (spec 096). Read from the file names this module
     writes; the files themselves are not opened."""
     try:
-        names = [path.name for path in exports_dir().iterdir() if path.is_file()]
+        names = [entry.name for entry in files().list(EXPORTS)]
     except OSError:
         return None
     dates = [
@@ -138,13 +141,11 @@ def export_features(conn: Connection, scope: Scope, *, today: str | None = None)
     # The default track keeps the path the trainer has always read; any other
     # track writes under its own slug, so a same-day export of one track can
     # never overwrite another's (review of PR #181).
-    directory = (
-        exports_dir() if scope.track.id == DEFAULT_TRACK_ID else exports_dir() / scope.track.slug
-    )
-    path = directory / f"features-{stamp.replace('-', '')}.jsonl"
-    write_bytes_atomic(path, ("\n".join(lines) + "\n").encode("utf-8"))
+    prefix = EXPORTS if scope.track.id == DEFAULT_TRACK_ID else join_key(EXPORTS, scope.track.slug)
+    key = join_key(prefix, f"features-{stamp.replace('-', '')}.jsonl")
+    files().put(key, ("\n".join(lines) + "\n").encode("utf-8"), atomic=True)
     return ExportResult(
-        path=path,
+        path=local_file(key),
         rows=len(rows),
         positives=sum(1 for row in rows if row["label"] == 1),
         excluded=dict(sorted(excluded.items())),

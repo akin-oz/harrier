@@ -13,14 +13,13 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 
 from harrier.connection import Connection
-from harrier.db import data_dir
+from harrier.filestore import files, is_present
 from harrier.offers.evaluate import (
     EvaluationError,
     evaluate_offer,
-    report_path_for,
+    report_key_for,
 )
 from harrier.screening.descriptions import load_cached_description
 from harrier.tracker import list_jobs, set_status
@@ -29,10 +28,7 @@ from harrier.tracks import Scope
 logger = logging.getLogger(__name__)
 
 AUDIT_FILENAME = "audit.jsonl"
-
-
-def evaluations_dir() -> Path:
-    return data_dir() / "evaluations"
+AUDIT_KEY = f"evaluations/{AUDIT_FILENAME}"
 
 
 @dataclass
@@ -56,10 +52,7 @@ class BatchSummary:
 
 
 def _append_audit(entry: dict[str, object]) -> None:
-    directory = evaluations_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    with (directory / AUDIT_FILENAME).open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    files().append(AUDIT_KEY, json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def evaluate_prospects(conn: Connection, scope: Scope, options: BatchOptions) -> BatchSummary:
@@ -78,8 +71,7 @@ def evaluate_prospects(conn: Connection, scope: Scope, options: BatchOptions) ->
         url = row.get("url", "")
         job_id = int(row.get("id", "0"))
 
-        report_path = report_path_for(company, title)
-        if report_path.exists() and not options.refresh:
+        if is_present(report_key_for(company, title)) and not options.refresh:
             summary.skipped_existing += 1
             summary.lines.append(f"report exists, skipping: {company} | {title}")
             continue

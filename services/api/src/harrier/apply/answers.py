@@ -49,7 +49,7 @@ from harrier.apply.requirements import (
 )
 from harrier.apply.review import Review, render_review
 from harrier.connection import Connection
-from harrier.db import data_dir
+from harrier.filestore import files_in, join_key, local_file, save_text
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
 from harrier.resume.content import (
@@ -163,8 +163,7 @@ class AnswerDraft:
     claims: list[Claim] = field(default_factory=list[Claim])
 
 
-def answers_dir() -> Path:
-    return data_dir() / "answers"
+ANSWERS = "answers"
 
 
 def slugify(text: str) -> str:
@@ -692,19 +691,27 @@ def render_markdown(
     return markdown + "\n" + render_review(texts, review, review_path)
 
 
-def answers_path_for(company: str, role: str, output_dir: Path | None = None) -> Path:
+def _answers_name(company: str, role: str) -> str:
+    return f"{slugify(f'{company}-{role}')}.md"
+
+
+def answers_key_for(company: str, role: str) -> str:
     """Where an answers run puts its file.
 
     Shared by the writer below and by the reader that serves it back, so the
     two cannot disagree about where it is (spec 047).
     """
-    directory = output_dir if output_dir is not None else answers_dir()
-    return directory / f"{slugify(f'{company}-{role}')}.md"
+    return join_key(ANSWERS, _answers_name(company, role))
+
+
+def answers_path_for(company: str, role: str, output_dir: Path | None = None) -> Path:
+    """The local file `write_output` writes for this company and role."""
+    with files_in(output_dir, ANSWERS) as prefix:
+        return local_file(join_key(prefix, _answers_name(company, role)))
 
 
 def write_output(company: str, role: str, content: str, output_dir: Path | None = None) -> Path:
-    directory = output_dir if output_dir is not None else answers_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    output_path = answers_path_for(company, role, directory)
-    output_path.write_text(content, encoding="utf-8")
-    return output_path
+    with files_in(output_dir, ANSWERS) as prefix:
+        key = join_key(prefix, _answers_name(company, role))
+        save_text(key, content, atomic=False)
+        return local_file(key)

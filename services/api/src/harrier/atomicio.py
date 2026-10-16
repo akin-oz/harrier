@@ -91,15 +91,25 @@ def read_json_mapping(path: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = path.read_bytes()
     except OSError as error:
         raise DamagedStateError(f"{path} could not be read: {error}") from error
-    if not raw.strip():
-        raise DamagedStateError(f"{path} is empty; it was probably truncated mid-write")
+    return parse_json_mapping(raw, path)
+
+
+def parse_json_mapping(raw: bytes, where: object) -> dict[str, Any]:
+    """The object in a state file's bytes, or raise; `where` names the file.
+
+    Bytes that are not UTF-8 raise `UnicodeDecodeError`, as reading the file
+    as text did.
+    """
+    text = raw.decode("utf-8")
+    if not text.strip():
+        raise DamagedStateError(f"{where} is empty; it was probably truncated mid-write")
     try:
-        parsed: object = json.loads(raw)
+        parsed: object = json.loads(text)
     except json.JSONDecodeError as error:
-        raise DamagedStateError(f"{path} is not valid JSON: {error}") from error
+        raise DamagedStateError(f"{where} is not valid JSON: {error}") from error
     if not isinstance(parsed, dict):
-        raise DamagedStateError(f"{path} is {type(parsed).__name__}, expected an object")
+        raise DamagedStateError(f"{where} is {type(parsed).__name__}, expected an object")
     return cast("dict[str, Any]", parsed)

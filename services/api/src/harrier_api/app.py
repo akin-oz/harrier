@@ -1007,7 +1007,7 @@ def list_artifacts(
             exists=item.exists,
             produced_by=item.produced_by,
             media_type=item.media_type,
-            filename=item.path.name,
+            filename=item.filename,
         )
         for item in artifacts_for_job(conn, scope, job_id)
     ]
@@ -1026,6 +1026,7 @@ def read_artifact(
     scope: Annotated[TrackScope, Depends(scope_for("artifacts"))],
 ) -> FileResponse:
     from harrier.artifacts import UnknownArtifactKind, artifact_for_job
+    from harrier.filestore import local_file
 
     job_id = _job_id_for(conn, scope, selector)
     try:
@@ -1034,15 +1035,17 @@ def read_artifact(
         # A path-shaped kind lands here, refused before anything touched the
         # filesystem, because the kind is a closed set (spec 047).
         raise HTTPException(status_code=404, detail=f"unknown artifact kind: {kind}") from error
-    if not artifact.exists:
+    if not artifact.exists or artifact.key is None:
         raise HTTPException(
             status_code=404,
             detail=f"no {kind} for this job yet; run {artifact.produced_by} to produce it",
         )
+    # Read through the seam (spec 107): locally the key's file, served from
+    # its path as before.
     return FileResponse(
-        artifact.path,
+        local_file(artifact.key),
         media_type=artifact.media_type,
-        filename=artifact.path.name,
+        filename=artifact.filename,
     )
 
 

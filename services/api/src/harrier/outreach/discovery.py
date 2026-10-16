@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from harrier.connection import Connection
-from harrier.db import data_dir
+from harrier.filestore import files, local_file, save_json
 from harrier.outreach.contacts import upsert_contact
 from harrier.sources.apify_linkedin import (
     API_BASE_URL,
@@ -42,8 +42,7 @@ BEST_CONTACT_MIN_FIT_SCORE = 70
 BEST_CONTACT_RELEVANCES = {"hiring_manager", "eng_manager", "recruiter", "founder_cto"}
 
 
-def outreach_dir() -> Path:
-    return data_dir() / "outreach"
+OUTREACH = "outreach"
 
 
 def outreach_slug(company: str, role: str) -> str:
@@ -420,27 +419,29 @@ def has_strong_best_contact(candidates: list[dict[str, str]]) -> bool:
     return False
 
 
+def candidates_key(company: str, role: str) -> str:
+    return f"{OUTREACH}/{outreach_slug(company, role)}-candidates.json"
+
+
 def candidates_output_path(company: str, role: str) -> Path:
-    directory = outreach_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory / f"{outreach_slug(company, role)}-candidates.json"
+    return local_file(candidates_key(company, role))
 
 
 def load_candidates_artifact(company: str, role: str) -> dict[str, object] | None:
-    path = candidates_output_path(company, role)
-    if not path.exists():
-        return None
     try:
-        payload: object = json.loads(path.read_text(encoding="utf-8"))
+        raw = files().read(candidates_key(company, role))
+        if raw is None:
+            return None
+        payload: object = json.loads(raw.decode("utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     return cast("dict[str, object]", payload) if isinstance(payload, dict) else None
 
 
 def write_candidates_artifact(company: str, role: str, payload: dict[str, object]) -> Path:
-    path = candidates_output_path(company, role)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return path
+    key = candidates_key(company, role)
+    save_json(key, payload, atomic=False)
+    return local_file(key)
 
 
 def staged_candidates(company: str, role: str) -> list[dict[str, str]]:

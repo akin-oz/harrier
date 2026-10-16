@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import cast
 
 from harrier.connection import Connection
-from harrier.db import data_dir
 from harrier.demo import is_demo_mode, resolve_config_path
+from harrier.filestore import save_json
 from harrier.notify import build_telegram_message, send_telegram_message
 from harrier.runoutcome import DISCOVERY_JOB, classify_run, record_success
 from harrier.screening import (
@@ -73,8 +73,7 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _incoming_dir() -> Path:
-    return data_dir() / "incoming"
+INCOMING = "incoming"
 
 
 # The most a single scheduled run may ask a paid actor for. An unbounded
@@ -232,9 +231,7 @@ def _run_source(
     }
     summary.update(extra)
     if not dry_run:
-        target = _incoming_dir() / f"{source_name}_latest.json"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
+        save_json(f"{INCOMING}/{source_name}_latest.json", summary, atomic=False)
     return summary
 
 
@@ -559,9 +556,7 @@ def run_discovery(
     if not options.dry_run:
         if not outcome.total_failure:
             record_success(conn, DISCOVERY_JOB)
-        target = _incoming_dir() / "job_imports_run.json"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(aggregate, indent=2, ensure_ascii=False), encoding="utf-8")
+        save_json(f"{INCOMING}/job_imports_run.json", aggregate, atomic=False)
 
     return aggregate
 

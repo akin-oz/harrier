@@ -29,8 +29,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from harrier.atomicio import DamagedStateError, read_json_mapping, write_json_atomic
-from harrier.db import data_dir
+from harrier.atomicio import DamagedStateError
+from harrier.filestore import load_mapping, local_file, save_json
 from harrier.screening.normalized import normalize, stable_key
 from harrier.screening.policy import UNKNOWN_POLICY
 
@@ -102,13 +102,21 @@ def now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _state_path(source_name: str, track_id: int | None = None) -> Path:
-    """The default track keeps today's path; any other track keeps its own
+def _state_key(source_name: str, track_id: int | None = None) -> str:
+    """The default track keeps today's key; any other track keeps its own
     file per source, so one track's decision never suppresses a posting for
     another (spec 097)."""
     if track_id is None:
-        return data_dir() / "discovery" / f"{source_name}_seen.json"
-    return data_dir() / "discovery" / str(track_id) / f"{source_name}_seen.json"
+        return f"discovery/{source_name}_seen.json"
+    return f"discovery/{track_id}/{source_name}_seen.json"
+
+
+def _state_path(  # pyright: ignore[reportUnusedFunction]
+    source_name: str, track_id: int | None = None
+) -> Path:
+    """The local file behind `_state_key`. Nothing here reads it; the hosted
+    run test prints it from a child process to find the file."""
+    return local_file(_state_key(source_name, track_id))
 
 
 def _decision_from(raw: object, fallback_at: str) -> SeenDecision | None:
@@ -139,9 +147,8 @@ def load_seen(source_name: str, track_id: int | None = None) -> dict[str, SeenDe
     treating them as current-policy rejections would hide them from the first
     reconsideration, which is the one that matters.
     """
-    path = _state_path(source_name, track_id)
     try:
-        record = read_json_mapping(path)
+        record = load_mapping(_state_key(source_name, track_id))
     except DamagedStateError as error:
         # Raised, not swallowed (spec 040). Returning an empty set made every
         # previously rejected posting look new, the run that followed
@@ -184,12 +191,13 @@ def save_seen(
     dropped every time while older ones sat there permanently.
     """
     newest = sorted(decisions.items(), key=lambda item: item[1].at, reverse=True)[:SEEN_CAP]
-    write_json_atomic(
-        _state_path(source_name, track_id),
+    save_json(
+        _state_key(source_name, track_id),
         {
             "decisions": {key: decision.as_json() for key, decision in newest},
             "updated_at": now_iso(),
         },
+        atomic=True,
     )
 
 

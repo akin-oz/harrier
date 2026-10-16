@@ -14,10 +14,9 @@ import json
 import logging
 import re
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, cast
 
-from harrier.db import data_dir
+from harrier.filestore import files
 from harrier.screening.descriptions import load_cached_description, save_description_cache
 from harrier.screening.http import request_text, strip_html
 
@@ -123,17 +122,17 @@ def workplace_verdict_from_html(page: str) -> str:
     return verdict
 
 
-def _verdict_cache_path(url: str) -> Path:
-    key = hashlib.sha256(url.encode()).hexdigest()[:24]
-    return data_dir() / "linkedin-page-verdicts" / f"{key}.json"
+def _verdict_cache_key(url: str) -> str:
+    digest = hashlib.sha256(url.encode()).hexdigest()[:24]
+    return f"linkedin-page-verdicts/{digest}.json"
 
 
 def _load_cached_verdict(url: str) -> str:
-    path = _verdict_cache_path(url)
-    if not path.is_file():
-        return ""
     try:
-        parsed: object = json.loads(path.read_text(encoding="utf-8"))
+        raw = files().read(_verdict_cache_key(url))
+        if raw is None:
+            return ""
+        parsed: object = json.loads(raw.decode("utf-8"))
     except (OSError, json.JSONDecodeError):
         return ""
     if isinstance(parsed, dict):
@@ -142,9 +141,8 @@ def _load_cached_verdict(url: str) -> str:
 
 
 def _save_cached_verdict(url: str, verdict: str) -> None:
-    path = _verdict_cache_path(url)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"url": url, "verdict": verdict}), encoding="utf-8")
+    payload = json.dumps({"url": url, "verdict": verdict})
+    files().put(_verdict_cache_key(url), payload.encode("utf-8"), atomic=False)
 
 
 def page_workplace_verdict(

@@ -20,11 +20,15 @@ the scorer floors a blocked posting by rule (spec 081).
 
 from __future__ import annotations
 
+import errno
 import json
 import math
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from fnmatch import fnmatchcase
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
@@ -34,16 +38,16 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
 
-from harrier.atomicio import write_bytes_atomic, write_json_atomic
-from harrier.scoring.export import EXPORT_FORMAT_VERSION, exports_dir
+from harrier.filestore import files, join_key, key_name, local_file, save_json
+from harrier.scoring.export import EXPORT_FORMAT_VERSION, EXPORTS
 from harrier.scoring.features import FEATURE_ORDER, NUMERIC_FEATURES
 from harrier.scoring.model import (
-    active_model_path,
+    ACTIVE_MODEL_KEY,
+    SCORING,
     dump_model,
     model_document,
     model_identity,
     normalize_values,
-    scoring_dir,
 )
 
 FloatArray = npt.NDArray[np.float64]
@@ -99,35 +103,64 @@ class TrainOutcome:
     activated: bool = False
 
 
+REPORTS = f"{SCORING}/reports"
+MODELS = f"{SCORING}/models"
+
+
 def reports_dir() -> Path:
-    return scoring_dir() / "reports"
+    return local_file(REPORTS)
 
 
 def models_dir() -> Path:
-    return scoring_dir() / "models"
+    return local_file(MODELS)
+
+
+def latest_export_key() -> str | None:
+    """The default track's newest export by name, which is by date. A
+    directory that cannot be listed holds no export, as `glob` read it
+    before the seam (data-integrity review of PR #361)."""
+    try:
+        entries = files().list(EXPORTS)
+    except OSError:
+        return None
+    keys = [entry.key for entry in entries if fnmatchcase(entry.name, "features-*.jsonl")]
+    return max(keys, default=None)
 
 
 def latest_export() -> Path | None:
-    exports = sorted(exports_dir().glob("features-*.jsonl"))
-    return exports[-1] if exports else None
+    key = latest_export_key()
+    return local_file(key) if key is not None else None
 
 
 def read_export(path: Path) -> tuple[dict[str, Any], list[Row]]:
+    """An export at a path of the caller's choosing (`--export`)."""
+    return parse_export(path.read_text(encoding="utf-8"), path.name)
+
+
+def _read_export_key(key: str) -> tuple[dict[str, Any], list[Row]]:
+    """An export under the data directory, read through the seam."""
+    raw = files().read(key)
+    if raw is None:
+        # What reading a file that vanished after its listing raised.
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), key_name(key))
+    return parse_export(raw.decode("utf-8"), key_name(key))
+
+
+def parse_export(text: str, name: str) -> tuple[dict[str, Any], list[Row]]:
     """The export's header and rows, refusing one the extractor did not write."""
-    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    lines = [line for line in text.splitlines() if line.strip()]
     if not lines:
-        raise ExportError(f"{path.name} is empty")
+        raise ExportError(f"{name} is empty")
     header = cast("dict[str, Any]", json.loads(lines[0]))
     if header.get("kind") != "header" or header.get("format_version") != EXPORT_FORMAT_VERSION:
-        raise ExportError(f"{path.name} is not a format {EXPORT_FORMAT_VERSION} export")
+        raise ExportError(f"{name} is not a format {EXPORT_FORMAT_VERSION} export")
     # The learned model is the industry kind's. An export from a track of
     # another kind is refused, whatever path it is handed by (spec 092). An
     # export written before tracks has no kind and is the default track's.
     kind = header.get("track_kind", "industry")
     if kind != "industry":
         raise ExportError(
-            f"{path.name} holds labels from a {kind} track; "
-            "the model trains on industry labels only"
+            f"{name} holds labels from a {kind} track; the model trains on industry labels only"
         )
     order = cast("list[str]", header.get("feature_order") or [])
     forbidden = sorted(FORBIDDEN_FEATURES & set(order))
@@ -331,9 +364,9 @@ def selection_bias(rows: Sequence[Row]) -> list[dict[str, Any]]:
 
 
 def _write_report(report: dict[str, Any], stamp: str) -> Path:
-    path = reports_dir() / f"report-{stamp.replace('-', '')}.json"
-    write_json_atomic(path, report)
-    return path
+    key = join_key(REPORTS, f"report-{stamp.replace('-', '')}.json")
+    save_json(key, report, atomic=True)
+    return local_file(key)
 
 
 def train(
@@ -345,13 +378,21 @@ def train(
 ) -> TrainOutcome:
     """Fit, judge and maybe activate a model from one export."""
     stamp = today or datetime.now(UTC).date().isoformat()
-    path = export or latest_export()
-    if path is None:
-        return TrainOutcome(EXIT_UNUSABLE, ["no export found; run `harrier scoring export` first"])
+    if export is not None:
+        export_name = export.name
+        load = partial(read_export, export)
+    else:
+        key = latest_export_key()
+        if key is None:
+            return TrainOutcome(
+                EXIT_UNUSABLE, ["no export found; run `harrier scoring export` first"]
+            )
+        export_name = key_name(key)
+        load = partial(_read_export_key, key)
     try:
-        header, rows = read_export(path)
+        header, rows = load()
     except (ExportError, OSError, ValueError, KeyError) as error:
-        return TrainOutcome(EXIT_UNUSABLE, [f"{path.name}: {error}"])
+        return TrainOutcome(EXIT_UNUSABLE, [f"{export_name}: {error}"])
     if live_only:
         rows = [row for row in rows if row.live]
 
@@ -370,7 +411,7 @@ def train(
     )
     report: dict[str, Any] = {
         "created_at": stamp,
-        "export": path.name,
+        "export": export_name,
         "live_only": live_only,
         "counts": {
             "rows": len(rows),
@@ -449,8 +490,9 @@ def train(
     )
     data = dump_model(document)
     identity = model_identity(data)
-    model_path = models_dir() / f"job-fit-{stamp.replace('-', '')}-{identity}.json"
-    write_bytes_atomic(model_path, data)
+    model_key = join_key(MODELS, f"job-fit-{stamp.replace('-', '')}-{identity}.json")
+    files().put(model_key, data, atomic=True)
+    model_path = local_file(model_key)
 
     messages: list[str] = []
     activated = False
@@ -459,7 +501,7 @@ def train(
         if activate:
             messages.append("--activate refused; the rules keep scoring")
     elif activate:
-        write_bytes_atomic(active_model_path(), data)
+        files().put(ACTIVE_MODEL_KEY, data, atomic=True)
         activated = True
         messages.append(f"activated model {identity}")
     else:

@@ -46,7 +46,7 @@ from harrier.apply.profile import (
 )
 from harrier.apply.review import Review, render_review
 from harrier.connection import Connection
-from harrier.db import data_dir
+from harrier.filestore import files, files_in, join_key, local_file, save_text
 from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
 from harrier.resume.content import (
@@ -161,25 +161,30 @@ def letter_prompt(kind: str) -> str:
     return assemble(rules_for(kind).letter_voice, LETTER_SHARED)
 
 
-def cover_letters_dir() -> Path:
-    return data_dir() / "cover-letters"
+COVER_LETTERS = "cover-letters"
 
 
-def cover_letter_paths_for(
-    company: str, role: str, output_dir: Path | None = None
-) -> dict[str, Path]:
+def cover_letter_keys_for(company: str, role: str, prefix: str = COVER_LETTERS) -> dict[str, str]:
     """Where a cover letter run puts its files, by artifact kind.
 
     Shared by the writer below and by the reader that serves an artifact back,
     so the two cannot disagree about where a letter is (spec 047).
     """
-    directory = output_dir if output_dir is not None else cover_letters_dir()
     slug = slugify(f"{company}-{role}")
     return {
-        "markdown": directory / f"{slug}.md",
-        "html": directory / f"{slug}.html",
-        "pdf": directory / f"{slug}.pdf",
+        "markdown": join_key(prefix, f"{slug}.md"),
+        "html": join_key(prefix, f"{slug}.html"),
+        "pdf": join_key(prefix, f"{slug}.pdf"),
     }
+
+
+def cover_letter_paths_for(
+    company: str, role: str, output_dir: Path | None = None
+) -> dict[str, Path]:
+    """The local files behind `cover_letter_keys_for`, or in `output_dir`."""
+    with files_in(output_dir, COVER_LETTERS) as prefix:
+        keys = cover_letter_keys_for(company, role, prefix)
+        return {artifact: local_file(key) for artifact, key in keys.items()}
 
 
 def candidate_contact(conn: Connection) -> dict[str, str]:
@@ -583,52 +588,59 @@ def write_cover_letter_artifacts(
     *,
     kind: str,
 ) -> dict[str, Path]:
-    directory = output_dir if output_dir is not None else cover_letters_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    paths = cover_letter_paths_for(company, role, directory)
-    markdown_path = paths["markdown"]
-    html_path = paths["html"]
-    pdf_path = paths["pdf"]
+    with files_in(output_dir, COVER_LETTERS) as prefix:
+        keys = cover_letter_keys_for(company, role, prefix)
+        store = files()
+        markdown_path = local_file(keys["markdown"])
 
-    # The review sections go in the markdown draft only. The HTML and PDF are
-    # built from full_version alone, so no flag reaches a recruiter (B10).
-    review_section = render_review([short_version, full_version], review or Review(), markdown_path)
-    markdown = render_cover_letter_markdown(
-        company, role, job_url, short_version, full_version, review_section
-    )
-    markdown_path.write_text(markdown, encoding="utf-8")
-    # The paths are per company and role, and the artifact endpoint serves
-    # whatever PDF is there, so from here an earlier run's PDF and HTML would
-    # sit beside this new draft as if they were current (review of #84). On
-    # any failure the draft stays, for the operator to fix (spec 067).
-    html_path.unlink(missing_ok=True)
-    pdf_path.unlink(missing_ok=True)
-    # A recruiter-facing artifact never carries a placeholder (spec 065,
-    # rule C10).
-    placeholders = find_placeholders(f"{short_version}\n{full_version}")
-    if placeholders:
-        raise NeedsInputError(markdown_path, placeholders)
-    try:
-        html_text = render_cover_letter_html(
-            conn, company, role, full_version, template_dir, kind=kind
+        # The review sections go in the markdown draft only. The HTML and PDF
+        # are built from full_version alone, so no flag reaches a recruiter
+        # (B10).
+        review_section = render_review(
+            [short_version, full_version], review or Review(), markdown_path
         )
-        html_path.write_text(html_text, encoding="utf-8")
-        # The resume path validated its PDF; this one only checked the file
-        # existed, so a zero-byte or four-page letter passed. It is the one
-        # recruiter-facing artifact that had neither gate (spec 034).
-        pdf_errors = render_validated_pdf(
-            html_text,
-            pdf_path,
-            render if render is not None else _default_render,
-            validate
-            if validate is not None
-            # One page on the industry kind, one or two on the academic
-            # (spec 101).
-            else partial(validate_rendered_pdf, allowed_pages=rules_for(kind).pages),
+        markdown = render_cover_letter_markdown(
+            company, role, job_url, short_version, full_version, review_section
         )
-        if pdf_errors:
-            raise RuntimeError("invalid cover letter PDF: " + "; ".join(pdf_errors))
-    except BaseException:
-        html_path.unlink(missing_ok=True)
-        raise
-    return {"markdown": markdown_path, "html": html_path, "pdf": pdf_path}
+        save_text(keys["markdown"], markdown, atomic=False)
+        # The keys are per company and role, and the artifact endpoint serves
+        # whatever PDF is there, so from here an earlier run's PDF and HTML
+        # would sit beside this new draft as if they were current (review of
+        # #84). On any failure the draft stays, for the operator to fix
+        # (spec 067).
+        store.delete(keys["html"])
+        store.delete(keys["pdf"])
+        # A recruiter-facing artifact never carries a placeholder (spec 065,
+        # rule C10).
+        placeholders = find_placeholders(f"{short_version}\n{full_version}")
+        if placeholders:
+            raise NeedsInputError(markdown_path, placeholders)
+        try:
+            html_text = render_cover_letter_html(
+                conn, company, role, full_version, template_dir, kind=kind
+            )
+            save_text(keys["html"], html_text, atomic=False)
+            # The resume path validated its PDF; this one only checked the
+            # file existed, so a zero-byte or four-page letter passed. It is
+            # the one recruiter-facing artifact that had neither gate
+            # (spec 034).
+            pdf_errors = render_validated_pdf(
+                html_text,
+                keys["pdf"],
+                render if render is not None else _default_render,
+                validate
+                if validate is not None
+                # One page on the industry kind, one or two on the academic
+                # (spec 101).
+                else partial(validate_rendered_pdf, allowed_pages=rules_for(kind).pages),
+            )
+            if pdf_errors:
+                raise RuntimeError("invalid cover letter PDF: " + "; ".join(pdf_errors))
+        except BaseException:
+            store.delete(keys["html"])
+            raise
+        return {
+            "markdown": markdown_path,
+            "html": local_file(keys["html"]),
+            "pdf": local_file(keys["pdf"]),
+        }

@@ -10,11 +10,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from pathlib import Path
 from urllib.parse import urlparse
 
-from harrier.atomicio import write_bytes_atomic
-from harrier.db import data_dir
+from harrier.filestore import files
 from harrier.screening import http
 from harrier.screening.normalized import NormalizedJob
 
@@ -59,13 +57,9 @@ def enrich_url_allowed(url: str) -> bool:
     )
 
 
-def _cache_dir() -> Path:
-    return data_dir() / "descriptions"
-
-
-def _description_cache_path(url: str) -> Path:
-    key = hashlib.sha256(url.encode()).hexdigest()[:24]
-    return _cache_dir() / f"{key}.json"
+def _description_cache_key(url: str) -> str:
+    digest = hashlib.sha256(url.encode()).hexdigest()[:24]
+    return f"descriptions/{digest}.json"
 
 
 def save_description_cache(url: str, description: str) -> None:
@@ -82,17 +76,17 @@ def save_description_cache(url: str, description: str) -> None:
     if not url or not description:
         return
     payload = json.dumps({"url": url, "description": description}, ensure_ascii=False)
-    write_bytes_atomic(_description_cache_path(url), payload.encode("utf-8"))
+    files().put(_description_cache_key(url), payload.encode("utf-8"), atomic=True)
 
 
 def load_cached_description(url: str) -> str:
     if not url:
         return ""
-    path = _description_cache_path(url)
-    if not path.is_file():
-        return ""
     try:
-        parsed: object = json.loads(path.read_text(encoding="utf-8"))
+        raw = files().read(_description_cache_key(url))
+        if raw is None:
+            return ""
+        parsed: object = json.loads(raw.decode("utf-8"))
     except (OSError, ValueError):
         # ValueError covers malformed JSON and bytes that are not UTF-8, as a
         # write cut off mid-character leaves them. A damaged entry reads as
