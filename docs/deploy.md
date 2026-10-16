@@ -626,15 +626,13 @@ account's own token reads what the secret key wrote is not proved by the tests
 
 After an import, the browser still cannot add a focused track, store a
 track's documents or move a job. `harrier --owner <user id> <command>` runs
-eight commands against one hosted account instead of the local store:
+six commands against one hosted account instead of the local store:
 `tracks add`, `tracks list`, `profile put`, `profile list`, `profile check`
-and `move` (spec 144), and, until spec 107's PR 3 lets the hosted API run
-them, `tailor` and `cover-letter` (spec 147). The last two read the account
-but write their files under the local `data/`, where the hosted web app does
-not see them; spec 146's import copies them up. Give a job found by hosted
-discovery its description with `--jd-file`. Any other command given `--owner`
-is refused before anything opens. The two interim commands' tests are in
-`services/api/tests/test_interim_account_tailor.py`.
+and `move` (spec 144). Any other command given `--owner` is refused before
+anything opens. `tailor` and `cover-letter` ran this way for a day (spec
+147) and were removed once the hosted API ran them (spec 107's PR 3); the
+web app runs them now
+(`services/api/tests/test_interim_account_tailor.py::test_tailor_and_cover_letter_with_owner_are_refused_again`).
 
 1. Find the account's user id on the Supabase dashboard's Users page, as for
    the import.
