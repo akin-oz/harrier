@@ -742,6 +742,37 @@ def test_a_non_ascii_user_and_host_are_masked_as_json_and_repr_write_them(
     assert "plain REDACTED REDACTED\n" in written
 
 
+def test_a_non_ascii_user_and_host_are_masked_as_ascii_writes_them(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`ascii()` and `%a` write a non-ASCII character as a `\\x` escape, so
+    the user and the host are masked in that form too, and a host in any
+    case (spec 133, Amendment (2026-10-15): a password quoted by `ascii()`).
+    `scrub_outbound` still keeps the host (spec 145)."""
+    from harrier.logredact import scrub_outbound
+
+    _last_resort(monkeypatch)
+    user, host = "café.ref", "db.café.example"
+    _stores(
+        monkeypatch,
+        **{DATABASE_URL: f"postgresql://caf%C3%A9.ref:synthetic-pw@{host}:6543/postgres"},
+    )
+    log = logging.getLogger("harrier.tests.users")
+    assert ascii(user) == "'caf\\xe9.ref'", "ascii() escaped nothing"
+
+    log.warning("ascii %s", ascii({"user": user, "host": host}))
+    log.warning("percent-a %a %a", user, host)
+    log.warning("upper %a", "DB.CAFé.EXAMPLE")
+
+    written = capsys.readouterr().err
+    assert "ascii {'user': 'REDACTED', 'host': 'REDACTED'}\n" in written
+    assert "percent-a 'REDACTED' 'REDACTED'\n" in written
+    assert "upper 'REDACTED'\n" in written
+    assert "caf\\xe9" not in written.lower()
+    text = f"cannot connect to the Postgres store at {host!a}"
+    assert scrub_outbound(text) == text
+
+
 def test_a_configured_handler_masks_the_store_host(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:

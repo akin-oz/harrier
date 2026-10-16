@@ -436,6 +436,51 @@ def test_a_password_quoted_by_repr_or_json_is_masked_at_every_sink(
     assert password.leaks(out) == []
 
 
+# `ascii()`, `!a` and `%a` write the password as `repr` does, except that
+# each non-ASCII character becomes an escape of its width, so the text is
+# none of the `repr` or JSON forms (spec 133, Amendment (2026-10-15): a
+# password quoted by `ascii()`).
+ASCII_QUOTINGS: dict[str, Callable[[str], str]] = {
+    "ascii()": ascii,
+    # The `%a` format itself is the case, so not a format specifier.
+    "%a": lambda password: "%a" % (password,),  # noqa: UP031
+    "!a in a dict": lambda password: f"{ {'until': password}!a}",
+}
+
+# One non-ASCII character of each escape width: `\xHH`, `\uHHHH` and
+# `\UHHHHHHHH`. Without `"`, `ascii()` leaves the `'` as it is; with it,
+# `ascii()` writes `\'`.
+EVERY_WIDTH = "%' \\\u00e9\u20ac\U0001f600@:/"
+EVERY_WIDTH_BOTH_QUOTES = EVERY_WIDTH + '"'
+
+
+@pytest.mark.parametrize(
+    "specials", [EVERY_WIDTH_BOTH_QUOTES, EVERY_WIDTH], ids=["both quotes", "one quote"]
+)
+@pytest.mark.parametrize("quoting", list(ASCII_QUOTINGS))
+@pytest.mark.parametrize("sink", list(SINKS))
+def test_a_password_quoted_by_ascii_is_masked_at_every_sink(
+    sink: str,
+    quoting: str,
+    specials: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    uvicorn_streams: tuple[io.StringIO, io.StringIO],
+) -> None:
+    """No 8-character window of the password leaves the process through
+    the sink when the message quoted it with `ascii()`."""
+    made = _made_password(specials)
+    quoted = ASCII_QUOTINGS[quoting](made.decoded)
+    for escape in ("\\xe9", "\\u20ac", "\\U0001f600"):
+        assert escape in quoted, f"the quoting did not write {escape}"
+    password = replace(made, quoted=quoted)
+
+    out = SINKS[sink](monkeypatch, capsys, password, uvicorn_streams)
+
+    assert "REDACTED" in out
+    assert password.leaks(out) == []
+
+
 # --- the filter needs no identity values ---
 
 

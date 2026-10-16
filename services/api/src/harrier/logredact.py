@@ -276,20 +276,26 @@ def _env_file_url(cwd: str) -> str:
 
 
 def _quoted_forms(form: str) -> tuple[str, ...]:
-    """`form` as `repr` and `json.dumps` write it, without the quotes
-    around it (spec 133, Amendment (2026-10-12): a password quoted by
-    `repr` or `json.dumps`).
+    """`form` as `repr`, `ascii()` and `json.dumps` write it, without the
+    quotes around it (spec 133, Amendment (2026-10-12): a password quoted
+    by `repr` or `json.dumps`; Amendment (2026-10-15): a password quoted
+    by `ascii()`).
 
-    `repr` escapes `'` only when the text it quotes holds both quote kinds,
-    which the text around the password decides, so both readings. A suffix
-    holding both forces the escaped one, and is cut off again.
+    `repr` and `ascii()` escape `'` only when the text they quote holds
+    both quote kinds, which the text around the password decides, so both
+    readings. A suffix holding both forces the escaped one, and is cut off
+    again. For an ASCII form the `ascii()` forms equal the `repr` ones, and
+    the callers list a repeated form once.
     """
     import json
 
     escaped = repr(form + "'\"")[1:-4]
+    ascii_escaped = ascii(form + "'\"")[1:-4]
     return (
         escaped,
         escaped.replace("\\'", "'"),
+        ascii_escaped,
+        ascii_escaped.replace("\\'", "'"),
         json.dumps(form)[1:-1],
         json.dumps(form, ensure_ascii=False)[1:-1],
     )
@@ -318,7 +324,7 @@ def store_password_forms_of(url: str) -> tuple[str, ...]:
 def store_password_forms() -> tuple[str, ...]:
     """Every form of the configured store URL's password (spec 133, open
     decision 1): as written, percent-decoded, and as libpq reads it, each
-    also as `repr` and `json.dumps` quote it.
+    also as `repr`, `ascii()` and `json.dumps` quote it.
 
     A driver can quote the password alone, outside any URL shape
     `scrub_secrets` knows, and the process knows its own password, so no
