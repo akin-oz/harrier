@@ -1,8 +1,8 @@
 ---
 spec: 142
 title: A LinkedIn link never carries an unsafe scheme
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [013, 014, 034, 140]
 ---
