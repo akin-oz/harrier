@@ -1,8 +1,8 @@
 ---
 spec: 147
 title: Interim, tailor and cover-letter run locally against a hosted account
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [107, 141, 144]
 ---
