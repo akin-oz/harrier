@@ -439,9 +439,18 @@ def load_candidates_artifact(company: str, role: str) -> dict[str, object] | Non
 
 
 def write_candidates_artifact(company: str, role: str, payload: dict[str, object]) -> Path:
+    """Write the staged candidates and return the local file, for a command
+    that prints it."""
     key = candidates_key(company, role)
-    save_json(key, payload, atomic=False)
+    _save_candidates(key, payload)
     return local_file(key)
+
+
+def _save_candidates(key: str, payload: dict[str, object]) -> None:
+    """The write alone: a review or an approval names no file, so it runs
+    on a store with no local files too (spec 107; the hosted Outreach
+    page)."""
+    save_json(key, payload, atomic=False)
 
 
 def staged_candidates(company: str, role: str) -> list[dict[str, str]]:
@@ -478,7 +487,7 @@ def update_candidate_review_status(
     for candidate in _artifact_candidates(payload):
         if str(candidate.get("linkedin_url") or "").strip().lower() == linkedin_url.strip().lower():
             candidate["review_status"] = review_status
-            write_candidates_artifact(company, role, payload)
+            _save_candidates(candidates_key(company, role), payload)
             return candidate
     return None
 
@@ -518,7 +527,7 @@ def approve_candidate(
             notes=f"staged_candidate_query={candidate.get('raw_query', '')}",
         )
         candidate["review_status"] = "approved"
-        write_candidates_artifact(company, role, payload)
+        _save_candidates(candidates_key(company, role), payload)
         return added
     return None
 

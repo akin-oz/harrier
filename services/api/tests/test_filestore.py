@@ -44,7 +44,7 @@ from harrier.apply.answers import write_output
 from harrier.connection import Connection
 from harrier.db import connect, data_dir
 from harrier.discovery import DiscoveryOptions, run_discovery
-from harrier.filestore import InvalidFileKey, LocalFileStore, bind_files, files
+from harrier.filestore import FileStore, InvalidFileKey, LocalFileStore, bind_files, files
 from harrier.outreach.discovery import write_candidates_artifact
 from harrier.profile.store import put_document
 from harrier.scoring.export import export_features
@@ -634,11 +634,26 @@ OUTSIDE_THE_GRAMMAR = [
 ]
 
 
+def _hosted_store() -> FileStore:
+    from harrier.filestore import SupabaseFileStore
+
+    return SupabaseFileStore.for_request(
+        "00000000-0000-4000-8000-000000000001",
+        "synthetic-token",
+        origin="https://project-ref.supabase.co",
+        publishable_key="sb_publishable_synthetic",
+    )
+
+
+@pytest.mark.parametrize("hosted", [False, True], ids=["local", "hosted"])
 @pytest.mark.parametrize("key", OUTSIDE_THE_GRAMMAR)
-def test_a_key_outside_the_grammar_is_refused(key: str, tmp_path: Path) -> None:
-    """Every operation refuses before it touches a file (spec 107): nothing
-    is created under the data directory or beside it."""
-    store = files()
+def test_a_key_outside_the_grammar_is_refused(
+    key: str, hosted: bool, tmp_path: Path, storage: Any
+) -> None:
+    """Every operation refuses before it touches a file or sends a request
+    (spec 107): nothing is created under the data directory or beside it,
+    and the hosted store sends nothing to Storage."""
+    store = _hosted_store() if hosted else files()
     operations: list[Callable[[], object]] = [
         lambda: store.read(key),
         lambda: store.put(key, b"data", atomic=True),
@@ -654,6 +669,7 @@ def test_a_key_outside_the_grammar_is_refused(key: str, tmp_path: Path) -> None:
         with pytest.raises(InvalidFileKey):
             operation()
     assert sorted(path.name for path in tmp_path.iterdir()) == []
+    assert storage.requests == []
 
 
 def test_the_local_store_follows_the_data_directory(

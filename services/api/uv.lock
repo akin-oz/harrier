@@ -539,6 +539,7 @@ gmail = [
     { name = "google-auth-oauthlib" },
 ]
 hosted = [
+    { name = "httpx" },
     { name = "psycopg", extra = ["binary"] },
     { name = "psycopg-pool" },
     { name = "pyjwt", extra = ["crypto"] },
@@ -575,6 +576,7 @@ gmail = [
     { name = "google-auth-oauthlib", specifier = ">=1.1" },
 ]
 hosted = [
+    { name = "httpx", specifier = ">=0.28" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "psycopg-pool", specifier = ">=3.2" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.1" },

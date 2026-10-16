@@ -67,6 +67,9 @@ hosted = [
     # One pool of connections as the login role, each request's transaction
     # leased from it (spec 134).
     "psycopg-pool>=3.2",
+    # Each owner's files in the private Storage bucket, over Storage's HTTP
+    # API (spec 107). Imported only where a hosted request is sent.
+    "httpx>=0.28",
     {include-group = "postgres"},
 ]
 

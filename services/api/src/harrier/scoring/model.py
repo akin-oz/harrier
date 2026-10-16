@@ -269,7 +269,9 @@ def _absent() -> FileNotFoundError:
     return FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT))
 
 
-def _warn_once(reason: str, path: str, detail: str, key: FileVersion | None) -> None:
+def _warn_once(
+    reason: str, path: str, detail: str, key: FileVersion | None, shown: str | None = None
+) -> None:
     """Once per process for each file state: a run that scores hundreds of
     postings says it once. The path and the failed check only; nothing about
     any posting or person.
@@ -289,21 +291,34 @@ def _warn_once(reason: str, path: str, detail: str, key: FileVersion | None) -> 
         "learned score unavailable (%s: %s at %s); the rules score until there is one",
         reason,
         detail,
-        path,
+        path if shown is None else shown,
     )
+
+
+def _unreadable(error: OSError) -> str:
+    """How a failed stat or read is described: the operating system's words
+    locally; a store error's class hosted, whose own message is said by the
+    store."""
+    if error.strerror is None:
+        return f"unreadable ({type(error).__name__})"
+    return f"unreadable ({error.strerror})"
 
 
 def load_active_model() -> tuple[Model | None, str | None]:
     """The active model, or the fallback that applies when there is none."""
     store = files()
+    # The cache and the once-only markers are keyed by the qualified name,
+    # which hosted includes the owner; a log line shows the store's shown
+    # name, which never does (spec 107).
     path = store.qualified_name(ACTIVE_MODEL_KEY)
+    shown = store.shown_name(ACTIVE_MODEL_KEY)
     try:
         entry = store.stat(ACTIVE_MODEL_KEY)
     except OSError as error:
-        _warn_once(MODEL_INVALID, path, f"unreadable ({error.strerror})", None)
+        _warn_once(MODEL_INVALID, path, _unreadable(error), None, shown)
         return None, MODEL_INVALID
     if entry is None:
-        _warn_once(MODEL_MISSING, path, "no model file", None)
+        _warn_once(MODEL_MISSING, path, "no model file", None, shown)
         return None, MODEL_MISSING
     key = entry.version
     cached = _cache.get(path)
@@ -321,7 +336,7 @@ def load_active_model() -> tuple[Model | None, str | None]:
             # A read that failed is not a verdict on the file, so it is not
             # cached: the next call reads again. Cached, one transient error
             # kept a long-running API on the rules until the file changed.
-            _warn_once(MODEL_INVALID, path, f"unreadable ({error.strerror})", None)
+            _warn_once(MODEL_INVALID, path, _unreadable(error), None, shown)
             return None, MODEL_INVALID
         # The file was read, so the next failure is a new episode and is said
         # again. The marker outlived the outage, and a later one was silent
@@ -329,7 +344,7 @@ def load_active_model() -> tuple[Model | None, str | None]:
         _warned.discard((MODEL_INVALID, path, None))
         _cache[path] = (key, result)
     if isinstance(result, ModelInvalidError):
-        _warn_once(MODEL_INVALID, path, str(result), key)
+        _warn_once(MODEL_INVALID, path, str(result), key, shown)
         return None, MODEL_INVALID
     return result, None
 

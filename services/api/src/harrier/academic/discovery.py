@@ -30,7 +30,7 @@ from harrier.academic.search import (
 )
 from harrier.connection import Connection
 from harrier.demo import fixtures_dir, is_demo_mode
-from harrier.filestore import files, local_file, save_json
+from harrier.filestore import FileStoreUnbound, files, local_file, save_json
 from harrier.notify import build_academic_telegram_message, send_telegram_message
 from harrier.runoutcome import age_in_days, last_success, record_success
 from harrier.screening.normalized import dedupe_normalized_jobs
@@ -256,6 +256,12 @@ def run_academic_discovery(
             items = run.items
             if not options.dry_run:
                 summary["saved_dataset"] = str(save_dataset(scope, run.run_id, items))
+    except FileStoreUnbound:
+        # A store that was never bound is a defect in the run, not a failed
+        # source: recorded as one, it would read as the actor's fault (spec
+        # 107, Amendment (2026-10-15): PR 1's build). A RuntimeError, so it
+        # is let through before the clause below could absorb it.
+        raise
     except (source.AcademicSourceError, RuntimeError, OSError, ValueError) as exc:
         # Nothing written and seen state unchanged, so the next run judges
         # the same postings. The message names no input value.
