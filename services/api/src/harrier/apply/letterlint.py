@@ -132,12 +132,13 @@ def _starts_with(text: str, prefix: str) -> bool:
 
 
 def _registered(entity: str, evidence: str) -> bool:
-    """Whether an evidence line names the entity type as registered."""
+    """Whether an evidence line names the entity type as registered. A whole
+    word: "unregistered" and "deregistered" are not registration."""
     for line in evidence.splitlines():
         lowered = line.lower()
         if (
             _phrase(entity).search(line)
-            and "registered" in lowered
+            and re.search(r"\bregistered\b", lowered)
             and not re.search(r"\bnot\b", lowered)
         ):
             return True

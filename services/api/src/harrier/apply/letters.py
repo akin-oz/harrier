@@ -138,8 +138,9 @@ Claims and evidence:
   employer, and one or more evidence fragments.
 - Evidence is quoted verbatim. Candidate evidence comes only from
   resume_truth_source_md, latest_project_achievements_md, the situation,
-  task, action and result of a story_bank entry, or a value in
-  candidate_json. Employer evidence comes only from job_description_text.
+  task, action and result of a story_bank entry, or candidate_json's
+  candidate.location or candidate.eu_entity_status. Employer evidence comes
+  only from job_description_text.
 - Never cite job_description_text or the application profile as candidate
   evidence. A requirement the posting lists is something the employer wants,
   not something the candidate did. If a sentence about the candidate has no
@@ -342,8 +343,11 @@ def parse_cover_letter_gaps(text: str) -> list[Gap]:
         if not isinstance(item, dict):
             continue
         entry = cast("dict[str, object]", item)
-        requirement = str(entry.get("requirement", "")).strip()
-        evidence = str(entry.get("posting_evidence", "")).strip()
+        # A JSON null or any other non-string is empty, never the text "None".
+        raw_requirement = entry.get("requirement")
+        raw_evidence = entry.get("posting_evidence")
+        requirement = raw_requirement.strip() if isinstance(raw_requirement, str) else ""
+        evidence = raw_evidence.strip() if isinstance(raw_evidence, str) else ""
         if requirement:
             gaps.append(Gap(requirement=requirement, posting_evidence=evidence))
     return gaps
@@ -609,22 +613,34 @@ def _norm(text: str) -> str:
     return " ".join(text.lower().split())
 
 
-def _string_values(value: object) -> list[str]:
-    """Every string in a JSON value, depth first."""
-    if isinstance(value, str):
-        return [value] if value.strip() else []
-    if isinstance(value, dict):
-        return [s for v in cast("dict[str, object]", value).values() for s in _string_values(v)]
-    if isinstance(value, list):
-        return [s for v in cast("list[object]", value) for s in _string_values(v)]
-    return []
+# The candidate document's fields a letter may cite (spec 158, amendment
+# 10): where the candidate works from and how they can contract. The rest of
+# the document is search configuration (titles to include or exclude,
+# scoring weights, preferences), which states no fact about the candidate.
+CANDIDATE_EVIDENCE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("candidate", "location"),
+    ("candidate", "eu_entity_status"),
+)
+
+
+def _candidate_facts(document: dict[str, object]) -> list[str]:
+    """The allowlisted string values of the candidate document, one a line."""
+    facts: list[str] = []
+    for block_name, field_name in CANDIDATE_EVIDENCE_FIELDS:
+        block = document.get(block_name)
+        if not isinstance(block, dict):
+            continue
+        value = cast("dict[str, object]", block).get(field_name)
+        if isinstance(value, str) and value.strip():
+            facts.append(" ".join(value.split()))
+    return facts
 
 
 def letter_evidence(conn: Connection, brief: Brief = EMPTY_BRIEF) -> dict[str, TruthSources]:
     """Each document a letter's candidate claim may cite, by the name the
     draft's "Facts used" gives it (spec 158). The truth and achievements
-    documents as today; the four STAR strings of each story; every string
-    value of the candidate document; and the brief's evidence (spec 066)."""
+    documents as today; the four STAR strings of each story; the candidate
+    document's allowlisted fields; and the brief's evidence (spec 066)."""
     truth = load_truth_sources(conn)
     stories = "\n".join(
         story[key]
@@ -633,7 +649,7 @@ def letter_evidence(conn: Connection, brief: Brief = EMPTY_BRIEF) -> dict[str, T
         if key in story
     )
     try:
-        candidate = "\n".join(_string_values(load_candidate_document(conn)))
+        candidate = "\n".join(_candidate_facts(load_candidate_document(conn)))
     except ApplicationProfileError:
         candidate = ""
     operator = with_operator_evidence(TruthSources("", ""), *brief.evidence).achievements_text

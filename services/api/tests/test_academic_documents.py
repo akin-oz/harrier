@@ -59,7 +59,7 @@ from harrier_cli.main import main
 # The letter's changed on purpose with spec 158's structure.
 INDUSTRY_PROMPT_SHA256 = {
     "tailor": "e4d6e724cbb0bca98688928bfe01dcac3f4eaa77b5d14c94f52a8bc530ec8525",
-    "letter": "01e08b3e09acfa74797f237b882b8970ccb9d24108c53c3439d7300df4ab8d82",
+    "letter": "3ab0bc4433e4cdf72ad9aacab5e6cf072a4f566bf105d5a7d3c9b72a94df0048",
     "answers": "5f4c2ce48f22338680ed62668bf294116c01931a608407710d7377791acb1a00",
 }
 
@@ -89,7 +89,7 @@ NAMED_TRUTH_RULES = {
 # purpose: the reviewer sees it.
 SHARED_BLOCK_SHA256 = {
     "tailor": "a329a5bab049cb38abdc5d41866f7df4b922a4ba1eb1db5511797988d1afb30e",
-    "letter": "0cd340b7e9ea1f116b747ce2e18401d4ce5b1d61de3bf64bd3ffd47c4d633609",
+    "letter": "fac5f24985080340f3a4b10943b72086455fa38e23808df6db9c0ca764288769",
     "answers": "4ecacc81eec0b311f60307d946db6da1f62a8602c214c59a767f38047850bbad",
 }
 

@@ -282,8 +282,8 @@ kind's range and cap.
 - [x] "May 2024" passes L2 (`services/api/tests/test_letter_lint.py::test_may_the_month_is_not_a_hedge`).
 - [x] "6+ years" is refused by L9 when the record holds 5, and "5+ years"
   passes (`services/api/tests/test_letter_lint.py::test_year_count_is_capped_by_the_record`).
-- [x] "my GmbH" is refused when no evidence line states one is registered,
-  and "a GmbH" passes (`services/api/tests/test_letter_lint.py::test_an_unregistered_entity_is_not_mine`).
+- [x] "my GmbH" is refused when no evidence line states one is registered
+  ("unregistered" is not registration), and "a GmbH" passes (`services/api/tests/test_letter_lint.py::test_an_unregistered_entity_is_not_mine`).
 - [x] A run of eight words the evidence also has is not a restatement
   (amendment 1) (`services/api/tests/test_letter_lint.py::test_a_run_the_evidence_also_has_is_not_a_restatement`).
 - [x] An industry letter with a role line, three body paragraphs and a
@@ -294,14 +294,17 @@ kind's range and cap.
 - [x] A candidate claim citing a story bank `result` string passes; one
   citing its `opening_line` is refused as unverified
   (`services/api/tests/test_letter_structure.py::test_story_bank_results_are_evidence_and_openers_are_not`).
-- [x] A candidate claim citing a candidate document value passes
-  (`services/api/tests/test_letter_structure.py::test_candidate_document_values_are_evidence`).
+- [x] A candidate claim citing the candidate document's location or entity
+  status passes; one citing a value under any other key is refused
+  (amendment 10) (`services/api/tests/test_letter_structure.py::test_candidate_document_values_are_evidence`).
 - [x] The markdown draft lists each gap with its posting line and each
   fact with its source document; the HTML contains neither section
   (`services/api/tests/test_letter_structure.py::test_gaps_and_facts_used_are_in_the_draft_only`,
   `services/api/tests/test_letter_structure.py::test_a_draft_with_no_gaps_says_none`).
 - [x] A gap whose posting evidence is not in the posting refuses the
   letter (`services/api/tests/test_letter_structure.py::test_a_gap_must_quote_the_posting`).
+- [x] A JSON null gap field is empty, never the text "None"
+  (`services/api/tests/test_letter_structure.py::test_a_null_gap_field_is_empty_not_none`).
 - [x] An academic letter with no `gaps` key parses and is not linted
   (`services/api/tests/test_letter_structure.py::test_the_academic_letter_is_unchanged`).
 - [x] The answers prompt and every answers check are byte for byte what
@@ -408,6 +411,14 @@ The build found these places where the Behavior was wrong or silent.
    two letters out of three after their retry. The industry and focused
    voices now say never to copy more than five words in a row from the
    posting. With that line all three regenerated letters passed.
+10. **Only two candidate document fields are evidence.** The Behavior said
+   any string value of the candidate document. The document is mostly
+   search configuration: titles to include and exclude, scoring weights,
+   preferences. Flattened, those values could verify a claim they never
+   state (review of PR #405). A letter may cite `candidate.location` and
+   `candidate.eu_entity_status` only (`CANDIDATE_EVIDENCE_FIELDS` in
+   `services/api/src/harrier/apply/letters.py`), and the shared prompt
+   names those two.
 
 ## Out of scope
 

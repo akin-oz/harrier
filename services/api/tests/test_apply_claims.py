@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -116,7 +117,7 @@ def letter_json(
     hook: str = HOOK,
     close: str = CLOSE,
     role_line: str = ROLE_LINE,
-    gaps: list[dict[str, str]] | None = None,
+    gaps: Sequence[Mapping[str, str | None]] | None = None,
 ) -> str:
     """A letter of the industry shape (spec 158): the role line, the hook,
     `first`, `middle` and `last` as the body, any extra blocks, and the
@@ -131,7 +132,7 @@ def letter_json(
         "claims": declared,
     }
     if gaps is not None:
-        payload["gaps"] = gaps
+        payload["gaps"] = [dict(gap) for gap in gaps]
     return json.dumps(payload)
 
 

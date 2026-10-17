@@ -143,6 +143,16 @@ def test_an_unregistered_entity_is_not_mine() -> None:
         role=ROLE,
     )
     assert lint(mine, pending) != []
+    # A whole word: "unregistered" is not registration (review of PR #405).
+    unregistered = LintContext(
+        evidence=f"{EVIDENCE}GmbH unregistered, filing pending.\n",
+        posting=POSTING,
+        company=COMPANY,
+        role=ROLE,
+    )
+    assert lint(mine, unregistered) == [
+        "calls an entity the evidence does not show registered 'my GmbH'"
+    ]
     registered = LintContext(
         evidence=f"{EVIDENCE}Contracts through a GmbH registered in Austria.\n",
         posting=POSTING,

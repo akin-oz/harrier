@@ -136,14 +136,25 @@ def test_story_bank_results_are_evidence_and_openers_are_not(
 def test_candidate_document_values_are_evidence(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Only the allowlisted fields are evidence (amendment 10). A value under
+    any other key, such as a title the search includes, is configuration,
+    not a fact (review of PR #405)."""
     status = "Can contract through a company in Exampleland on request"
-    document = {"candidate": {"name": "Deniz Örnek", "location": "Exampleland"}, "status": status}
+    document = {
+        "candidate": {"name": "Deniz Örnek", "location": "Exampleland", "eu_entity_status": status},
+        "targets": {"titles": ["Led a platform team of engineers"]},
+    }
     put_document(db, "candidate", "candidate.json", "json", json.dumps(document))
     sentence = "I can contract through a company in Exampleland on request."
     claims = [*GROUNDED_CLAIMS, candidate(sentence, status)]
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
     letter = generate(db)
     assert any(fact.source == "candidate" for fact in letter.facts_used)
+
+    title = "I led a platform team of engineers."
+    claims = [*GROUNDED_CLAIMS, candidate(title, "Led a platform team of engineers")]
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {title}", claims))
+    assert "unverified evidence: Led a platform team of engineers" in refusal(db)
 
 
 # --- gaps and facts used --------------------------------------------------------------
@@ -196,6 +207,22 @@ def test_a_gap_must_quote_the_posting(db: Connection, monkeypatch: pytest.Monkey
     gap = {"requirement": "Payments", "posting_evidence": "You will build payment rails"}
     stub_letter(monkeypatch, letter_json(gaps=[gap]))
     assert "gap evidence not in posting: You will build payment rails" in refusal(db)
+
+
+def test_a_null_gap_field_is_empty_not_none(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """JSON null is no text: a gap with no requirement is dropped, and one
+    with no evidence is refused by its requirement (review of PR #405)."""
+    nameless = {"requirement": None, "posting_evidence": None}
+    stub_letter(monkeypatch, letter_json(gaps=[nameless]))
+    assert generate(db).gaps == ()
+
+    unquoted = {"requirement": "Payments", "posting_evidence": None}
+    stub_letter(monkeypatch, letter_json(gaps=[unquoted]))
+    message = refusal(db)
+    assert "gap evidence not in posting: Payments" in message
+    assert "None" not in message
 
 
 # --- the academic kind --------------------------------------------------------------
