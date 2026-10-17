@@ -2,7 +2,7 @@
 spec: 150
 title: Discovery stages the Apify job poster as a contact candidate
 status: in-progress
-approved: no
+approved: yes
 milestone: M6
 depends: [009, 011, 016]
 ---
