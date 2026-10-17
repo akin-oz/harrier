@@ -149,9 +149,12 @@ entered.
 2. The key is `<directory>/<file name>`, the key the writers use, and the
    command never builds an object name: `SupabaseFileStore` does.
 3. `stat(key)` on the hosted store.
-   - Absent: the local bytes are read and sent with `put`. Afterwards
-     `stat(key)` must report the local size. A different size stops the run
-     (Failure modes).
+   - Absent: the local bytes are read and sent with `create`, the seam's
+     create-only upload (spec 154). Stored: afterwards `stat(key)` must
+     report the local size, and a different size stops the run (Failure
+     modes). Storage answers that the object exists, because a hosted
+     write landed since the `stat`: `read(key)` and compare, as for a
+     present object below. A read that then finds nothing stops the run.
    - Present: `read(key)` and compare bytes. Equal: counted "already
      there". Different: the object is left as it is and counted "differs
      from the hosted object". The command never overwrites, because a
@@ -249,7 +252,7 @@ same bytes and continues. The only state is in Storage.
 | The upload's size read back differs from the local file | The run stops, exit 1; the object is left as Storage holds it and a rerun finds it differs |
 | A local file cannot be read (permission, vanished) | The run stops, naming the family, exit 1 |
 | The process is killed | Objects finished stay, each whole; a rerun resumes |
-| Two copies of the command at once | Each uploads the same bytes under the same key; the second `put` changes nothing. No lock is taken |
+| Two copies of the command at once | One creates the object. The other's create answers "exists", its read finds the same bytes, and it counts the file "already there". No lock is taken (spec 154) |
 | `harrier operator erase` for the account afterwards | Refuses while any object remains under the prefix, until spec 107's build replaces its list-only check (spec 107, Note of 2026-10-15) |
 
 ## Acceptance criteria
@@ -368,6 +371,23 @@ three artifact families only. "Out of scope" below keeps its words for
 the record; spec 152 is what the command does
 (`services/api/src/harrier/artifactimport.py`,
 `services/api/tests/test_import_artifacts.py::test_a_description_of_a_hosted_job_is_imported`).
+
+## Amendment (2026-10-17): the upload is create-only, by spec 154
+
+Spec 154 closes the gap this spec recorded as the honest limitation "No
+conditional write", now removed. The absent branch of "What it copies"
+step 3 uploads with the seam's `create`, which never replaces an object.
+A hosted write that lands between the `stat` and the upload makes Storage
+answer "exists", and the object is read and compared as a present one is:
+same bytes, "already there"; other bytes, "differs from the hosted
+object" for an artifact and `kept, newer on hosted` for a description. An
+object gone at that read stops the run with `upload <family>: the hosted
+object changed during the run; run the command again`. The row "Two copies
+of the command at once" is spec 154's. The output lines and the verdict
+rules are unchanged
+(`services/api/src/harrier/artifactimport.py`,
+`services/api/tests/test_import_artifacts.py::test_a_hosted_write_during_the_copy_is_never_overwritten`,
+`services/api/tests/test_import_artifacts.py::test_import_artifacts_never_upserts`).
 
 ## Proof / origin
 
@@ -490,9 +510,6 @@ a differing hosted object is never overwritten.
   resume bundle's name, or to either `slugify` after the import detaches
   files, as it would locally. The command checks the account's names once,
   at the start. A partial mismatch passes the check that refuses a total one.
-- **No conditional write.** The command checks that an object is absent and
-  then uploads with the seam's upsert. A hosted run that writes the same key
-  between the two steps is overwritten. The window is one request.
 - **A rerun downloads every object already present** to compare bytes. Each
   is at most 6,000,000 bytes. No hash is stored.
 - **The limit and the types are spec 107's guidance, not a measurement.** No

@@ -191,6 +191,104 @@ def test_the_seam_exports_its_limit_and_types() -> None:
     }
 
 
+# --- the create-only upload (spec 154) ---------------------------------------------
+
+
+def test_create_stores_a_new_object_without_upsert(storage: FakeStorage) -> None:
+    store = store_for()
+    key = f"resumes/{CANDIDATE}-{PAIR}.pdf"
+    name = store.object_name(key)
+
+    assert store.create(key, b"%PDF-1.4 new\n") is True
+
+    assert storage.objects[name].data == b"%PDF-1.4 new\n"
+    assert storage.objects[name].content_type == CONTENT_TYPES[".pdf"]
+    (upload,) = storage.requests
+    assert upload.method == "POST"
+    assert upload.headers["x-upsert"] == "false"
+    assert upload.headers["content-type"] == "application/pdf"
+    assert upload.headers["cache-control"] == "no-cache"
+
+
+@pytest.mark.parametrize("as_409", [False, True])
+def test_create_leaves_an_existing_object_in_both_answer_shapes(
+    storage: FakeStorage, as_409: bool
+) -> None:
+    """Storage's object routes answer HTTP 400 with "409" in the body; a
+    version that sends the status itself answers HTTP 409. Both are "exists"."""
+    storage.conflict_as_409 = as_409
+    store = store_for()
+    key = f"answers/{PAIR}.md"
+    name = store.object_name(key)
+    storage.put(name, b"# Hosted\n", "text/markdown")
+    before = storage.objects[name]
+
+    assert store.create(key, b"# Local\n") is False
+
+    assert storage.objects[name] is before
+    assert storage.objects[name].data == b"# Hosted\n"
+
+
+def test_create_fails_as_put_fails(storage: FakeStorage, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = store_for()
+    key = f"resumes/{CANDIDATE}-{PAIR}.pdf"
+    name = store.object_name(key)
+    forbidden = (OWNER_A, TOKEN, key, name, sha(key), CANDIDATE)
+
+    def check(caught: pytest.ExceptionInfo[FileStoreError], raised: type[FileStoreError]) -> None:
+        assert type(caught.value) is raised
+        message = str(caught.value)
+        assert message.startswith("create resumes: "), message
+        for value in forbidden:
+            assert value not in message, value
+
+    for status, raised in [
+        (403, FileStoreDenied),
+        (413, FileTooLarge),
+        (503, FileStoreUnavailable),
+    ]:
+        storage.failures["upload"] = [status]
+        with pytest.raises(FileStoreError) as caught:
+            store.create(key, b"%PDF")
+        check(caught, raised)
+
+    # Another 400: a refusal that is not the conflict.
+    def refused(request: httpx.Request) -> httpx.Response:
+        body = {"statusCode": "400", "error": "InvalidRequest", "message": "refused"}
+        return httpx.Response(400, json=body)
+
+    monkeypatch.setattr(
+        "harrier.filestore.storage_client",
+        lambda: httpx.Client(transport=httpx.MockTransport(refused)),
+    )
+    with pytest.raises(FileStoreError) as caught:
+        store.create(key, b"%PDF")
+    check(caught, FileStoreError)
+    assert caught.value.status == 400
+
+    # Refused before any request: too large, or a type the bucket refuses.
+    storage.requests.clear()
+    with pytest.raises(FileStoreError) as caught:
+        store.create(key, b"x" * (SIZE_LIMIT + 1))
+    check(caught, FileTooLarge)
+    with pytest.raises(FileStoreError, match=r"^create resumes: the bucket accepts no file"):
+        store.create(f"resumes/{CANDIDATE}.docx", b"x")
+    assert storage.requests == []
+
+
+def test_put_still_replaces_an_existing_object(storage: FakeStorage) -> None:
+    store = store_for()
+    key = f"answers/{PAIR}.md"
+    name = store.object_name(key)
+    storage.put(name, b"# Before\n", "text/markdown")
+
+    store.put(key, b"# After\n", atomic=True)
+
+    assert storage.objects[name].data == b"# After\n"
+    (upload,) = storage.requests
+    assert upload.headers["x-upsert"] == "true"
+
+
 # --- which store a call uses ---------------------------------------------------------
 
 

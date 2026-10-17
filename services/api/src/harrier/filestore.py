@@ -444,6 +444,10 @@ REQUEST_TIMEOUT_SECONDS = 30.0
 # overwrite is fresh (spec 107, Honest limitations, assumption 6).
 UPLOAD_CACHE_CONTROL = "no-cache"
 
+# What Storage means when a create-only upload finds an object there: HTTP
+# 409, or HTTP 400 with "409" in the body's `statusCode` (spec 154).
+CONFLICT = 409
+
 # How many entries one listing request asks for, and how many names one
 # delete request carries.
 LIST_PAGE_SIZE = 100
@@ -709,13 +713,34 @@ class SupabaseFileStore:
         # complete or not at all.
         self._upload("put", key, data)
 
+    def create(self, key: str, data: bytes) -> bool:
+        """Upload `data` to `key` only when no object is there (spec 154).
+        True when stored; False when Storage answered that the object
+        exists, which leaves it unchanged. Not on the `FileStore` protocol:
+        only the artifact import must never replace a hosted object."""
+        response = self._send_upload("create", key, data, upsert=False)
+        if response.status_code == 200:
+            return True
+        status = answered_status(response)
+        if status == CONFLICT:
+            return False
+        raise storage_error("create", family_of(key), status)
+
     def _upload(self, operation: str, key: str, data: bytes) -> None:
+        response = self._send_upload(operation, key, data, upsert=True)
+        if response.status_code == 200:
+            return
+        raise storage_error(operation, family_of(key), answered_status(response))
+
+    def _send_upload(
+        self, operation: str, key: str, data: bytes, *, upsert: bool
+    ) -> httpx.Response:
         name = self.object_name(key)
         family = family_of(key)
         content_type = content_type_for(operation, key)
         if len(data) > SIZE_LIMIT:
             raise FileTooLarge(f"{operation} {family}: the object is over {SIZE_LIMIT} bytes")
-        response = self._send(
+        return self._send(
             operation,
             family,
             "POST",
@@ -723,13 +748,10 @@ class SupabaseFileStore:
             content=data,
             headers={
                 "Content-Type": content_type,
-                "x-upsert": "true",
+                "x-upsert": "true" if upsert else "false",
                 "Cache-Control": UPLOAD_CACHE_CONTROL,
             },
         )
-        if response.status_code == 200:
-            return
-        raise storage_error(operation, family, answered_status(response))
 
     def append(self, key: str, text: str) -> None:
         """Read, add, upload the whole. Two appenders at once can lose one

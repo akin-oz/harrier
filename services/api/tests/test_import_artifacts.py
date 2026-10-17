@@ -855,6 +855,12 @@ def test_import_artifacts_waits_out_a_rate_limit(
     assert uploads(storage)
     for secret in (SECRET_KEY, imported.owner, PROJECT_HOST, BUCKET, RESUME_STEM):
         assert secret not in result.out
+    # The 429 answered the create-only upload, and the file asked again was
+    # then copied (spec 154).
+    sent = [r for r in storage.requests if storage.operation(r)[0] == "upload"]
+    assert sent[0].headers["x-upsert"] == "false"
+    assert sent[1].url == sent[0].url
+    assert "resumes: 3 copied, 0 already there" in result.out.splitlines()
 
 
 def test_import_artifacts_stops_when_the_rate_limit_outlasts_the_waits(
@@ -1004,3 +1010,113 @@ def test_the_import_uses_the_cache_key_function(
     assert result.code == 0, result.err
     assert hosted_url(imported, ROLE_TITLE) in asked
     assert object_name(imported.owner, "descriptions/other-rule.json") in storage.objects
+
+
+# --- a hosted write during the copy (spec 154) ---
+
+
+def write_before_the_upload(storage: FakeStorage, name: str, data: bytes) -> None:
+    """A hosted writer stores `data` under `name` just before the import's
+    upload of it arrives, after the import's look found nothing there."""
+
+    def hosted_write(request: httpx.Request) -> None:
+        if storage.operation(request)[1] == name and name not in storage.objects:
+            storage.put(name, data)
+
+    storage.before["upload"] = hosted_write
+
+
+def test_a_hosted_write_during_the_copy_is_never_overwritten(
+    imported: Account, storage: FakeStorage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    put_good_files()
+    held = object_name(imported.owner, f"resumes/{RESUME_STEM}.pdf")
+    newer = b"%PDF-1.4 a hosted run during the import\n"
+    write_before_the_upload(storage, held, newer)
+
+    result = run(capsys, imported)
+
+    assert result.code == 1
+    lines = result.out.splitlines()
+    assert lines[0] == "resumes: 2 copied, 0 already there"
+    assert "not copied, differs from the hosted object: 1" in lines
+    assert "attached: 5" in lines
+    assert lines[-1] == "incomplete"
+    assert storage.objects[held].data == newer
+    assert held in uploads(storage)
+
+
+def test_a_hosted_write_of_the_same_bytes_during_the_copy_is_already_there(
+    imported: Account, storage: FakeStorage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    keys = put_good_files()
+    key = f"resumes/{RESUME_STEM}.pdf"
+    held = object_name(imported.owner, key)
+    write_before_the_upload(storage, held, keys[key])
+
+    result = run(capsys, imported)
+
+    assert result.code == 0, result.err
+    lines = result.out.splitlines()
+    assert lines[0] == "resumes: 2 copied, 1 already there"
+    assert "not copied, differs from the hosted object: 0" in lines
+    assert "attached: 6" in lines
+    assert lines[-1] == "imported"
+    assert storage.objects[held].data == keys[key]
+
+
+def test_a_hosted_description_written_during_the_copy_is_kept(
+    imported: Account, storage: FakeStorage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    put_good_files()
+    key = put_description(hosted_url(imported, ROLE_TITLE), DESCRIPTION)
+    held = object_name(imported.owner, key)
+    newer = json.dumps({"url": "x", "description": "Pasted during the import."}).encode()
+    write_before_the_upload(storage, held, newer)
+
+    result = run(capsys, imported)
+
+    assert result.code == 0, result.err
+    lines = result.out.splitlines()
+    assert lines[3] == "descriptions: 0 copied, 0 already there, 1 kept, newer on hosted"
+    assert "not copied, differs from the hosted object: 0" in lines
+    assert lines[-1] == "imported"
+    assert storage.objects[held].data == newer
+
+
+def test_an_object_gone_after_a_conflict_stops_the_run(
+    imported: Account, storage: FakeStorage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    put_good_files()
+    held = object_name(imported.owner, f"resumes/{RESUME_STEM}.pdf")
+    write_before_the_upload(storage, held, b"%PDF-1.4 briefly there\n")
+
+    def hosted_delete(request: httpx.Request) -> None:
+        if storage.operation(request)[1] == held:
+            storage.objects.pop(held, None)
+
+    storage.before["download"] = hosted_delete
+
+    result = run(capsys, imported)
+
+    assert result.code == 1
+    assert result.err == (
+        "error: upload resumes: the hosted object changed during the run; run the command again\n"
+    )
+    assert held not in storage.objects
+    for secret in (SECRET_KEY, imported.owner, PROJECT_HOST, BUCKET, RESUME_STEM, held):
+        assert secret not in result.err
+
+
+def test_import_artifacts_never_upserts(
+    imported: Account, storage: FakeStorage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    put_good_files()
+    put_description(hosted_url(imported, ROLE_TITLE), DESCRIPTION)
+
+    result = run(capsys, imported)
+
+    assert result.code == 0, result.err
+    sent = [r for r in storage.requests if storage.operation(r)[0] == "upload"]
+    assert len(sent) == 7
+    assert {request.headers["x-upsert"] for request in sent} == {"false"}

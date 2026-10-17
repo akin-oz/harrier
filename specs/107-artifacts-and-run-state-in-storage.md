@@ -213,6 +213,10 @@ file or request is touched. Every key built today passes: names come from
 | `local_path(key) -> Path \| None` | `data_dir() / key` | `None` |
 | `qualified_name(key) -> str` | the absolute path, as a string | `<owner>/<key>` |
 
+`SupabaseFileStore` also has `create(key, data) -> bool`, a create-only
+upload outside the protocol, which `LocalFileStore` does not have
+(Amendment (2026-10-17)).
+
 Each call site passes `atomic` as it writes today: true where it calls
 `write_json_atomic` or `write_bytes_atomic`, false where it calls
 `write_text` or `open(..., "w")`. JSON stays serialized by the caller, so
@@ -280,8 +284,9 @@ one owner's prefix, and two owners' track 2 are two prefixes.
   role key or S3 access key is read or sent. Spec 104 already refuses to
   start with a `SUPABASE_SERVICE_ROLE_KEY` or a value beginning
   `sb_secret_` in the environment.
-- **Uploads** set upsert, a content type from the key's extension, and
-  ask for no caching. Extensions and types: `.pdf` `application/pdf`,
+- **Uploads** set upsert, except `create`'s, which sets `x-upsert: false`
+  (Amendment (2026-10-17)). Every upload sends a content type from the
+  key's extension, and asks for no caching. Extensions and types: `.pdf` `application/pdf`,
   `.md` `text/markdown`, `.html` `text/html`, `.json`
   `application/json`, `.jsonl` `application/x-ndjson`. Any other
   extension raises `FileStoreError` before a request.
@@ -1554,3 +1559,31 @@ PR #368.
   token, and the kinds table.
 - **Spec 108:** the line under "Changes to approved specs", now that the
   Decision taken (2026-10-16) answers it, as a Note.
+
+## Amendment (2026-10-17): spec 154's create-only upload
+
+Spec 154, approved 2026-10-17, amends this spec. The artifact import
+(spec 146) must never replace a hosted object, so the seam gains one
+create-only upload. Every other writer keeps `put`, which keeps upsert.
+
+- **`SupabaseFileStore.create(key, data) -> bool`.** The request `put`
+  sends, with `x-upsert: false`. Storage answers 200: `True`. Storage
+  answers that the object exists: `False`, and the object is unchanged.
+  "Exists" is `answered_status(response) == 409`, so HTTP 409 and HTTP 400
+  carrying `statusCode` "409" both count. Any other answer raises what
+  `put` raises for it, with `create` as the operation. It is not on the
+  `FileStore` protocol, and `LocalFileStore` does not have it
+  (`services/api/src/harrier/filestore.py`;
+  `services/api/tests/test_hosted_files.py::test_create_stores_a_new_object_without_upsert`,
+  `services/api/tests/test_hosted_files.py::test_create_leaves_an_existing_object_in_both_answer_shapes`,
+  `services/api/tests/test_hosted_files.py::test_create_fails_as_put_fails`).
+- **`put` still upserts**
+  (`services/api/tests/test_hosted_files.py::test_put_still_replaces_an_existing_object`).
+- **The fake.** `FakeStorage` answers an upload without `x-upsert: true` to
+  a name it holds with HTTP 400 and the body `{"statusCode": "409",
+  "error": "Duplicate", "message": "The resource already exists"}`, the
+  shape read 2026-10-17 from `supabase/storage`. Its `conflict_as_409` flag
+  sends the same body under HTTP 409 (`services/api/tests/storage_support.py`).
+  Assumption 10 under "Settled by the build" gains: a create-only upload is
+  the same request with `x-upsert: false`, answering that conflict when the
+  object exists.
