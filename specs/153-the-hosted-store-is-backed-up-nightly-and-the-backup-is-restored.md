@@ -235,12 +235,14 @@ here, in the change that built them.
   scratch project; the runbook says so.
 - A dump carries no `storage` object (the bucket and its policy), no role and
   no role setting, and no login role's password. A restored project needs
-  those made again, and no command applies the Storage statements to a
-  restored store. A follow-up spec owns that command.
+  those made again. Spec 155's `harrier store restore-storage` makes the
+  bucket and the policy in a restored store; the roles and passwords stay
+  manual.
 - The dump uses `pg_dump --snapshot` through the session pooler. Nothing here
   was run against Supabase; the first scheduled run is the first test of it.
-- `backup-files` copies are named by object name. No command uploads from them
-  yet: `import-artifacts` re-uploads from the local `data/` directories.
+- `backup-files` copies are named by object name. Spec 155's `harrier store
+  restore-files` uploads from them; `import-artifacts` re-uploads from the
+  local `data/` directories.
 
 ## Migration
 

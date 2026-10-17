@@ -1,4 +1,5 @@
-"""The deploy's store steps: grant a login role, check the store (spec 110).
+"""The deploy's store steps: grant a login role, check the store (spec 110),
+and make the Storage bucket and policy a restored store lacks (spec 155).
 
 `harrier store grant-tenant`, `harrier store grant-schedule-reader` and
 `harrier store check-deploy` run as the migrating role, in the deploy
@@ -11,6 +12,11 @@ function the hosted API's start calls, so the deploy refuses what a machine
 would refuse and a machine that refuses never passes its health check.
 `check-deploy` writes nothing: every statement it runs is a read, in one
 transaction that is rolled back.
+
+`harrier store restore-storage` runs as the migrator on a store restored from
+a backup (spec 153), which carries nothing of `storage`. It runs migration
+23's own bucket and policy statements (`POSTGRES_STORAGE`), never the
+migration, and makes only what is absent.
 """
 
 from __future__ import annotations
@@ -20,7 +26,12 @@ from contextlib import closing
 from dataclasses import dataclass
 from typing import Any, cast
 
-from harrier.connection import Connection, StoreDeployRefused, StoreError
+from harrier.connection import (
+    Connection,
+    StoreDeployRefused,
+    StoreError,
+    StoreIntegrityError,
+)
 from harrier.loginrole import (
     CANNOT_SET_READER,
     CANNOT_SET_TENANT,
@@ -31,7 +42,12 @@ from harrier.loginrole import (
 from harrier.pgstore import check_postgres_version, postgres_connect
 from harrier.tracker.schema import (
     ERASE_FUNCTION,
+    MIGRATION_23_BUCKET,
+    MIGRATION_23_NEEDS_STORAGE,
+    MIGRATION_23_OTHER_BUCKET,
     OWNED_TABLES,
+    POSTGRES_MIGRATIONS,
+    POSTGRES_STORAGE,
     SCHEDULE_READER_ROLE,
     SERVICE_ROLE,
     STORAGE_USER_FUNCTION,
@@ -308,10 +324,11 @@ def _check_login(conn: Connection, login: Login) -> str:
 
 
 def _check_storage_policies(conn: Connection) -> str:
-    """No policy on `storage.objects` but harrier's own (spec 107). A project
-    without the table has nothing to check; every Supabase project has it."""
-    table = conn.execute("SELECT to_regclass('storage.objects') IS NOT NULL").fetchone()
-    if table is None or not table[0]:
+    """No policy on `storage.objects` but harrier's own (spec 107), and both
+    the bucket and that policy present (spec 155): a restored store lacks
+    them until `restore-storage` runs. A project without the table has
+    nothing to check; every Supabase project has it."""
+    if not _table_exists(conn, "storage.objects"):
         return "storage.objects: absent, no policy to check"
     names = [
         str(name)
@@ -325,4 +342,119 @@ def _check_storage_policies(conn: Connection) -> str:
         raise StoreDeployRefused(
             f"check-deploy: storage policies: storage.objects carries {', '.join(other)}"
         )
+    missing: list[str] = []
+    if not _bucket_exists(conn):
+        missing.append(f"bucket {MIGRATION_23_BUCKET}")
+    if STORAGE_POLICY not in names:
+        missing.append(f"policy {STORAGE_POLICY}")
+    if missing:
+        verb = "is" if len(missing) == 1 else "are"
+        raise StoreDeployRefused(
+            f"check-deploy: storage: {' and '.join(missing)} {verb} missing; "
+            "run harrier store restore-storage"
+        )
     return f"storage.objects: no policy but {STORAGE_POLICY}"
+
+
+def _table_exists(conn: Connection, name: str) -> bool:
+    row = conn.execute("SELECT to_regclass(?) IS NOT NULL", (name,)).fetchone()
+    return row is not None and bool(row[0])
+
+
+def _bucket_exists(conn: Connection) -> bool:
+    """Whether `storage.buckets` holds harrier's bucket. A store without the
+    table holds no bucket."""
+    if not _table_exists(conn, "storage.buckets"):
+        return False
+    row = conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM storage.buckets WHERE id = ?)", (MIGRATION_23_BUCKET,)
+    ).fetchone()
+    return row is not None and bool(row[0])
+
+
+def _policy_exists(conn: Connection) -> bool:
+    row = conn.execute(
+        "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_policy "
+        "WHERE polrelid = 'storage.objects'::regclass AND polname = ?)",
+        (STORAGE_POLICY,),
+    ).fetchone()
+    return row is not None and bool(row[0])
+
+
+# --- restore-storage (spec 155) ---
+
+# The migration that makes the bucket and the policy: the one whose
+# statements are POSTGRES_STORAGE.
+STORAGE_MIGRATION = next(
+    version for version, statements in POSTGRES_MIGRATIONS if statements is POSTGRES_STORAGE
+)
+
+# Each statement of migration 23 that restore-storage reuses, by a phrase
+# only that statement holds.
+_HAS_STORAGE = "to_regclass('storage.buckets') IS NULL"
+_OTHER_BUCKET = "RAISE EXCEPTION 'migration 23 found bucket"
+_MAKE_BUCKET = "INSERT INTO storage.buckets"
+_MAKE_POLICY = f"CREATE POLICY {STORAGE_POLICY} ON storage.objects"
+
+
+def migration_23_statement(marker: str) -> str:
+    """The one statement of migration 23 that holds `marker`, as the
+    migration runs it. Chosen by its text rather than its place, so a change
+    to the list cannot hand the command another statement."""
+    found = [statement for statement in POSTGRES_STORAGE if marker in statement]
+    if len(found) != 1:
+        raise StoreDeployRefused(
+            f"restore-storage: migration {STORAGE_MIGRATION} has no single statement "
+            "this command reuses; the command needs fixing"
+        )
+    return found[0]
+
+
+def _run_check(conn: Connection, marker: str, step: str, refusal: str) -> None:
+    """Run one of migration 23's checks. The text it raises is the refusal,
+    as `harrier store migrate` prints it."""
+    try:
+        conn.execute(migration_23_statement(marker))
+    except StoreIntegrityError as error:
+        if error.kind == "refused" and error.message == refusal:
+            raise StoreDeployRefused(f"restore-storage: {step}: {refusal}") from None
+        raise
+
+
+def restore_storage(url: str) -> list[str]:
+    """`harrier store restore-storage`: the two lines to print.
+
+    In one transaction, as the migrator: refuse a store below migration 23,
+    one without Supabase's storage objects, one without the function the
+    policy calls, and a bucket of harrier's id with other settings; then
+    make the bucket and the policy, each only if absent. A refusal is a
+    StoreDeployRefused naming the step, raised inside the transaction, so it
+    rolls back and nothing is made.
+    """
+    with closing(_open(url)) as conn, conn.transaction():
+        found = _store_version(conn)
+        if found < STORAGE_MIGRATION:
+            raise StoreDeployRefused(
+                f"restore-storage: store version: the store is at version {found}, below "
+                f"{STORAGE_MIGRATION}; run harrier store migrate, which makes the bucket "
+                "and the policy"
+            )
+        _run_check(conn, _HAS_STORAGE, "storage", MIGRATION_23_NEEDS_STORAGE)
+        row = conn.execute(
+            "SELECT to_regprocedure(?) IS NOT NULL", (f"public.{STORAGE_USER_FUNCTION}",)
+        ).fetchone()
+        if row is None or not row[0]:
+            raise StoreDeployRefused(
+                f"restore-storage: function: public.{STORAGE_USER_FUNCTION} is missing, and "
+                "the policy calls it; the restore of public is incomplete"
+            )
+        _run_check(conn, _OTHER_BUCKET, "bucket", MIGRATION_23_OTHER_BUCKET)
+        bucket = "already there"
+        if not _bucket_exists(conn):
+            conn.execute(migration_23_statement(_MAKE_BUCKET))
+            bucket = "made"
+        policy = "already there"
+        if not _policy_exists(conn):
+            conn.execute(migration_23_statement(_MAKE_POLICY))
+            policy = "made"
+    return [f"bucket {MIGRATION_23_BUCKET}: {bucket}", f"policy {STORAGE_POLICY}: {policy}"]

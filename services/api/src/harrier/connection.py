@@ -159,6 +159,12 @@ class FilesBackupStopped(StoreError):
     names the step, never a key, an object name, an owner or the host."""
 
 
+class FilesRestoreStopped(StoreError):
+    """`harrier store restore-files` refused or stopped at a step (spec 155).
+    The text names the step, never a key, an object name, an owner or the
+    host."""
+
+
 class AccountRefused(StoreError):
     """A check of a `harrier --owner` command refused it before anything was
     written (spec 144). The text names the check, never an owner, a host or

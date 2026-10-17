@@ -89,6 +89,12 @@ def files_root() -> Path:
     return data_dir().joinpath(*ROOT_PARTS)
 
 
+def is_dated_name(name: str) -> bool:
+    """Whether `name` is a dated directory's: `YYYY-MM-DD`, as a run names
+    its copy. Spec 155's `restore-files` uploads only from one."""
+    return _DATE.fullmatch(name) is not None
+
+
 def _stopped(step: str, error: FileStoreError) -> FilesBackupStopped:
     """The one-line stop for a failed Storage call: the step and what to do,
     never a key, an object name or Storage's words."""
