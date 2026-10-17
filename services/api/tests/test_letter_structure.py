@@ -18,6 +18,7 @@ from test_apply_claims import (
     INVOICES,
     POSTING,
     ROLE,
+    TRUTH,
     candidate,
     generate,
     letter_json,
@@ -131,6 +132,38 @@ def test_story_bank_results_are_evidence_and_openers_are_not(
     claims = [*GROUNDED_CLAIMS, candidate(opener, REFUND_OPENER)]
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {opener}", claims))
     assert f"unverified evidence: {REFUND_OPENER}" in refusal(db)
+
+
+def test_the_payload_story_bank_has_no_company_or_role(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A story's company and role are the posting it was written for, never
+    the candidate's employer (review of #405)."""
+    stories = [{**STORY_BANK[0], "company": "Acme", "role": "Staff Engineer"}]
+    put_document(db, "story_bank", "story-bank.json", "json", json.dumps(stories))
+    seen: list[str] = []
+
+    def fake(system_prompt: str, user_input: str) -> str:
+        seen.append(user_input)
+        return letter_json()
+
+    monkeypatch.setattr(letters_module, "generate_text", fake)
+    generate(db)
+    bank = json.loads(seen[0])["truth_sources"]["story_bank"]
+    assert bank and all("company" not in s and "role" not in s for s in bank)
+    assert "Acme" not in seen[0]
+
+
+def test_a_disclaimer_line_does_not_register_an_entity(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The linter reads asserted lines only: a line under "Claims I must not
+    make" registers nothing (review of #405)."""
+    put_document(
+        db, "resume_truth", "truth.md", "markdown", f"{TRUTH}That my GmbH is registered.\n"
+    )
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} I contract through my GmbH."))
+    assert "calls an entity the evidence does not show registered 'my GmbH'" in refusal(db)
 
 
 def test_candidate_document_values_are_evidence(

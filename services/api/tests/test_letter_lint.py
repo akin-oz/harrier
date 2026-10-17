@@ -100,7 +100,10 @@ def test_each_rule_refuses_and_its_fix_passes(rule: str) -> None:
 def test_a_number_must_be_in_the_evidence() -> None:
     """ "~12%" in the evidence backs "12%"; nothing backs "14%"."""
     assert lint(letter()) == []
-    assert lint(letter(hook=HOOK.replace("12%", "14%"))) == ["number not in the evidence: 14%"]
+    assert lint(letter(hook=HOOK.replace("12%", "14%"))) == [
+        "the hook's first sentence has no number from the evidence",
+        "number not in the evidence: 14%",
+    ]
 
 
 def test_compound_hyphens_are_not_punctuation() -> None:
@@ -154,12 +157,40 @@ def test_an_unregistered_entity_is_not_mine() -> None:
         "calls an entity the evidence does not show registered 'my GmbH'"
     ]
     registered = LintContext(
-        evidence=f"{EVIDENCE}Contracts through a GmbH registered in Austria.\n",
+        evidence=f"{EVIDENCE}Contracts through a GmbH registered in Exampleland.\n",
         posting=POSTING,
         company=COMPANY,
         role=ROLE,
     )
     assert lint(mine, registered) == []
+
+
+def test_a_negated_registration_is_not_registration() -> None:
+    """ "never registered", "isn't registered" and "not yet" say the
+    opposite (review of #405)."""
+    mine = letter(proof=f"{PROOF} I contract through my GmbH.")
+    for line in (
+        "A GmbH is planned, never registered.",
+        "The GmbH isn't registered.",
+        "No GmbH is registered yet.",
+    ):
+        context = LintContext(
+            evidence=f"{EVIDENCE}{line}\n", posting=POSTING, company=COMPANY, role=ROLE
+        )
+        assert lint(mine, context) == [
+            "calls an entity the evidence does not show registered 'my GmbH'"
+        ], line
+
+
+def test_the_short_version_is_linted_too() -> None:
+    """The short version goes into an application textbox (review of #405)."""
+    assert lint(letter(), short="Two decades building payment systems.") == [
+        "counts experience in decades"
+    ]
+    assert lint(letter(), short="I think it fits.") == ["hedging: I think"]
+    assert lint(letter(), short="I contract through my GmbH.") == [
+        "calls an entity the evidence does not show registered 'my GmbH'"
+    ]
 
 
 def test_a_run_the_evidence_also_has_is_not_a_restatement() -> None:

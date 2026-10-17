@@ -125,7 +125,8 @@ LETTER_SHARED: tuple[str, ...] = (
 - No invented experience
 - Use the application profile for positioning and safe framing only. Every
   fact about the candidate must come from resume_truth_source_md,
-  latest_project_achievements_md, story_bank or candidate_json.
+  latest_project_achievements_md, story_bank, or candidate_json's
+  candidate.location and candidate.eu_entity_status.
 """,
     """Banned phrasing:
 """
@@ -459,8 +460,10 @@ def cover_letter_violations(
     violations.extend(limit_violations(full, stated, "letter", "full_version"))
     if linted and lint is not None:
         # L3 is the kind's cap above, which a brief's max_words replaces.
-        # L8 is C5 (spec 065) repeated: a number C5 passes is in a claim's
-        # verified evidence, so L8 could only restate C5's refusal.
+        # L8 is dropped because a number in a declared employer sentence
+        # comes from the posting, which L8 does not read. A candidate
+        # number passes C5 only from verified evidence (spec 065), and the
+        # hook's number must be candidate evidence (L4).
         violations.extend(
             violation
             for violation in lint_letter(full, lint, letter["short_version"])
@@ -567,7 +570,8 @@ def _checked_letter(
     sources = _combined(documents)
     posting = "\n".join(part for part in (jd_text or "", brief.employer_guidance) if part)
     lint = LintContext(
-        evidence="\n".join((sources.truth_text, sources.achievements_text)),
+        # Asserted lines only: no denied text, no disclaimer section.
+        evidence="\n".join(sources.asserted_lines()),
         posting=jd_text or "",
         company=company,
         role=role,

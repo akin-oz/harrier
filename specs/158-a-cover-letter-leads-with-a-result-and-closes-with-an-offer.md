@@ -374,9 +374,14 @@ The build found these places where the Behavior was wrong or silent.
 2. **L3 and L8 are not repeated in the pipeline.** The kind's cap in
    `cover_letter_violations` already refuses a long letter, and a brief's
    `max_words` must be able to replace it, so the linter's L3 message is
-   dropped there. A number C5 (spec 065) passes is in a claim's verified
-   evidence, so L8 could only restate C5's refusal. Both rules stay in
-   `lint_letter` for any caller that has no claims.
+   dropped there. L8 is dropped because a declared employer sentence may
+   carry a number from the posting, which L8 does not read, so L8 would
+   refuse a true sentence about the employer. A candidate number passes C5
+   (spec 065) only from verified evidence. An earlier version of this item
+   said C5 covers every number L8 does; review of #405 showed that a
+   candidate result declared as an employer claim slips past both, so the
+   hook's number must now be candidate evidence (amendment 11). Both rules
+   stay in `lint_letter` for any caller that has no claims.
 3. **L11's block count lives in `cover_letter_violations`.** It is the
    kind's or the brief's, which the linter does not read. The linter checks
    the role line. `lint_letter` takes the short version as a third
@@ -419,6 +424,22 @@ The build found these places where the Behavior was wrong or silent.
    `candidate.eu_entity_status` only (`CANDIDATE_EVIDENCE_FIELDS` in
    `services/api/src/harrier/apply/letters.py`), and the shared prompt
    names those two.
+11. **The hook's number is candidate evidence.** L4 also refuses a hook
+    whose first sentence carries numbers but none from the evidence, such
+    as a posting's target restated as a result (review of #405).
+12. **The linter reads asserted lines.** `LintContext.evidence` is built
+    from `TruthSources.asserted_lines()`
+    (`services/api/src/harrier/resume/content.py`): denied text cut,
+    disclaimer sections skipped. L10 also reads "never", "no", "pending",
+    "planned", "yet" and "n't" as negation, so "never registered" does not
+    register an entity (review of #405).
+13. **L2, L5, L9 and L10 read the short version too.** It goes into an
+    application textbox, where a hedge or an inflated year count is as
+    visible as in the letter (review of #405).
+14. **A story's company and role stay out of the payload.** The offer
+    evaluator stores each story with the posting it was written for, not
+    the candidate's employer (`services/api/src/harrier/offers/stories.py`).
+    The payload carries a story's theme and its four STAR strings only.
 
 ## Out of scope
 

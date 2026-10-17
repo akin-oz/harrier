@@ -66,6 +66,9 @@ ENTITY_TYPES: tuple[str, ...] = ("OÜ", "GmbH", "Ltd", "LLC", "BV", "SAS", "SRL"
 # L11: the role line's length.
 ROLE_LINE_MAX_WORDS = 15
 
+# Words that make a "registered" line say the opposite or not yet.
+_NEGATED = re.compile(r"\b(?:not|never|no|pending|planned|yet)\b|n['\u2019]t\b")
+
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _APOSTROPHE = "\u2019"
 _WORD = re.compile(rf"[^\W_]+(?:['{_APOSTROPHE}][^\W_]+)*", re.UNICODE)
@@ -139,7 +142,7 @@ def _registered(entity: str, evidence: str) -> bool:
         if (
             _phrase(entity).search(line)
             and re.search(r"\bregistered\b", lowered)
-            and not re.search(r"\bnot\b", lowered)
+            and not _NEGATED.search(lowered)
         ):
             return True
     return False
@@ -159,8 +162,12 @@ def lint_letter(full_version: str, context: LintContext, short_version: str = ""
         if marks:
             violations.append(f"dash as punctuation in {name}: {describe(marks)}")
 
+    # L2, L5, L9 and L10 read both versions: the short one goes into an
+    # application textbox (review of #405).
+    both = f"{full_version}\n{short_version}"
+
     # L2: hedging.
-    hedges = [hedge for hedge in HEDGES if _phrase(hedge).search(full_version)]
+    hedges = [hedge for hedge in HEDGES if _phrase(hedge).search(both)]
     if hedges:
         violations.append(f"hedging: {', '.join(hedges)}")
 
@@ -186,11 +193,16 @@ def lint_letter(full_version: str, context: LintContext, short_version: str = ""
     if opener is not None:
         violations.append(f"banned opener: the hook begins with {opener!r}")
     first_sentence = _sentences(hook)[0] if hook else ""
+    known = {token.value for token in number_tokens(context.evidence)}
     if not number_tokens(first_sentence):
         violations.append("the hook's first sentence has no number: open with a quantified result")
+    elif not any(token.value in known for token in number_tokens(first_sentence)):
+        # The hook is the candidate's result, so its number is candidate
+        # evidence, not a number from the posting (review of #405).
+        violations.append("the hook's first sentence has no number from the evidence")
 
     # L5: banned anywhere.
-    banned = [phrase for phrase in BANNED_ANYWHERE if _phrase(phrase).search(full_version)]
+    banned = [phrase for phrase in BANNED_ANYWHERE if _phrase(phrase).search(both)]
     if banned:
         violations.append(f"banned phrase: {', '.join(banned)}")
 
@@ -207,7 +219,6 @@ def lint_letter(full_version: str, context: LintContext, short_version: str = ""
         violations.append(f"restates the posting: {run}")
 
     # L8: numbers, with the company's and role's own numbers exempt as in C5.
-    known = {token.value for token in number_tokens(context.evidence)}
     exempt = {token.value for token in number_tokens(f"{context.company} {context.role}")}
     unbacked = [
         token.raw
@@ -220,20 +231,18 @@ def lint_letter(full_version: str, context: LintContext, short_version: str = ""
     # L9: experience.
     years = context.professional_years
     if years is not None:
-        larger = [count for count in year_counts(full_version) if count > years]
+        larger = [count for count in year_counts(both) if count > years]
         if larger:
             violations.append(
                 f"states {max(larger)} years of experience; the record holds"
                 f" {context.professional_years}"
             )
-    if re.search(r"\bdecades?\b", full_version, re.IGNORECASE):
+    if re.search(r"\bdecades?\b", both, re.IGNORECASE):
         violations.append("counts experience in decades")
 
     # L10: an entity that is not registered is not "my" entity.
     for entity in ENTITY_TYPES:
-        if _phrase(f"my {entity}").search(full_version) and not _registered(
-            entity, context.evidence
-        ):
+        if _phrase(f"my {entity}").search(both) and not _registered(entity, context.evidence):
             violations.append(
                 f"calls an entity the evidence does not show registered 'my {entity}'"
             )
