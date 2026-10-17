@@ -861,11 +861,32 @@ export interface paths {
         put?: never;
         /**
          * Export Scoring Features
-         * @description `scoring export` as a run. Training reads only the export and needs
-         *     scikit-learn, which the image does not install, so it stays on the host
-         *     (spec 077).
+         * @description `scoring export` as a run. Training reads only the export, which is
+         *     why the export runs hosted too (spec 157).
          */
         post: operations["exportScoringFeatures"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ops/scoring/train": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Train Scoring Model
+         * @description `scoring train` as a run (spec 157). It reads the newest export and
+         *     writes a model and a report; the run ends with the command's own exit
+         *     code, so a refusal reads as a failed run whose output says why.
+         */
+        post: operations["trainScoringModel"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2859,6 +2880,19 @@ export interface components {
             name: string;
             /** Records */
             records: components["schemas"]["SuccessRecordOut"][];
+        };
+        /**
+         * ScoringTrainIn
+         * @description Train without activating unless the body says otherwise. With
+         *     `activate`, the gate still decides: a model that does not beat the rules
+         *     is written and not activated (spec 077).
+         */
+        ScoringTrainIn: {
+            /**
+             * Activate
+             * @default false
+             */
+            activate?: boolean;
         };
         /** SessionOut */
         SessionOut: {
@@ -6623,6 +6657,96 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunOut"];
+                };
+            };
+            /** @description the bearer token is missing, invalid or expired (hosted, spec 104) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description missing or wrong local API token; or the session is anonymous (hosted, spec 104) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"] | components["schemas"]["AuthRefusalOut"];
+                };
+            };
+            /** @description the track parameter named no track */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track may not run this operation */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorOut"];
+                };
+            };
+            /** @description A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseHeldOut"] | components["schemas"]["AuthRefusalOut"];
+                };
+            };
+        };
+    };
+    trainScoringModel: {
+        parameters: {
+            query?: {
+                /** @description The search track to work in; the default track when omitted. */
+                track?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ScoringTrainIn"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

@@ -2868,6 +2868,18 @@
         "title": "ScheduledJobOut",
         "type": "object"
       },
+      "ScoringTrainIn": {
+        "description": "Train without activating unless the body says otherwise. With\n`activate`, the gate still decides: a model that does not beat the rules\nis written and not activated (spec 077).",
+        "properties": {
+          "activate": {
+            "default": false,
+            "title": "Activate",
+            "type": "boolean"
+          }
+        },
+        "title": "ScoringTrainIn",
+        "type": "object"
+      },
       "SessionOut": {
         "properties": {
           "token": {
@@ -8677,7 +8689,7 @@
     },
     "/ops/scoring/export": {
       "post": {
-        "description": "`scoring export` as a run. Training reads only the export and needs\nscikit-learn, which the image does not install, so it stays on the host\n(spec 077).",
+        "description": "`scoring export` as a run. Training reads only the export, which is\nwhy the export runs hosted too (spec 157).",
         "operationId": "exportScoringFeatures",
         "parameters": [
           {
@@ -8804,6 +8816,149 @@
           }
         ],
         "summary": "Export Scoring Features"
+      }
+    },
+    "/ops/scoring/train": {
+      "post": {
+        "description": "`scoring train` as a run (spec 157). It reads the newest export and\nwrites a model and a report; the run ends with the command's own exit\ncode, so a refusal reads as a failed run whose output says why.",
+        "operationId": "trainScoringModel",
+        "parameters": [
+          {
+            "description": "The search track to work in; the default track when omitted.",
+            "in": "query",
+            "name": "track",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[a-z][a-z0-9-]{0,31}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The search track to work in; the default track when omitted.",
+              "title": "Track"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScoringTrainIn",
+                "default": {
+                  "activate": false
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthRefusalOut"
+                }
+              }
+            },
+            "description": "the bearer token is missing, invalid or expired (hosted, spec 104)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ErrorOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 403 Trainscoringmodel"
+                }
+              }
+            },
+            "description": "missing or wrong local API token; or the session is anonymous (hosted, spec 104)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "the track parameter named no track"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "refused: a run of this kind is active with other options, or the request lacks its explicit field, or, hosted, the run needs a credential that is not set or cannot be read; or the track may not run this operation"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorOut"
+                }
+              }
+            },
+            "description": "hosted only: this kind of run is not offered on the hosted API; the detail names the spec that will offer it, or says it is local only"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DatabaseHeldOut"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AuthRefusalOut"
+                    }
+                  ],
+                  "title": "Response 503 Trainscoringmodel"
+                }
+              }
+            },
+            "description": "A host process holds the tracker database (spec 075).; or the hosted API cannot fetch its signing keys (spec 104)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Train Scoring Model"
       }
     },
     "/outreach/backfill-posters": {

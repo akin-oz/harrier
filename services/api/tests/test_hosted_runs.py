@@ -267,6 +267,37 @@ def test_every_run_kind_declares_its_hosted_answer() -> None:
     assert HOSTED_RUN_KINDS["backup"].refusal == "backup runs are local only"
 
 
+def test_hosted_scoring_runs_are_allowed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Spec 157: hosted, the export and the training run start for their
+    owner, bound like every hosted run, with no credential to need; neither
+    is answered 501 any longer. The process is not spawned here: what is
+    held is that the table lets the start through to the binding."""
+    hosted = hosted_manager(tmp_path, monkeypatch)
+    owner = new_owner()
+
+    async def idle(_run: Run) -> None:
+        return None
+
+    monkeypatch.setattr(hosted.manager, "_execute", idle)
+
+    async def go() -> list[Run]:
+        return [
+            await hosted.manager.start("scoring-export", RunParams(), owner=owner),
+            await hosted.manager.start(
+                "scoring-train", RunParams(switches=frozenset({"--activate"})), owner=owner
+            ),
+        ]
+
+    export, training = asyncio.run(go())
+    assert export.command[3:] == ["scoring", "export"]
+    assert training.command[3:] == ["scoring", "train", "--activate"]
+    for run in (export, training):
+        assert run.hosted and run.owner == owner, run.kind
+        assert HOSTED_RUN_KINDS[run.kind].needed(frozenset()) == (), run.kind
+        assert hosted.records.rows[run.id]["owner"] == owner
+    assert hosted.records.begun == 2
+
+
 def test_a_hosted_run_needs_an_owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Refused before the kind is read and before anything is bound, for a
     kind that runs and a kind the table refuses alike."""
@@ -752,6 +783,9 @@ RUN_VERBS: dict[str, list[str]] = {
     "backfill-posters": ["backfill-posters", "--dry-run"],
     # Spec 151.
     "description backfill": ["description", "backfill", "--dry-run"],
+    # Spec 157.
+    "scoring export": ["scoring", "export"],
+    "scoring train": ["scoring", "train"],
 }
 
 
@@ -814,6 +848,11 @@ def test_a_run_command_needs_an_owner_on_postgres(
         capsys.readouterr()
         if name == "demo-run":
             assert code == 0 and opened == []
+        elif name == "scoring train":
+            # The trainer reads only the export, from the owner's Storage
+            # prefix, and opens no store (spec 077). With no Storage bound
+            # here it stops at its first file.
+            assert code == 1 and opened == [], name
         else:
             assert opened == [owner], name
         assert "TELEGRAM_BOT_TOKEN" not in os.environ, name

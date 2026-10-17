@@ -126,7 +126,7 @@ def test_the_stages_are_read_from_the_file() -> None:
 
 def test_the_hosted_image_installs_the_store_and_auth_groups() -> None:
     groups = groups_installed("hosted")
-    assert groups == {"pdf", "postgres", "hosted"}
+    assert groups == {"pdf", "postgres", "hosted", "training"}
     hosted_syncs = [line for line in lines_of("hosted") if "uv sync" in line]
     # Every sync leaves the dev group out, as the local image does.
     assert hosted_syncs and all("--no-dev" in line for line in hosted_syncs)
@@ -145,6 +145,24 @@ def test_every_sync_of_an_image_names_the_same_groups() -> None:
             if "uv sync" in line
         ]
         assert len(own) == 2 and own[0] == own[1], (name, own)
+
+
+def test_the_hosted_image_installs_the_training_group() -> None:
+    """Spec 157: the hosted image (stage `hosted`) and the local image
+    (stage `runtime`) install `training`, which holds scikit-learn, on every
+    `uv sync` of their own: the dependency layer and the final install. The
+    shared `base` stage's sync is the PDF layer and is not checked, since
+    each image's own sync replaces its groups. Read from the file, because
+    no test builds an image."""
+    for name in ("hosted", "runtime"):
+        own = [line for line in stages()[name].instructions if "uv sync" in line]
+        assert len(own) == 2, (name, own)
+        for line in own:
+            assert re.search(r"--group\s+training\b", line), (name, line)
+        assert "training" in groups_installed(name), name
+    pyproject = tomllib.loads((ROOT / "services" / "api" / "pyproject.toml").read_text("utf-8"))
+    training = pyproject["dependency-groups"]["training"]
+    assert any(str(requirement).startswith("scikit-learn") for requirement in training)
 
 
 def test_the_hosted_image_installs_no_gmail_group() -> None:

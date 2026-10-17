@@ -1,9 +1,10 @@
 """Fitting the learned score, offline, from the export alone (spec 077).
 
 The one module that imports scikit-learn and numpy. An import-linter
-contract keeps every other module, and therefore inference, free of both,
-and the container image does not install them (`--no-dev`), which is why
-`harrier scoring train` is a host-only command.
+contract keeps every other module, and therefore inference, free of both.
+They come from the `training` dependency group, which both images install
+(spec 157); the API process never imports this module, because training is a
+run, a subprocess like every run.
 
 A model is written only when there is enough to learn from, and activated
 only when it earns it: its ranking must beat the rule score on held-out rows
