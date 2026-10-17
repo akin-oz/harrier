@@ -1,8 +1,8 @@
 ---
 spec: 155
 title: A restored hosted store gets its Storage bucket, policy and files back
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [107, 110, 146, 153, 154]
 ---
@@ -112,9 +112,10 @@ the content type that the name's extension maps to in spec 107's
 | The extension maps to no content type | `not written` (no request sent) |
 | Any other error after the 429 waits | `not written` |
 
-It prints counts only, never a key or an object name. It exits 0 when every
-file is `uploaded` or `already there`, and 1 otherwise, naming the counts that
-are not zero. A Storage 429 waits and asks again, as spec 146's import does
+It prints counts only, never a key or an object name. A file counted
+`left, differs` is skipped and the run goes on: it does not change the exit
+status. The command exits 0 when every file is `uploaded`, `already there` or
+`left, differs`, and 1 when any file is `not written`, naming that count. A Storage 429 waits and asks again, as spec 146's import does
 (`artifactimport.patiently`). A second run counts every file `already there`.
 
 Restored `auth.users` rows keep their ids, so the owner's id and prefix are
@@ -142,7 +143,7 @@ The steps stay manual (spec 153, Out of scope).
 | `check-deploy` on a restored project before `restore-storage` | Refused, naming the missing bucket or policy and the command; the deploy stops |
 | `restore-files` before `restore-storage` | Every upload fails because the bucket is missing; everything `not written`; exit 1 |
 | `restore-files --from` outside the backups directory | Refused before any request; exit 1 |
-| An object already in Storage with other bytes | Left, counted `left, differs`; exit 1 |
+| An object already in Storage with other bytes | Left, counted `left, differs`; the run goes on; exit 0 if nothing else failed |
 | A 429 that outlasts the waits | Stops, naming the step, as spec 146's import does; exit 1 |
 | Interrupted halfway | A rerun counts the uploaded files `already there` and continues |
 
@@ -163,8 +164,9 @@ The steps stay manual (spec 153, Out of scope).
       test_check_deploy_refuses_a_store_missing_the_bucket_or_policy).
 - [ ] Against the fake Storage server, `restore-files` uploads every file of a
       dated directory without upsert, under `<owner>/<relative path>`, with
-      its content type. It counts an equal object `already there` and leaves
-      one with other bytes, exiting 1. It prints no object name (planned
+      its content type. It counts an equal object `already there`, leaves
+      one with other bytes and goes on, exiting 0. It exits 1 when a file is
+      `not written`. It prints no object name (planned
       test_restore_files_uploads_a_backup_copy_create_only_and_names_none).
 - [ ] `restore-files` refuses a `--from` outside
       `data/hosted/backups/files/` and a secret key defined in `.env`, both
@@ -200,6 +202,17 @@ The steps stay manual (spec 153, Out of scope).
    and exit 1, because a new project should hold nothing yet, and overwriting
    would break spec 154's rule. Alternative: overwrite with the backup's
    bytes.
+
+## Decisions taken (2026-10-17)
+
+Akin approved the spec with these answers:
+
+1. One spec: the bucket, the policy and the files land together.
+2. `check-deploy` refuses a store that lacks the bucket or the policy.
+3. An object already in Storage with other bytes is left (skipped), never
+   overwritten, and it does not block the run: `restore-files` counts it
+   `left, differs`, carries on, and does not exit 1 for it. This replaces
+   the recommendation, which exited 1.
 
 ## Out of scope
 
