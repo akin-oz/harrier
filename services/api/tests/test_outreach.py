@@ -589,6 +589,59 @@ def test_a_contact_typed_without_https_still_matches_its_poster(
     assert profile_url(stored) == ""
 
 
+def _upsert_contact_with_link(db: Connection, stored: str) -> None:
+    upsert_contact(
+        db,
+        default_scope(db),
+        company="Acme",
+        role="Senior Frontend Engineer",
+        job_url="https://www.linkedin.com/jobs/view/12345",
+        person_name="Poster Person",
+        person_title="Engineering Manager",
+        linkedin_url=stored,
+        source="manual",
+    )
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "https://uk.linkedin.com/IN/poster-person",
+        "//www.linkedin.com/in/poster-person",
+        "linkedin.com/in/poster-person?u=http://x",
+    ],
+)
+def test_a_contact_link_in_another_written_form_still_matches_its_poster(
+    db: Connection, stored: str
+) -> None:
+    """An upper case /IN/, a link starting with //, and a link with no
+    scheme whose query holds :// all name the same person (post-merge
+    review of spec 150)."""
+    from harrier.outreach.posters import contact_url_keys, profile_url
+
+    _upsert_contact_with_link(db, stored)
+    poster = profile_url("https://uk.linkedin.com/in/poster-person")
+    assert normalize(poster) in contact_url_keys(db)
+    # Read leniently for comparison only: it is still not a link to stage.
+    assert profile_url(stored) == ""
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        "ftp://www.linkedin.com/in/poster-person",
+        "javascript://www.linkedin.com/in/poster-person",
+    ],
+)
+def test_a_contact_link_with_another_scheme_matches_no_poster(db: Connection, stored: str) -> None:
+    """Only http and https, or no scheme, name a person (spec 150)."""
+    from harrier.outreach.posters import contact_url_keys, profile_url
+
+    _upsert_contact_with_link(db, stored)
+    poster = profile_url("https://uk.linkedin.com/in/poster-person")
+    assert normalize(poster) not in contact_url_keys(db)
+
+
 def test_hunter_functions_require_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     from harrier.outreach import domain_search, find_email, verify_email
 

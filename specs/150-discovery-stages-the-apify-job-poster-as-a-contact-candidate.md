@@ -1,7 +1,7 @@
 ---
 spec: 150
 title: Discovery stages the Apify job poster as a contact candidate
-status: in-progress
+status: shipped
 approved: yes
 milestone: M6
 depends: [009, 011, 016]
@@ -172,16 +172,14 @@ carries no name, title or URL. The per-source summary does not change.
       profile URLs in canonical form
       (`services/api/tests/test_outreach.py::test_backfill_stages_posters_without_writing_contacts`,
       `services/api/tests/test_outreach.py::test_backfill_skips_a_poster_already_a_contact_under_another_subdomain`).
-- [ ] A contact stored as `https://uk.linkedin.com/IN/<slug>`,
+- [x] A contact stored as `https://uk.linkedin.com/IN/<slug>`,
       `//www.linkedin.com/in/<slug>` or `linkedin.com/in/<slug>?u=http://x`
       matches its poster, and `profile_url` still refuses each form
-      (planned test_a_contact_link_in_another_written_form_still_matches_its_poster
-      in services/api/tests/test_outreach.py). Each case fails before the
-      fix.
-- [ ] A contact stored with a scheme other than http or https, such as
+      (`services/api/tests/test_outreach.py::test_a_contact_link_in_another_written_form_still_matches_its_poster`).
+      Each case fails before the fix.
+- [x] A contact stored with a scheme other than http or https, such as
       `ftp://www.linkedin.com/in/<slug>`, matches no poster
-      (planned test_a_contact_link_with_another_scheme_matches_no_poster
-      in services/api/tests/test_outreach.py).
+      (`services/api/tests/test_outreach.py::test_a_contact_link_with_another_scheme_matches_no_poster`).
 
 ## Proof / origin
 
