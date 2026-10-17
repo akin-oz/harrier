@@ -1,8 +1,8 @@
 ---
 spec: 158
 title: A cover letter leads with a result, proves each cluster the posting asks for, and closes with an offer
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [034, 065, 066, 069, 071, 085, 101, 140]
 ---
