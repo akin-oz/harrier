@@ -1,8 +1,8 @@
 ---
 spec: 154
 title: The artifact import never overwrites a hosted write that lands during the copy
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [107, 146, 152]
 ---
@@ -231,6 +231,12 @@ The import is the only writer that must not replace.
    size check does, so a rerun decides with a fresh `stat`. Alternative:
    count it as differing and go on. That reports a file as differing from
    an object that is not there, and still ends `incomplete`.
+
+## Decisions taken (2026-10-17)
+
+Akin approved the spec with both open decisions as recommended: the
+create-only upload is a separate `create` on `SupabaseFileStore`, outside
+the protocol, and an object gone after an "exists" answer stops the run.
 
 ## Out of scope
 
