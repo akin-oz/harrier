@@ -1,0 +1,96 @@
+# The hosted store's nightly backup (spec 153, ADR-013).
+#
+# The order of the steps is the contract, and it is the point of this file:
+#
+#   1. dump     (as the migrator; the only step that reads a secret)
+#   2. check    (restore the plain dump into an empty Postgres 17 and compare
+#                every table's count and the schema version with the manifest)
+#   3. encrypt  (to the age public key in deploy/backup-recipient.txt)
+#   4. keep     (the encrypted file alone, as an artifact for 30 days)
+#
+# The job holds no private key, so the check runs on the plain dump inside the
+# job, before anything is encrypted. A failed step stops the job, and a failed
+# run uploads nothing: GitHub's failed-run notice to the repository owner is the
+# alert. The repository is public, so anyone signed in to GitHub can download
+# the artifact; only the age private key, which is in no GitHub, Fly or Vercel
+# setting, decrypts it. Files in Storage are not backed up here: they need the
+# Supabase secret key, which never enters GitHub (`harrier store backup-files`).
+# docs/deploy.md, "Restoring the hosted store", is the way back.
+name: Backup
+
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  backup:
+    name: Back up the hosted store
+    # A schedule runs the default branch. A dispatch from another branch would
+    # run that branch's code with the staging environment's secret, so only
+    # main runs.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    # Two backups never interleave.
+    concurrency:
+      group: backup
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    # The throwaway database the restore check uses. Not a credential: a
+    # container that lives for this job and holds nothing else.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+      # The runner's own client is older than the server. pg_dump refuses a
+      # server newer than itself, so version 17 comes from PostgreSQL's own
+      # apt repository.
+      - name: Install the PostgreSQL 17 client and age
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y --no-install-recommends postgresql-client-17 age
+
+      - name: Dump the hosted store and write its manifest
+        env:
+          HARRIER_DATABASE_URL: ${{ secrets.HARRIER_MIGRATE_DATABASE_URL }}
+        run: uv run --project services/api --no-dev --group postgres harrier store backup-dump --out "$RUNNER_TEMP/backup"
+      - name: Restore the dump into an empty database and compare it with the manifest
+        run: |
+          uv run --project services/api --no-dev --group postgres harrier store backup-check \
+            --dir "$RUNNER_TEMP/backup" --into postgresql://postgres:postgres@localhost:5432/postgres
+      - name: Encrypt the dump and the manifest to the age recipient
+        run: |
+          uv run --project services/api --no-dev --group postgres harrier store backup-seal \
+            --dir "$RUNNER_TEMP/backup" --recipient deploy/backup-recipient.txt \
+            --out "$RUNNER_TEMP/hosted-backup.tar.age"
+      - name: Name the artifact by the UTC date
+        id: stamp
+        run: echo "date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+      - name: Keep the encrypted file for 30 days
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-backup-${{ steps.stamp.outputs.date }}
+          path: ${{ runner.temp }}/hosted-backup.tar.age
+          retention-days: 30
+          if-no-files-found: error

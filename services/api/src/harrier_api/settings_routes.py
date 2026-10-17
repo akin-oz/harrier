@@ -102,6 +102,15 @@ _IMPORT_ARTIFACTS = (
     "hosted account's Storage, so it runs on the operator's machine with the Storage "
     "project's secret key in the shell."
 )
+_BACKUP_DB = (
+    "Hosted backup (spec 153): the nightly backup workflow runs it against the hosted "
+    "store with the migrator's URL, so it runs in GitHub Actions and never from here."
+)
+_BACKUP_FILES = (
+    "Files backup (spec 153): it copies one hosted account's Storage objects to the "
+    "operator's disk, so it runs on the operator's machine with the Storage project's "
+    "secret key in the shell."
+)
 _DEPLOY = (
     "Deploy checks (spec 110): the deploy workflow runs them, and the operator runs the cost "
     "projection once a month from a shell."
@@ -230,6 +239,10 @@ COMMAND_PLACES: dict[str, Place] = {
     "store check-deploy": TerminalOnly(_DEPLOY_STORE),
     "store import-local": TerminalOnly(_IMPORT),
     "store import-artifacts": TerminalOnly(_IMPORT_ARTIFACTS),
+    "store backup-dump": TerminalOnly(_BACKUP_DB),
+    "store backup-check": TerminalOnly(_BACKUP_DB),
+    "store backup-seal": TerminalOnly(_BACKUP_DB),
+    "store backup-files": TerminalOnly(_BACKUP_FILES),
     "deploy check-auth-settings": TerminalOnly(_DEPLOY),
     "deploy check-machine-count": TerminalOnly(_DEPLOY),
     "deploy check-scheduler-tick": TerminalOnly(_DEPLOY),

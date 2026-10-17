@@ -41,6 +41,11 @@ that rule.
 4. The restore procedure in `docs/deploy.md`, including spec 111's rule
    that a restore re-erases every id the erasure ledger lists after the
    backup's time.
+5. The workflow's logic as `harrier store` commands (`backup-dump`,
+   `backup-check`, `backup-seal`), so it is tested in Python and not only read
+   from YAML; and the PostgreSQL 17 client and `age` installed in the CI
+   Python job (`.github/workflows/ci.yml`), so those tests run there. Added in
+   the Amendment (2026-10-17) below.
 
 ## Behavior
 
@@ -119,21 +124,22 @@ spec 146's `import-artifacts` path or a sibling of it.
 - [ ] The workflow dumps, checks and encrypts in that order (check before
       encryption), and a restore
       check that finds a count differing from the manifest fails the job
-      with nothing uploaded
-      (planned test_the_backup_workflow_uploads_only_after_the_restore_check).
+      with nothing uploaded (the failing check itself:
+      `services/api/tests/test_hosted_backup.py::test_a_restore_check_that_finds_a_difference_fails_and_seals_nothing`)
+      (`services/api/tests/test_backup_workflow.py::test_the_backup_workflow_uploads_only_after_the_restore_check`).
 - [ ] No step of the workflow reads a Supabase API key, and only the dump
       step reads the migrator URL
-      (planned test_the_backup_workflow_reads_only_the_migrator_url).
+      (`services/api/tests/test_backup_workflow.py::test_the_backup_workflow_reads_only_the_migrator_url`).
 - [ ] The uploaded artifact is the `age` output alone, with a retention of
-      30 days (planned test_the_backup_artifact_is_encrypted_and_kept_thirty_days).
+      30 days (`services/api/tests/test_backup_workflow.py::test_the_backup_artifact_is_encrypted_and_kept_thirty_days`).
 - [ ] The dump command, run against the CI Postgres service with the shim
       and synthetic owners, restores into an empty database with every
       table's count and the schema version equal to the manifest
-      (planned test_a_hosted_dump_restores_with_its_manifest_counts).
+      (`services/api/tests/test_hosted_backup.py::test_a_hosted_dump_restores_with_its_manifest_counts`).
 - [ ] `backup-files` writes each listed object under the dated directory,
       links an unchanged object from the newest earlier copy, prints no key,
       and refuses a secret key defined in `.env`
-      (planned test_backup_files_copies_every_object_and_names_none).
+      (`services/api/tests/test_backup_files.py::test_backup_files_copies_every_object_and_names_none`).
 - [ ] `docs/deploy.md` states the restore procedure, including the
       ledger re-erase, and names the workflow and the command.
 
@@ -168,6 +174,43 @@ Akin approved the spec with both open decisions as recommended: the dump is
 the `public` schema plus the rows of `auth.users` and `auth.identities`, and
 the restore check runs on the plain dump inside the job, before encryption.
 
+## Amendment (2026-10-17)
+
+Building showed these parts of the text above to be incomplete. Each is stated
+here, in the change that built them.
+
+- **Two dumps, one encrypted file.** `pg_dump` with `-t` dumps tables only: a
+  dump of `public` plus the two `auth` tables in one archive loses every
+  function the triggers call. So the dump step runs `pg_dump` twice at one
+  exported snapshot, `public.dump` (the `public` schema) and `auth.dump` (the
+  two tables, with the new-owner trigger that belongs to `auth.users`). The
+  encrypted file is a tar of `public.dump`, `auth.dump` and `manifest.json`.
+  The manifest reads its counts and the schema version from the same snapshot
+  and adds a format number.
+- **The three commands.** `harrier store backup-dump --out DIR`,
+  `backup-check --dir DIR --into URL` and `backup-seal --dir DIR --recipient
+  FILE --out FILE`. The workflow's steps are these commands in that order. The
+  check refuses a database that has an `auth` schema or any table in `public`,
+  so a wrong `--into` restores nothing. A pass leaves a marker holding the
+  digest of each file, and the seal refuses a directory without it or a file
+  changed since, so the order is held in code as well as in the YAML.
+- **The recipient.** The committed `deploy/backup-recipient.txt` holds the
+  operator's public key. The seal still refuses a file that holds the word
+  `REPLACE_WITH_AGE_PUBLIC_KEY`, a missing file and anything that is not one
+  `age1...` key.
+- **`backup-files` writes object names.** Storage holds most files under a
+  hashed name that cannot be turned back into a key, so the dated directory
+  holds the object's name below the owner's prefix, not a readable key. Whether
+  an object is unchanged is read from Storage's listing (size and version),
+  kept in `<date>.index.json` beside the dated directory; an object whose
+  listing changed but whose bytes did not is linked after the download. It
+  shares spec 146's 429 waits (`artifactimport.patiently`) and the operator's
+  environment reading (`operator.read_admin`), and adds
+  `SupabaseFileStore.stored_objects` and `read_object` to spec 107's seam.
+- **The restore goes into a new project.** Dropping `public` on a live
+  project drops the trigger on `auth.users` and the Storage policy that
+  depend on it, so `docs/deploy.md` restores into a new, empty project.
+
 ## Out of scope
 
 - Point-in-time recovery, and backups more often than nightly.
@@ -187,6 +230,17 @@ the restore check runs on the plain dump inside the job, before encryption.
   restore.
 - GitHub may pause the schedule on a quiet repository, and nothing but the
   artifact list shows a skipped night.
+- The nightly check proves a restore into a plain Postgres 17. It does not
+  prove the runbook's steps on Supabase, which the operator rehearses once on a
+  scratch project; the runbook says so.
+- A dump carries no `storage` object (the bucket and its policy), no role and
+  no role setting, and no login role's password. A restored project needs
+  those made again, and no command applies the Storage statements to a
+  restored store. A follow-up spec owns that command.
+- The dump uses `pg_dump --snapshot` through the session pooler. Nothing here
+  was run against Supabase; the first scheduled run is the first test of it.
+- `backup-files` copies are named by object name. No command uploads from them
+  yet: `import-artifacts` re-uploads from the local `data/` directories.
 
 ## Migration
 
