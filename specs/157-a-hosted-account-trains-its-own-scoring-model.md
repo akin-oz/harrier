@@ -130,33 +130,36 @@ container image installs `training` is open decision 1.
 
 ## Acceptance criteria
 
-- [ ] `POST /ops/scoring/train` with `activate: true` starts a run whose
+- [x] `POST /ops/scoring/train` with `activate: true` starts a run whose
       command is `harrier scoring train --activate`, and without it, `harrier
-      scoring train` (planned test_scoring_train_route_starts_the_run).
-- [ ] On the hosted API, `scoring-export` and `scoring-train` start for an
-      owner and are no longer answered 501 (planned
-      test_hosted_scoring_runs_are_allowed).
-- [ ] A hosted training run, with the Storage fake and a synthetic export
+      scoring train`
+      (`services/api/tests/test_ui_operations.py::test_scoring_train_route_starts_the_run`).
+- [x] On the hosted API, `scoring-export` and `scoring-train` start for an
+      owner and are no longer answered 501
+      (`services/api/tests/test_hosted_runs.py::test_hosted_scoring_runs_are_allowed`).
+- [x] A hosted training run, with the Storage fake and a synthetic export
       in the owner's prefix, writes its model and report under that prefix,
       and with `--activate` and a passing model writes
       `scoring/active-model.json` there. A second owner's prefix is untouched
-      (planned test_a_hosted_training_run_writes_only_its_owners_model).
-- [ ] The hosted image installs scikit-learn. A test reads the `Dockerfile`
+      (`services/api/tests/test_hosted_files.py::test_a_hosted_training_run_writes_only_its_owners_model`).
+- [x] The hosted image installs scikit-learn. A test reads the `Dockerfile`
       and requires `--group training` on the hosted stages' `uv sync`
       lines. A test that reads source text is a last resort; it is used
-      here because the image is not built in the test suite (planned
-      test_the_hosted_image_installs_the_training_group).
-- [ ] The import-linter contract still passes: no module but
-      `harrier.scoring.train` imports scikit-learn or numpy.
-- [ ] The Scoring section shows "Train the model". Clicking it posts
-      `{activate: true}` to `/ops/scoring/train` and streams the run (planned
-      ScoringSection.test.tsx case "trains the model and streams the run").
-- [ ] The Settings command list shows `scoring train` as routed to
-      `POST /ops/scoring/train` (planned
-      test_scoring_train_is_a_routed_command).
-- [ ] The contract is regenerated, and `just contract` shows no diff beyond
+      here because the image is not built in the test suite
+      (`services/api/tests/test_deploy_files.py::test_the_hosted_image_installs_the_training_group`).
+- [x] The import-linter contract still passes: no module but
+      `harrier.scoring.train` imports scikit-learn or numpy
+      (`uv run lint-imports` in `services/api`, unchanged contract in
+      `services/api/pyproject.toml`).
+- [x] The Scoring section shows "Train the model". Clicking it posts
+      `{activate: true}` to `/ops/scoring/train` and streams the run
+      (`apps/web/src/pages/operations/ScoringSection.test.tsx::trains the model and streams the run`).
+- [x] The Settings command list shows `scoring train` as routed to
+      `POST /ops/scoring/train`
+      (`services/api/tests/test_ui_settings.py::test_scoring_train_is_a_routed_command`).
+- [x] The contract is regenerated, and `just contract` shows no diff beyond
       the new route.
-- [ ] The pull request states the hosted image's size before and after,
+- [x] The pull request states the hosted image's size before and after,
       measured from the built images.
 
 ## Proof / origin
@@ -196,6 +199,39 @@ Akin approved the spec with all three open decisions as recommended:
    a host-only command.
 2. One button trains with `--activate`; the gate decides activation.
 3. "Write the feature export" and "Train the model" stay two buttons.
+
+## Amendment (2026-10-17, implementation)
+
+The build found five places the Behavior did not name. Each follows from
+it; none changes what the owner sees beyond this spec.
+
+1. **The CLI's run class.** A hosted run refuses a command outside
+   `RUN_CLASS` (`services/api/src/harrier_cli/main.py`), and
+   `services/api/tests/test_hosted_runs.py::test_every_run_kind_declares_its_hosted_answer`
+   holds it equal to the verbs of the kinds that run hosted. So `scoring
+   export` and `scoring train` join it.
+2. **The export opens the run's store.** `harrier scoring export` opened
+   the local file with `connect()`. A hosted run must read its owner's rows,
+   so it opens `_open_store()`, as spec 107's third pull request made the
+   other run verbs do. Locally that is the same file.
+3. **The host panel's model row.** The panel lists, beside each fact, the
+   host command that changes it (spec 096). Training is no longer a host
+   command, so the `model` row lists none. The fact itself (`_active_model`,
+   `GET /settings/host`) is read as before.
+4. **The trainer's import error.** An environment without the `training`
+   group printed "Train on the host, where the dev group is installed". It
+   now names the group to install
+   (`cd services/api && uv sync --group training`). The exit code is
+   unchanged.
+5. **A renamed test.** The Operations page test that said training stays
+   on the host is now
+   `apps/web/src/pages/operations/OperationsPage.test.tsx::the feature export runs here beside training`,
+   and spec 095's citation of it follows the new name.
+
+The local image's stages are `runtime` in the `Dockerfile`; the hosted
+image's are `hosted`. The shared `base` stage's sync installs only `pdf`
+for Chromium and is unchanged, because each image's own sync replaces its
+groups.
 
 ## Out of scope
 
