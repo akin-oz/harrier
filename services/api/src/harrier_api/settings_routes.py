@@ -111,6 +111,14 @@ _BACKUP_FILES = (
     "operator's disk, so it runs on the operator's machine with the Storage project's "
     "secret key in the shell."
 )
+_RESTORE_STORAGE = (
+    "Hosted restore (spec 155): it makes the Storage bucket and policy in a store restored "
+    "into a new project, as the migrator, during the operator's restore."
+)
+_RESTORE_FILES = (
+    "Hosted restore (spec 155): it uploads a files backup into one hosted account's Storage, "
+    "so it runs on the operator's machine with the Storage project's secret key in the shell."
+)
 _DEPLOY = (
     "Deploy checks (spec 110): the deploy workflow runs them, and the operator runs the cost "
     "projection once a month from a shell."
@@ -245,6 +253,8 @@ COMMAND_PLACES: dict[str, Place] = {
     "store backup-check": TerminalOnly(_BACKUP_DB),
     "store backup-seal": TerminalOnly(_BACKUP_DB),
     "store backup-files": TerminalOnly(_BACKUP_FILES),
+    "store restore-storage": TerminalOnly(_RESTORE_STORAGE),
+    "store restore-files": TerminalOnly(_RESTORE_FILES),
     "deploy check-auth-settings": TerminalOnly(_DEPLOY),
     "deploy check-machine-count": TerminalOnly(_DEPLOY),
     "deploy check-scheduler-tick": TerminalOnly(_DEPLOY),

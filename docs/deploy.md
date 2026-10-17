@@ -792,21 +792,49 @@ setup, per environment" says (step 1), and its migrator URL as step 2 says.
    jq -r --arg since "<started_at from manifest.json>" 'select(.at > $since) | .user_id' data/hosted/erasures.jsonl
    uv run --project services/api harrier operator erase <user id> --confirm <user id>
    ```
-6. Run `harrier store check-deploy` as the migrator, with the same `--login`
-   arguments the deploy passes (step 4 of "One deploy, in order"). It reports a
-   role, a grant or a Storage policy the restore did not bring back.
-   **The dump holds none of `storage`**, so the bucket `harrier-files` and the
+6. **The dump holds none of `storage`**, so the bucket `harrier-files` and the
    policy `harrier_files_owner_only` on `storage.objects` are not restored.
-   They are made by the statements `POSTGRES_STORAGE` holds in
-   `services/api/src/harrier/tracker/schema.py`; no command applies them to a
-   restored store yet (spec 153, Honest limitations).
+   Make them with `harrier store restore-storage`, as the migrator (spec 155):
+
+   ```
+   HARRIER_DATABASE_URL="$RESTORE_URL" uv run --project services/api --group postgres harrier store restore-storage
+   ```
+
+   It runs migration 23's own bucket and policy statements (`POSTGRES_STORAGE`
+   in `services/api/src/harrier/tracker/schema.py`), makes each only if it is
+   absent, and prints `made` or `already there` for each. It refuses, and makes
+   nothing, a store below version 23, one without
+   `public.harrier_storage_user_active()` (the `public` restore was incomplete),
+   and a bucket `harrier-files` with other settings
+   (`services/api/tests/test_store_deploy.py::test_restore_storage_refuses_an_incomplete_store_and_makes_nothing`).
+   Then run `harrier store check-deploy` as the migrator, with the same
+   `--login` arguments the deploy passes (step 4 of "One deploy, in order"). It
+   reports a role, a grant, a Storage policy, or a missing bucket or policy the
+   restore did not bring back
+   (`services/api/tests/test_store_deploy.py::test_check_deploy_refuses_a_store_missing_the_bucket_or_policy`).
 7. Point the deployment at the new project (the secrets table above lists each
    value: the Fly secrets, the GitHub environment secret and variables, the
    Vercel variables), then start the API: `fly scale count 1 --app <api app>`.
-8. Files: if the machine's `data/` still holds `resumes`, `cover-letters` and
-   `answers`, `harrier store import-artifacts --owner <user id>` copies them back
-   (spec 146). A copy made by `backup-files` is named by object name, and no
-   command uploads from it yet.
+8. Files: upload the newest `backup-files` copy, for each owner, with the
+   Storage project's secret key in the shell as for `backup-files` (spec 155):
+
+   ```
+   uv run --project services/api harrier store restore-files --owner <user id> --from data/hosted/backups/files/<newest UTC date>
+   ```
+
+   Restored `auth.users` rows keep their ids, so the owner's prefix is the same
+   as in the old project. `--from` must be a dated directory under
+   `data/hosted/backups/files`; anything else is refused before any request.
+   Each upload is create-only: an object already there with the same bytes
+   counts `already there`, one with other bytes is left and counted `left,
+   differs`, and the run goes on. A file whose extension the bucket does not
+   accept, or any other Storage error after the 429 waits, counts `not
+   written`, and the command then exits 1. It prints counts only
+   (`services/api/tests/test_restore_files.py::test_restore_files_uploads_a_backup_copy_create_only_and_names_none`).
+   A rerun counts what is already uploaded `already there`.
+   Then, if the machine's `data/` holds `resumes`, `cover-letters` and `answers`
+   written after that copy, `harrier store import-artifacts --owner <user id>`
+   copies them too (spec 146).
 
 A restore loses up to a day of writes: the backup is nightly.
 

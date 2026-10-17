@@ -149,31 +149,33 @@ The steps stay manual (spec 153, Out of scope).
 
 ## Acceptance criteria
 
-- [ ] On a Postgres store with the storage shim, at the latest version, with
+- [x] On a Postgres store with the storage shim, at the latest version, with
       the bucket row and the policy dropped, `restore-storage` makes both,
       prints `made` twice and exits 0. A second run prints `already there`
-      twice (planned
-      test_restore_storage_makes_the_bucket_and_policy_a_restore_lacks).
-- [ ] `restore-storage` refuses a store below version 23, a store without
+      twice
+      (`services/api/tests/test_store_deploy.py::test_restore_storage_makes_the_bucket_and_policy_a_restore_lacks`).
+- [x] `restore-storage` refuses a store below version 23, a store without
       `harrier_storage_user_active()`, and a bucket with other settings. Each
-      refusal exits 1 and makes nothing (planned
-      test_restore_storage_refuses_an_incomplete_store_and_makes_nothing).
-- [ ] `check-deploy` on a shimmed store without the bucket, and on one without
+      refusal exits 1 and makes nothing
+      (`services/api/tests/test_store_deploy.py::test_restore_storage_refuses_an_incomplete_store_and_makes_nothing`).
+- [x] `check-deploy` on a shimmed store without the bucket, and on one without
       the policy, raises `StoreDeployRefused` naming what is missing and
-      `restore-storage`. On a complete store it passes as before (planned
-      test_check_deploy_refuses_a_store_missing_the_bucket_or_policy).
-- [ ] Against the fake Storage server, `restore-files` uploads every file of a
+      `restore-storage`. On a complete store it passes as before
+      (`services/api/tests/test_store_deploy.py::test_check_deploy_refuses_a_store_missing_the_bucket_or_policy`).
+- [x] Against the fake Storage server, `restore-files` uploads every file of a
       dated directory without upsert, under `<owner>/<relative path>`, with
       its content type. It counts an equal object `already there`, leaves
       one with other bytes and goes on, exiting 0. It exits 1 when a file is
-      `not written`. It prints no object name (planned
-      test_restore_files_uploads_a_backup_copy_create_only_and_names_none).
-- [ ] `restore-files` refuses a `--from` outside
+      `not written`. It prints no object name
+      (`services/api/tests/test_restore_files.py::test_restore_files_uploads_a_backup_copy_create_only_and_names_none`).
+- [x] `restore-files` refuses a `--from` outside
       `data/hosted/backups/files/` and a secret key defined in `.env`, both
-      before any request (planned
-      test_restore_files_refuses_a_foreign_directory_and_an_env_key).
-- [ ] `docs/deploy.md` names both commands at steps 6 and 8 of "Restoring the
-      hosted store". Spec 153's Honest limitations point to this spec.
+      before any request
+      (`services/api/tests/test_restore_files.py::test_restore_files_refuses_a_foreign_directory_and_an_env_key`).
+- [x] `docs/deploy.md` names both commands at steps 6 and 8 of "Restoring the
+      hosted store"
+      (`services/api/tests/test_backup_workflow.py::test_the_runbook_states_the_restore_procedure`).
+      Spec 153's Honest limitations point to this spec.
 
 ## Proof / origin
 
@@ -213,6 +215,39 @@ Akin approved the spec with these answers:
    overwritten, and it does not block the run: `restore-files` counts it
    `left, differs`, carries on, and does not exit 1 for it. This replaces
    the recommendation, which exited 1.
+
+## Amendment (2026-10-17): the build
+
+What the build settled that the text above left open. No behavior above
+changes.
+
+- `restore-storage`'s refusal lines, each after `error: `:
+  `restore-storage: store version: the store is at version <n>, below 23;
+  run harrier store migrate, which makes the bucket and the policy`;
+  `restore-storage: storage: ` and `MIGRATION_23_NEEDS_STORAGE`;
+  `restore-storage: function: public.harrier_storage_user_active() is
+  missing, and the policy calls it; the restore of public is incomplete`;
+  `restore-storage: bucket: ` and `MIGRATION_23_OTHER_BUCKET`. It picks
+  migration 23's statements out of `POSTGRES_STORAGE` by their text
+  (`migration_23_statement` in `services/api/src/harrier/storedeploy.py`),
+  so `schema.py` is unchanged.
+- `check-deploy` names both when both are missing: `check-deploy: storage:
+  bucket harrier-files and policy harrier_files_owner_only are missing; run
+  harrier store restore-storage`.
+- `restore-files` prints `files: <count>`, the four counts in the table's
+  order, then `restored`, or `incomplete: <count> not written` when it exits
+  1. A 429 past the last wait stops with `upload: Storage answered 429 after
+  every wait; run the command again to resume` (`compare:` when it came at
+  the read of an existing object).
+- `restore-files` never follows a symbolic link inside the directory: one is
+  counted `not written`, with no request. `--from` is resolved, links
+  included, before it is checked, so a link under the root that leads
+  elsewhere is refused.
+- The upload by object name is `SupabaseFileStore.create_object`, beside
+  `read_object`, sharing spec 154's create-only request and answer.
+- The settings page's terminal-only list (spec 096,
+  `services/api/src/harrier_api/settings_routes.py`) names both commands, as
+  it names every command.
 
 ## Out of scope
 

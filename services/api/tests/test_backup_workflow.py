@@ -238,7 +238,10 @@ def test_the_runbook_names_every_secret_and_variable_the_backup_workflow_reads()
 
 def test_the_runbook_states_the_restore_procedure() -> None:
     """`docs/deploy.md` names the workflow and the commands, and states the
-    restore in order, the ledger re-erase included (spec 153, acceptance)."""
+    restore in order, the ledger re-erase included (spec 153, acceptance),
+    with the bucket and policy made before check-deploy and the files
+    uploaded from the newest copy before import-artifacts (spec 155,
+    acceptance)."""
     text = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
     section = text[
         text.index("## Restoring the hosted store") : text.index("## A deploy that fails")
@@ -249,8 +252,11 @@ def test_the_runbook_states_the_restore_procedure() -> None:
         "fly scale count 0",
         "pg_restore",
         "harrier operator erase",
+        "harrier store restore-storage",
         "harrier store check-deploy",
         "fly scale count 1",
+        "harrier store restore-files",
+        "harrier store import-artifacts",
     ]
     at = [section.index(phrase) for phrase in ordered]
     assert at == sorted(at), dict(zip(ordered, at, strict=True))

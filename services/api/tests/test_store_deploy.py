@@ -1,5 +1,6 @@
 """The deploy's store steps: `harrier store grant-tenant`,
-`grant-schedule-reader` and `check-deploy` (spec 110).
+`grant-schedule-reader` and `check-deploy` (spec 110), and the restore's
+`restore-storage` (spec 155).
 
 Each runs as the migrating role on a copy of the migrated template, through
 `harrier_cli.main.main` as the deploy workflow runs it, with the roles the
@@ -25,7 +26,7 @@ from test_hosted_requests import LoginRole, Server, copied_server
 from test_owner_policy import migrate_to
 
 from harrier import storedeploy
-from harrier.connection import URL_VARIABLE, Connection, StoreDatabaseError
+from harrier.connection import URL_VARIABLE, Connection, StoreDatabaseError, StoreDeployRefused
 from harrier.loginrole import (
     CANNOT_LOG_IN,
     CANNOT_SET_TENANT,
@@ -34,9 +35,12 @@ from harrier.loginrole import (
 )
 from harrier.pgstore import postgres_connect, target_version
 from harrier.tracker.schema import (
+    MIGRATION_23_NEEDS_STORAGE,
+    MIGRATION_23_OTHER_BUCKET,
     OWNED_TABLES,
     POSTGRES_MIGRATIONS,
     SCHEDULE_READER_ROLE,
+    STORAGE_USER_FUNCTION,
     TENANT_ROLE,
 )
 from harrier_cli.main import main
@@ -832,3 +836,172 @@ def test_the_scheduler_login_passes_every_deploy_it_holds_the_reader_through(
             "",
         )
         assert run(check_deploy_argv(api, run_login, scheduler), capsys)[0] == 0
+
+
+# --- restore-storage, and check-deploy's bucket and policy (spec 155) ---
+
+DROP_POLICY = "DROP POLICY harrier_files_owner_only ON storage.objects"
+DROP_BUCKET = "DELETE FROM storage.buckets WHERE id = 'harrier-files'"
+RESTORE_STORAGE = ["store", "restore-storage"]
+
+StorageState = tuple[list[tuple[object, ...]], list[tuple[object, ...]]]
+
+
+def storage_state(url: str) -> StorageState:
+    """The bucket rows and the policies on storage.objects, as Postgres
+    prints them back."""
+    with closing(postgres_connect(url)) as conn:
+        buckets = conn.execute(
+            b"SELECT id, name, public, file_size_limit, allowed_mime_types "
+            b"FROM storage.buckets ORDER BY id"
+        ).fetchall()
+        policies = conn.execute(
+            b"SELECT polname, polpermissive, polcmd::text, polroles::regrole[]::text[], "
+            b"pg_get_expr(polqual, polrelid), pg_get_expr(polwithcheck, polrelid) "
+            b"FROM pg_policy WHERE polrelid = 'storage.objects'::regclass ORDER BY polname"
+        ).fetchall()
+    return [tuple(row) for row in buckets], [tuple(row) for row in policies]
+
+
+def test_restore_storage_makes_the_bucket_and_policy_a_restore_lacks(
+    server: Server, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A restore brings back `public` and the auth rows, not `storage`: the
+    command makes the bucket and the policy as migration 23 made them, once,
+    and a second run changes nothing. check-deploy passes after it."""
+    migrated = storage_state(server.url)
+    assert migrated[0] and migrated[1]
+    server.sql(DROP_POLICY, DROP_BUCKET)
+    assert storage_state(server.url) == ([], [])
+
+    code, out, err = run(RESTORE_STORAGE, capsys)
+
+    assert (code, err) == (0, "")
+    assert out.splitlines() == [
+        "bucket harrier-files: made",
+        "policy harrier_files_owner_only: made",
+    ]
+    assert storage_state(server.url) == migrated
+    never_the_url(server, out, err)
+
+    code, out, err = run(RESTORE_STORAGE, capsys)
+
+    assert (code, err) == (0, "")
+    assert out.splitlines() == [
+        "bucket harrier-files: already there",
+        "policy harrier_files_owner_only: already there",
+    ]
+    assert storage_state(server.url) == migrated
+
+    # Only the policy missing: only the policy is made.
+    server.sql(DROP_POLICY)
+    code, out, _ = run(RESTORE_STORAGE, capsys)
+    assert code == 0
+    assert out.splitlines() == [
+        "bucket harrier-files: already there",
+        "policy harrier_files_owner_only: made",
+    ]
+    assert storage_state(server.url) == migrated
+    assert run(bare(server), capsys)[0] == 0
+
+
+def test_restore_storage_refuses_an_incomplete_store_and_makes_nothing(
+    server: Server, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Below migration 23, with a bucket of harrier's id and other settings,
+    without the function the policy calls, without Supabase's storage
+    objects, or on SQLite: refused in one line, exit 1, and nothing made."""
+
+    def refused(expected: str) -> None:
+        code, out, err = run(RESTORE_STORAGE, capsys)
+        assert (code, out) == (1, "")
+        assert err == f"error: {expected}\n"
+        never_the_url(server, out, err)
+
+    # Below migration 23: the store has the storage shim and no bucket.
+    previous = max(v for v, _ in POSTGRES_MIGRATIONS if v < storedeploy.STORAGE_MIGRATION)
+    with fresh_database() as url:
+        migrate_to(url, previous, monkeypatch)
+        monkeypatch.setenv(URL_VARIABLE, url)
+        refused(
+            f"restore-storage: store version: the store is at version {previous}, below "
+            f"{storedeploy.STORAGE_MIGRATION}; run harrier store migrate, which makes the "
+            "bucket and the policy"
+        )
+        assert storage_state(url) == ([], [])
+    monkeypatch.setenv(URL_VARIABLE, server.url)
+
+    # A bucket of harrier's id with other settings: left as it is.
+    server.sql(
+        DROP_POLICY,
+        DROP_BUCKET,
+        "INSERT INTO storage.buckets (id, name, public) "
+        "VALUES ('harrier-files', 'harrier-files', true)",
+    )
+    other_bucket = storage_state(server.url)
+    assert other_bucket[1] == []
+    refused(f"restore-storage: bucket: {MIGRATION_23_OTHER_BUCKET}")
+    assert storage_state(server.url) == other_bucket
+
+    # The restore of public left out the function the policy calls.
+    server.sql(f"DROP FUNCTION public.{STORAGE_USER_FUNCTION}")
+    refused(
+        f"restore-storage: function: public.{STORAGE_USER_FUNCTION} is missing, and the "
+        "policy calls it; the restore of public is incomplete"
+    )
+    assert storage_state(server.url) == other_bucket
+    assert not server.one(f"SELECT to_regprocedure('public.{STORAGE_USER_FUNCTION}') IS NOT NULL")
+
+    # No storage objects at all.
+    server.sql("DROP SCHEMA storage CASCADE")
+    refused(f"restore-storage: storage: {MIGRATION_23_NEEDS_STORAGE}")
+    assert not server.one("SELECT to_regnamespace('storage') IS NOT NULL")
+
+    # A SQLite store, refused before anything opens the local database.
+    from harrier.db import default_db_path
+
+    monkeypatch.setenv(URL_VARIABLE, "")
+    assert run(RESTORE_STORAGE, capsys) == (
+        1,
+        "",
+        "error: harrier store restore-storage needs a Postgres store\n",
+    )
+    assert not default_db_path().exists()
+
+
+def test_check_deploy_refuses_a_store_missing_the_bucket_or_policy(
+    server: Server, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A restored project deploys green no more: check-deploy names the
+    missing bucket, the missing policy, or both, and the command that makes
+    them. A complete store passes as before."""
+    code, out, err = run(bare(server), capsys)
+    assert (code, err) == (0, "")
+    assert out.splitlines()[-1] == "storage.objects: no policy but harrier_files_owner_only"
+
+    server.sql(DROP_BUCKET)
+    _, failure = failed_check(server, bare(server), capsys)
+    assert failure == (
+        "check-deploy: storage: bucket harrier-files is missing; run harrier store restore-storage"
+    )
+
+    assert run(RESTORE_STORAGE, capsys)[0] == 0
+    server.sql(DROP_POLICY)
+    _, failure = failed_check(server, bare(server), capsys)
+    assert failure == (
+        "check-deploy: storage: policy harrier_files_owner_only is missing; "
+        "run harrier store restore-storage"
+    )
+
+    server.sql(DROP_BUCKET)
+    with pytest.raises(StoreDeployRefused) as refused:
+        storedeploy.check_deploy(server.url, [], lambda _line: None)
+    assert str(refused.value) == (
+        "check-deploy: storage: bucket harrier-files and policy harrier_files_owner_only "
+        "are missing; run harrier store restore-storage"
+    )
+
+    assert run(RESTORE_STORAGE, capsys)[0] == 0
+    code, out, err = run(bare(server), capsys)
+    assert (code, err) == (0, "")
+    assert out.splitlines()[-1] == "storage.objects: no policy but harrier_files_owner_only"
