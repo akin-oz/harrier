@@ -1218,10 +1218,15 @@ def test_blank_given_text_reads_the_stored_description(tailor_env: int) -> None:
 
 
 def test_run_tailor_reads_the_description_stored_for_a_padded_url(tailor_env: int) -> None:
-    """A row URL with spaces around it: the check reads the description
-    stored for the stripped URL, so run_tailor must read that same entry
-    rather than tailor to nothing (post-merge review of PR #383)."""
+    """A row URL with spaces around it (a legacy import copies it as it was):
+    the check reads the description stored for the stripped URL, so
+    run_tailor must read that same entry rather than tailor to nothing, and
+    the event the move records pins that description's digest (post-merge
+    review of PR #383, and CodeRabbit on PR #387)."""
+    import hashlib
+
     from harrier.screening.descriptions import save_description_cache
+    from harrier.tracker.store import list_events
 
     conn = connect()
     scope = default_scope(conn)
@@ -1237,7 +1242,8 @@ def test_run_tailor_reads_the_description_stored_for_a_padded_url(tailor_env: in
         },
         scope=scope,
     )
-    save_description_cache("https://example.test/padded", "React and TypeScript product role.")
+    posting = "React and TypeScript product role."
+    save_description_cache("https://example.test/padded", posting)
     result = run_tailor(
         conn,
         scope,
@@ -1248,6 +1254,9 @@ def test_run_tailor_reads_the_description_stored_for_a_padded_url(tailor_env: in
     )
     metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
     assert metadata["jd_source"] == "cache"
+    moved = list_events(conn, scope, padded)[-1]
+    assert moved["to_status"] == "tailored_cv_requested"
+    assert moved["description_sha256"] == hashlib.sha256(posting.encode("utf-8")).hexdigest()
 
 
 def test_failing_pdf_gate_leaves_tracker_row_unchanged(tailor_env: int) -> None:

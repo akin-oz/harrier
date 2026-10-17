@@ -127,9 +127,11 @@ its content plan also ranks by the description. The check does not hand
 the stored text to `run_tailor`; it reads the text itself, so the CV's
 sidecar still records `jd_source: "cache"` (local review of PR #383).
 Text that is only whitespace counts as no text, in the check and in
-`run_tailor` alike, and `run_tailor` reads the stored text for the job's
-URL stripped, as the check does. So a run the check lets through never
-tailors to an empty posting (post-merge review of PR #383).
+`run_tailor` alike. The description cache is keyed by the URL stripped, so
+every reader finds the entry whatever whitespace the row's URL carries (a
+legacy import copies URLs as they were). So a run the check lets through
+never tailors to an empty posting, and the event its move records pins the
+description's digest (post-merge review of PR #383; CodeRabbit on PR #387).
 
 `evaluate` does not refuse. It evaluates a recorded offer, and it already
 runs without a description today.
