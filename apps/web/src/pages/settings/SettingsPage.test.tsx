@@ -217,6 +217,11 @@ test("a finished backup is told in a status region that was already there", asyn
 
   const result = await screen.findByText(`${ARCHIVE} (0.1 MiB, verified)`);
   expect(before.some((region) => region.contains(result))).toBe(true);
+  // And no region came with it. A region that mounted since (a panel that
+  // finished loading) must be empty; one holding the message would be the
+  // insertion spec 156 forbids.
+  const added = screen.getAllByRole("status").filter((region) => !before.includes(region));
+  expect(added.filter((region) => region.textContent !== "")).toEqual([]);
 });
 
 test("restore has no button", async () => {

@@ -199,6 +199,11 @@ test("unrouted lines land in a status region that was already there", async () =
 
   const line = await screen.findByText("no importer handles https://careers.example.com/jobs");
   expect(before.some((region) => region.contains(line))).toBe(true);
+  // And no region came with it. A region that mounted since (a panel that
+  // finished loading) must be empty; one holding the message would be the
+  // insertion spec 156 forbids.
+  const added = screen.getAllByRole("status").filter((region) => !before.includes(region));
+  expect(added.filter((region) => region.textContent !== "")).toEqual([]);
 });
 
 test("the searches editor asks nothing about importers", async () => {

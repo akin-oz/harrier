@@ -213,6 +213,14 @@ async function regionsBefore(button: string): Promise<HTMLElement[]> {
   return screen.getAllByRole("status");
 }
 
+// And no region came with the outcome. A region that mounted since (a
+// section that finished loading) must be empty; one holding the outcome
+// would be the insertion spec 156 forbids.
+function expectNoRegionCameWithIt(before: HTMLElement[]): void {
+  const added = screen.getAllByRole("status").filter((region) => !before.includes(region));
+  expect(added.filter((region) => region.textContent !== "")).toEqual([]);
+}
+
 // --- the schedule -------------------------------------------------------------
 
 test("a job with no recent success reads as overdue and nothing reads as healthy", async () => {
@@ -557,6 +565,7 @@ test("the digest outcome lands in a status region that was already there", async
 
   const outcome = await screen.findByText("Delivered to Telegram.");
   expect(before.some((region) => region.contains(outcome))).toBe(true);
+  expectNoRegionCameWithIt(before);
 });
 
 test("a run's state lands in a status region that was already there", async () => {
@@ -673,6 +682,7 @@ test("the link outcome lands in a status region that was already there", async (
 
   const outcome = await screen.findByText("Linked 1; 0 left unmatched.");
   expect(before.some((region) => region.contains(outcome))).toBe(true);
+  expectNoRegionCameWithIt(before);
 });
 
 test("a dry backfill comes first and writing names the count it will write", async () => {
@@ -969,6 +979,8 @@ test("the eligibility report lands in a status region that was already there", a
     expect(region.textContent).toContain("Would assess 5 of 12 rows");
   });
   expect(screen.getByRole("status", { name: "Eligibility report" })).toBe(region);
+  // No unnamed region came with the report either.
+  expect(within(region).queryByRole("status")).toBeNull();
 });
 
 test("a refused reassess shows the API's words", async () => {

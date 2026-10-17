@@ -308,6 +308,11 @@ test("a lost stream is told in a status region that was already there", async ()
 
   const notice = await screen.findByText(/^Lost the log stream/);
   expect(before.some((region) => region.contains(notice))).toBe(true);
+  // And no region came with it. A region that mounted since (a panel that
+  // finished loading) must be empty; one holding the message would be the
+  // insertion spec 156 forbids.
+  const added = screen.getAllByRole("status").filter((region) => !before.includes(region));
+  expect(added.filter((region) => region.textContent !== "")).toEqual([]);
 });
 
 // --- artifacts ---------------------------------------------------------------
