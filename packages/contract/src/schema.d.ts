@@ -3777,7 +3777,7 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description the posting page could not be read, or held no description */
+            /** @description the posting page could not be read, held no description, or held text the store refuses */
             502: {
                 headers: {
                     [name: string]: unknown;

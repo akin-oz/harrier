@@ -171,8 +171,8 @@ which the operator asked for.
       `apps/web/src/features/description/DescriptionPanel.test.tsx`, and the test
       "a fetch refusal is shown in the API's words and the paste box stays" in
       `apps/web/src/features/description/DescriptionPanel.test.tsx`).
-- [x] The Operations page starts a dry run and a fetch run (planned
-      OperationsPage test).
+- [x] The Operations page starts a dry run and a fetch run (the test "missing descriptions run as a dry run first, then a fetch (spec 151)" in
+      `apps/web/src/pages/operations/OperationsPage.test.tsx`).
 - [x] No log line from a fetch or a backfill carries the URL, company,
       title or description (`services/api/tests/test_description_fetch.py::test_a_fetch_logs_no_posting_identity`).
 - [x] The contract is regenerated and declares both routes and every
@@ -193,6 +193,48 @@ which the operator asked for.
   (`is_linkedin_job_url` in `services/api/src/harrier/screening/linkedin.py`;
   the `example.com/jobs/view` case of
   `services/api/tests/test_description_fetch.py::test_a_fetch_is_refused_before_any_request`).
+
+## Amendments from the local review of PR #392 (2026-10-17)
+
+CodeRabbit was rate limited, so the repository's review agents read the
+change. Each finding below was reproduced before it was fixed.
+
+- **The job id is the trailing number.** `linkedin_job_id` matched lazily
+  and stopped at the first digits after a hyphen, so
+  `senior-engineer-at-3m-3912345678` read as job 3 and the fetch would have
+  stored that posting. It now takes the number that ends the path segment.
+  The function is shared, so discovery's page verdicts and the poster
+  backfill read the right job too
+  (`services/api/tests/test_apify_linkedin.py::test_linkedin_job_id_handles_both_url_shapes`,
+  `services/api/tests/test_description_fetch.py::test_a_slugged_linkedin_url_fetches_its_own_posting`).
+- **Redirects keep to the posting.** An ATS redirect is followed only to an
+  allow-listed host with the requested path, so a closed posting's redirect
+  to its board's listing stores nothing
+  (`services/api/tests/test_description_fetch.py::test_an_ats_redirect_must_keep_the_posting_path`). The guest
+  endpoint's redirects are held to linkedin.com
+  (`services/api/tests/test_description_fetch.py::test_a_linkedin_description_is_fetched_and_stored`).
+- **The pause is per endpoint.** Every LinkedIn job is read from the one
+  guest endpoint, so the pause is keyed on the host requested, not the
+  subdomain the job's URL names
+  (`services/api/tests/test_description_fetch.py::test_the_backfill_pauses_for_every_linkedin_subdomain`).
+- **An unreadable store stops a fetch.** The check for a stored description
+  reads strictly (`read_description_strictly` in
+  `services/api/src/harrier/screening/descriptions.py`): a store that
+  cannot be read raises instead of reading as empty, so a fetch never
+  writes over a pasted description it could not see
+  (`services/api/tests/test_description_fetch.py::test_an_unreadable_store_is_never_read_as_empty`).
+- **The backfill finishes or says why it stopped.** A description stored
+  after the walk looked is counted as already stored and the run goes on
+  (`services/api/tests/test_description_fetch.py::test_a_description_stored_mid_run_is_counted_and_the_run_goes_on`).
+  A store error ends the run with exit 1 and `description backfill
+  stopped: <class>` on stderr, the "could not walk the jobs" case above
+  (`services/api/tests/test_description_fetch.py::test_a_store_error_stops_the_backfill`). A negative `--limit` is a
+  usage error, exit 2 (`services/api/tests/test_description_fetch.py::test_a_negative_backfill_limit_is_a_usage_error`).
+- **A refusal does not outlive its edit.** A fetch refusal on the Apply
+  panel clears on Replace, Cancel and a save (the test "an earlier fetch
+  refusal does not reappear after a save and Replace" in
+  `apps/web/src/features/description/DescriptionPanel.test.tsx`). The
+  route's declared 502 now names text the store refuses as a cause.
 
 ## Proof / origin
 

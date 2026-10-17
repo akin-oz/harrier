@@ -18,10 +18,11 @@ from harrier.screening.descriptions import (
     MIN_DESCRIPTION_LENGTH_FOR_SCORING,
     enrich_url_allowed,
     load_cached_description,
+    read_description_strictly,
     save_description_cache,
 )
 from harrier.screening.http import request_text, strip_html
-from harrier.screening.linkedin import guest_description, is_linkedin_job_url
+from harrier.screening.linkedin import GUEST_JD_URL, guest_description, is_linkedin_job_url
 
 # A choice, not a measured need: far above any posting seen, and small
 # enough that a mistaken paste of a whole file is refused (spec 149).
@@ -135,12 +136,32 @@ class EmptyPageError(PostingUnread):
         super().__init__("the posting page held no description")
 
 
+def _path(url: str) -> str:
+    try:
+        return urlparse(url).path.rstrip("/")
+    except ValueError:
+        return ""
+
+
+def same_posting(requested: str) -> Callable[[str], bool]:
+    """The redirect rule for an ATS page: an allow-listed host and the
+    requested path. A closed posting redirects to its board's listing, whose
+    text is not this job's description (spec 151 review); a move to https or
+    a sibling ATS host keeps the path and is followed."""
+    path = _path(requested)
+
+    def allowed(candidate: str) -> bool:
+        return enrich_url_allowed(candidate) and bool(path) and _path(candidate) == path
+
+    return allowed
+
+
 def _ats_text(url: str) -> str:
-    """An allow-listed ATS page stripped of HTML, every redirect checked
-    against the same allow-list (spec 007's enrichment reader). One attempt,
-    so no retry log line names the URL."""
+    """An allow-listed ATS page stripped of HTML, every redirect checked by
+    `same_posting` (spec 007's enrichment reader, narrowed). One attempt, so
+    no retry log line names the URL."""
     html = request_text(
-        url, timeout_seconds=FETCH_TIMEOUT_SECONDS, retries=1, url_allowed=enrich_url_allowed
+        url, timeout_seconds=FETCH_TIMEOUT_SECONDS, retries=1, url_allowed=same_posting(url)
     )
     return strip_html(html)[:FETCHED_TEXT_LIMIT]
 
@@ -165,13 +186,24 @@ def _host(url: str) -> str:
         return ""
 
 
+_GUEST_HOST = _host(GUEST_JD_URL)
+
+
+def _request_host(url: str) -> str:
+    """The host a fetch for this URL asks: every LinkedIn job is read from
+    the one guest endpoint, whatever subdomain the job's URL names."""
+    return _GUEST_HOST if is_linkedin_job_url(url) else _host(url)
+
+
 def fetch_description(job_id: int, url: str) -> str:
     """Fetch a job's missing description from its posting page, store it, and
     return what was stored. Every refusal that needs no request comes first."""
     url = url.strip()
     if not url:
         raise JobHasNoUrlError(job_id)
-    if stored_description(url):
+    # Strict: a store that cannot be read raises here, never reads as empty
+    # and lets the fetch write over a pasted description (spec 151 review).
+    if read_description_strictly(url):
         raise AlreadyStoredError(job_id)
     reader = posting_reader(url)
     if reader is None:
@@ -262,13 +294,17 @@ def backfill_descriptions(
             summary.lines.append(line)
             emit(line)
             continue
-        host = _host(url)
+        host = _request_host(url)
         if host in last_request:
             wait = BACKFILL_PAUSE_SECONDS - (clock() - last_request[host])
             if wait > 0:
                 sleep(wait)
         try:
             fetch_description(job_id, url)
+        except AlreadyStoredError:
+            # Stored since the walk looked, by discovery or a paste.
+            summary.already_stored += 1
+            line = f"job {job_id}: already stored"
         except EmptyPageError as refusal:
             summary.empty_page += 1
             line = f"job {job_id}: {refusal}"

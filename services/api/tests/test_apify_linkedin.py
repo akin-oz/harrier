@@ -197,6 +197,15 @@ def test_linkedin_job_id_handles_both_url_shapes() -> None:
         == "1234567890"
     )
     assert linkedin_job_id("https://www.linkedin.com/jobs/search/?currentJobId=987654") == "987654"
+    # A slug with digits of its own: the id is the trailing number, never the
+    # first one after a hyphen (spec 151 review).
+    for slugged in (
+        "https://www.linkedin.com/jobs/view/senior-engineer-at-3m-3912345678",
+        "https://www.linkedin.com/jobs/view/staff-engineer-2-3912345678",
+        "https://www.linkedin.com/jobs/view/software-engineer-at-1password-3912345678/",
+        "https://www.linkedin.com/jobs/view/engineer-at-x-3912345678?refId=abc",
+    ):
+        assert linkedin_job_id(slugged) == "3912345678", slugged
     assert linkedin_job_id("https://example.com/not-linkedin") == ""
     assert linkedin_job_id("") == ""
 

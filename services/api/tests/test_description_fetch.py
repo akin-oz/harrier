@@ -96,6 +96,9 @@ def test_a_linkedin_description_is_fetched_and_stored(
     def guest(url: str, **kwargs: Any) -> str:
         asked.append(url)
         assert kwargs["retries"] == 1
+        # A redirect off LinkedIn is refused (spec 151 review).
+        assert kwargs["url_allowed"](url)
+        assert not kwargs["url_allowed"]("https://evil.example/jobs/view/4000000001")
         return GUEST_PAGE
 
     monkeypatch.setattr("harrier.screening.linkedin.request_text", guest)
@@ -123,8 +126,11 @@ def test_an_ats_description_is_fetched_and_a_bad_redirect_is_refused(
     response = client.post(f"/apply/{job}/description/fetch", headers=auth())
     assert response.status_code == 200
     assert POSTING in load_cached_description(GREENHOUSE_URL)
-    # Every redirect is checked against the enrichment allow-list.
-    assert calls[0]["url_allowed"] is description_module.enrich_url_allowed
+    # Every redirect is checked: an allow-listed host and the posting's path.
+    rule = calls[0]["url_allowed"]
+    assert rule(GREENHOUSE_URL)
+    assert not rule("https://boards.greenhouse.io/exampleco")
+    assert not rule("https://evil.example/exampleco/jobs/123")
 
     other = _add("https://jobs.lever.co/exampleco/abc", company="Otherco")
 
@@ -357,3 +363,257 @@ def test_a_fetch_logs_no_posting_identity(
             conn.close()
     assert "4000000077" not in caplog.text
     assert "Markerco" not in caplog.text
+
+
+# --- the review of PR #392 ---
+
+
+def test_a_slugged_linkedin_url_fetches_its_own_posting(
+    env: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = _add("https://www.linkedin.com/jobs/view/senior-engineer-at-3m-3912345678")
+    asked: list[str] = []
+
+    def guest(url: str, **kwargs: Any) -> str:
+        asked.append(url)
+        return GUEST_PAGE
+
+    monkeypatch.setattr("harrier.screening.linkedin.request_text", guest)
+    assert client.post(f"/apply/{job}/description/fetch", headers=auth()).status_code == 200
+    assert asked == [GUEST_JD_URL.format(job_id="3912345678")]
+
+
+def test_an_ats_redirect_must_keep_the_posting_path() -> None:
+    allowed = description_module.same_posting(GREENHOUSE_URL)
+    assert allowed(GREENHOUSE_URL)
+    assert allowed("https://job-boards.greenhouse.io/exampleco/jobs/123/")
+    # A closed posting's redirect to its board's listing is refused.
+    assert not allowed("https://boards.greenhouse.io/exampleco")
+    assert not allowed("https://evil.example/exampleco/jobs/123")
+
+
+def test_an_unreadable_store_is_never_read_as_empty(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fetch that cannot read the store stops, rather than writing over a
+    pasted description it could not see."""
+    _add(LINKEDIN_URL)
+
+    class Unreadable:
+        def read(self, key: str) -> bytes | None:
+            raise OSError("the store did not answer")
+
+    monkeypatch.setattr("harrier.screening.descriptions.files", Unreadable)
+    monkeypatch.setattr("harrier.screening.linkedin.request_text", _no_request)
+    with pytest.raises(OSError):
+        description_module.fetch_description(1, LINKEDIN_URL)
+
+
+def test_the_backfill_pauses_for_every_linkedin_subdomain(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every LinkedIn job is read from the one guest endpoint, so the pause
+    is per endpoint, not per subdomain the job's URL names."""
+    _add("https://www.linkedin.com/jobs/view/4000000031", company="Aco")
+    _add("https://uk.linkedin.com/jobs/view/4000000032", company="Bco")
+    _add("https://linkedin.com/jobs/view/4000000033", company="Cco")
+    _readers(monkeypatch)
+    now = [100.0]
+    slept: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        now[0] += seconds
+
+    conn = connect()
+    try:
+        backfill_descriptions(conn, sleep=sleep, clock=lambda: now[0])
+    finally:
+        conn.close()
+    assert slept == [BACKFILL_PAUSE_SECONDS, BACKFILL_PAUSE_SECONDS]
+
+
+def test_a_description_stored_mid_run_is_counted_and_the_run_goes_on(
+    env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    first = _add(LINKEDIN_URL, company="Aco")
+    second = _add("https://www.linkedin.com/jobs/view/4000000020", company="Bco")
+    _readers(monkeypatch)
+    monkeypatch.setattr(description_module.time, "sleep", _no_wait)
+    real = description_module.read_description_strictly
+
+    def raced(url: str) -> str:
+        # Discovery stored the first job's description after the walk looked.
+        return POSTING if url == LINKEDIN_URL else real(url)
+
+    monkeypatch.setattr(description_module, "read_description_strictly", raced)
+    assert main(["description", "backfill"]) == 0
+    out = capsys.readouterr().out
+    assert f"job {first}: already stored" in out
+    assert f"job {second}: fetched" in out
+    assert "already stored: 1" in out
+
+
+def test_a_store_error_stops_the_backfill(
+    env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _add(LINKEDIN_URL)
+    _readers(monkeypatch)
+
+    def refused(*args: object) -> str:
+        raise OSError("Storage refused the write for descriptions/abc.json")
+
+    monkeypatch.setattr(description_module, "store_description", refused)
+    assert main(["description", "backfill"]) == 1
+    err = capsys.readouterr().err
+    assert err.strip() == "description backfill stopped: OSError"
+
+
+def test_a_negative_backfill_limit_is_a_usage_error(env: Path) -> None:
+    with pytest.raises(SystemExit) as raised:
+        main(["description", "backfill", "--limit", "-5"])
+    assert raised.value.code == 2
+
+
+# --- the test-integrity review of PR #392 ---
+
+
+@pytest.mark.parametrize(
+    ("body", "dry_run", "limit"),
+    [({}, True, None), ({"dry_run": False, "limit": 2}, False, 2), ({"dry_run": True}, True, None)],
+)
+def test_the_backfill_route_builds_the_run_it_was_asked_for(
+    env: Path, body: dict[str, Any], dry_run: bool, limit: int | None
+) -> None:
+    """The Operations page's two buttons reach the CLI as a dry run and as a
+    fetch: the route's body decides the run's argv."""
+    from harrier_api.runs import Run, RunManager, build_command
+
+    manager = RunManager(journal_path=env / "data" / "runs" / "journal.jsonl")
+    argv: list[list[str]] = []
+
+    async def start(kind: str, params: Any = None, **_: Any) -> Run:
+        argv.append(build_command(kind, params)[3:])
+        return Run(id="recorded", kind=kind, command=[])
+
+    manager.start = start  # type: ignore[method-assign]
+    client = TestClient(create_app(run_manager=manager))
+    response = client.post("/ops/descriptions/backfill", json=body, headers=auth())
+    assert response.status_code == 200
+    expected = ["description", "backfill"]
+    if dry_run:
+        expected.append("--dry-run")
+    if limit is not None:
+        expected.append(f"--limit={limit}")
+    assert argv == [expected]
+
+
+def test_the_backfill_pauses_after_a_failed_request_too(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _add(LINKEDIN_URL, company="Aco")
+    _add("https://www.linkedin.com/jobs/view/4000000020", company="Bco")
+    _readers(monkeypatch, failing={LINKEDIN_URL})
+    now = [100.0]
+    slept: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        slept.append(seconds)
+        now[0] += seconds
+
+    conn = connect()
+    try:
+        summary = backfill_descriptions(conn, sleep=sleep, clock=lambda: now[0])
+    finally:
+        conn.close()
+    assert summary.failed == 1 and summary.fetched == 1
+    assert slept == [BACKFILL_PAUSE_SECONDS]
+
+
+def test_the_backfill_waits_only_what_is_left_of_the_pause(
+    env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pause runs from the end of one request to the start of the next:
+    time the walk spends between them counts against it."""
+    _add(LINKEDIN_URL, company="Aco")
+    _add("https://www.linkedin.com/jobs/view/4000000020", company="Bco")
+    _readers(monkeypatch)
+    now = [100.0]
+    real = description_module.stored_description
+
+    def slow_check(url: str) -> str:
+        now[0] += 1.5  # the walk's own check takes a second and a half
+        return real(url)
+
+    monkeypatch.setattr(description_module, "stored_description", slow_check)
+    slept: list[float] = []
+    conn = connect()
+    try:
+        backfill_descriptions(conn, sleep=slept.append, clock=lambda: now[0])
+    finally:
+        conn.close()
+    assert slept == [pytest.approx(BACKFILL_PAUSE_SECONDS - 1.5)]
+
+
+def test_every_backfill_line_names_a_job_by_id_only(
+    env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import re
+
+    jobs = _account(env)
+    _readers(monkeypatch, failing={"https://jobs.lever.co/exampleco/abc"})
+    monkeypatch.setattr(description_module.time, "sleep", _no_wait)
+    assert main(["description", "backfill"]) == 0
+    out = capsys.readouterr().out
+    job_lines = [line for line in out.splitlines() if line.startswith("job ")]
+    assert job_lines
+    for line in job_lines:
+        assert re.fullmatch(r"job \d+: [a-z ,()A-Za-z]+", line), line
+    for identity in ("linkedin.com", "lever.co", "Linkco", "Leverco", "Labco", "Frontend"):
+        assert identity not in out, identity
+    assert str(jobs["linkedin"]) in out
+
+
+def test_a_dry_run_honours_the_limit(
+    env: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _account(env)
+    asked = _readers(monkeypatch)
+    assert main(["description", "backfill", "--dry-run", "--limit", "1"]) == 0
+    assert "would fetch: 1" in capsys.readouterr().out
+    assert asked == []
+
+
+def test_a_fetched_page_is_cut_at_its_limit_and_a_short_one_refused(
+    env: Path, client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    long_job = _add(LINKEDIN_URL)
+    long_text = "x" * 10_000
+
+    def long_page(url: str, **kwargs: Any) -> str:
+        return f'<div class="show-more-less-html__markup">{long_text}</div>'
+
+    monkeypatch.setattr("harrier.screening.linkedin.request_text", long_page)
+    assert client.post(f"/apply/{long_job}/description/fetch", headers=auth()).status_code == 200
+    assert len(load_cached_description(LINKEDIN_URL)) == description_module.FETCHED_TEXT_LIMIT
+
+    lever_url = "https://jobs.lever.co/exampleco/abc"
+    long_ats = _add(lever_url, company="Longco")
+
+    def long_ats_page(url: str, **kwargs: Any) -> str:
+        return f"<html>{long_text}</html>"
+
+    monkeypatch.setattr(description_module, "request_text", long_ats_page)
+    assert client.post(f"/apply/{long_ats}/description/fetch", headers=auth()).status_code == 200
+    assert len(load_cached_description(lever_url)) == description_module.FETCHED_TEXT_LIMIT
+
+    short_job = _add(GREENHOUSE_URL, company="Shortco")
+    just_short = "x" * (description_module.MIN_DESCRIPTION_LENGTH_FOR_SCORING - 1)
+
+    def short_page(url: str, **kwargs: Any) -> str:
+        return f"<html>{just_short}</html>"
+
+    monkeypatch.setattr(description_module, "request_text", short_page)
+    refused = client.post(f"/apply/{short_job}/description/fetch", headers=auth())
+    assert refused.json() == {"detail": "the posting page held no description"}
+    assert load_cached_description(GREENHOUSE_URL) == ""

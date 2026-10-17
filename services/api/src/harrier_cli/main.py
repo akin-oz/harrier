@@ -1018,12 +1018,18 @@ def _cmd_description_backfill(args: argparse.Namespace) -> int:
     from harrier.apply.description import backfill_descriptions
 
     with closing(_open_store()) as conn:
-        summary = backfill_descriptions(
-            conn,
-            dry_run=args.dry_run,
-            limit=args.limit,
-            emit=lambda line: print(line, flush=True),
-        )
+        try:
+            summary = backfill_descriptions(
+                conn,
+                dry_run=args.dry_run,
+                limit=args.limit,
+                emit=lambda line: print(line, flush=True),
+            )
+        except OSError as error:
+            # The store could not be read or written (Storage refused it,
+            # hosted): the walk cannot go on. The class only, never a key.
+            print(f"description backfill stopped: {type(error).__name__}", file=sys.stderr)
+            return 1
     for line in summary.closing(args.dry_run):
         print(line)
     return 0
@@ -1587,6 +1593,17 @@ def _iso_date(value: str) -> str:
         return date.fromisoformat(value).isoformat()
     except ValueError as error:
         raise argparse.ArgumentTypeError(f"not a YYYY-MM-DD date: {value}") from error
+
+
+def _non_negative_int(value: str) -> int:
+    """A count where 0 means none set; a negative one is a usage error."""
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a whole number: {value}") from None
+    if number < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or more: {value}")
+    return number
 
 
 def _positive_int(value: str) -> int:
@@ -3461,7 +3478,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true", help="report what would be fetched; request nothing"
     )
     description_backfill.add_argument(
-        "--limit", type=int, default=0, help="fetch at most N descriptions (0: no limit)"
+        "--limit",
+        type=_non_negative_int,
+        default=0,
+        help="fetch at most N descriptions (0: no limit)",
     )
     description_backfill.set_defaults(func=_cmd_description_backfill)
 

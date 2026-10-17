@@ -1352,7 +1352,8 @@ FETCH_DESCRIPTION_ERRORS: dict[int | str, dict[str, Any]] = {
     },
     502: {
         "model": ErrorOut,
-        "description": "the posting page could not be read, or held no description",
+        "description": "the posting page could not be read, held no description, "
+        "or held text the store refuses",
     },
     **TOKEN_RESPONSES,
 }

@@ -68,6 +68,7 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
       setShowAll(false);
       setNotice("Saved. Every operation reads this description.");
       setFocusTarget("replace");
+      fetchFromPosting.reset();
     },
   });
 
@@ -157,6 +158,9 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
               onClick={() => {
                 setDraft(stored.data.text);
                 setNotice(null);
+                // A refusal from an earlier fetch is not about this edit.
+                save.reset();
+                fetchFromPosting.reset();
                 setFocusTarget("box");
               }}
             >
@@ -216,6 +220,7 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
                 onClick={() => {
                   setDraft(null);
                   save.reset();
+                  fetchFromPosting.reset();
                   setFocusTarget("replace");
                 }}
               >

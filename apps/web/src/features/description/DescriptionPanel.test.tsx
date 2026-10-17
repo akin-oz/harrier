@@ -201,3 +201,22 @@ test("a fetch refusal is shown in the API's words and the paste box stays", asyn
     "half a pasted posting",
   );
 });
+
+test("an earlier fetch refusal does not reappear after a save and Replace", async () => {
+  stubApi({
+    stored: { text: "", stored: false },
+    fetch: { status: 502, body: { detail: "the posting page held no description" } },
+  });
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(await screen.findByRole("button", { name: "Fetch from the posting" }));
+  expect(await screen.findByRole("alert")).toBeTruthy();
+  await user.click(screen.getByLabelText("Paste the job description"));
+  await user.paste(POSTING);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await user.click(await screen.findByRole("button", { name: "Replace" }));
+
+  expect(screen.getByLabelText("Paste the job description")).toHaveProperty("value", POSTING);
+  expect(screen.queryByRole("alert")).toBeNull();
+});

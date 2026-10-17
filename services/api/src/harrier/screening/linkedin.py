@@ -87,7 +87,10 @@ def linkedin_job_id(url: str) -> str:
     /jobs/view/senior-frontend-engineer-at-x-1234567890, plus currentJobId."""
     if not url:
         return ""
-    match = re.search(r"/jobs/view/(?:[^/?#]*?-)?(\d+)", url)
+    # The trailing number of the path segment: a slug can hold digits of its
+    # own (`senior-engineer-at-3m-3912345678`), and a lazy match stopped at
+    # the first of them, naming another posting (spec 151 review).
+    match = re.search(r"/jobs/view/(?:[^/?#]*-)?(\d+)(?=[/?#]|$)", url)
     if match:
         return match.group(1)
     match = re.search(r"[?&]currentJobId=(\d+)", url)
@@ -270,17 +273,23 @@ def fetch_linkedin_job_details(
     return out
 
 
+def _linkedin_host(url: str) -> bool:
+    try:
+        parsed = urlparse(url.strip())
+        host = (parsed.hostname or "").lower()
+        has_userinfo = parsed.username is not None or parsed.password is not None
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https") or has_userinfo:
+        return False
+    return host == "linkedin.com" or host.endswith(".linkedin.com")
+
+
 def is_linkedin_job_url(url: str) -> bool:
     """A LinkedIn job URL: a linkedin.com host, or a subdomain of it, and a
     job id `linkedin_job_id` reads. The id pattern alone matches any host's
     `/jobs/view/<n>`, which would fetch another posting (spec 151)."""
-    try:
-        host = (urlparse(url.strip()).hostname or "").lower()
-    except ValueError:
-        return False
-    if host != "linkedin.com" and not host.endswith(".linkedin.com"):
-        return False
-    return bool(linkedin_job_id(url))
+    return _linkedin_host(url) and bool(linkedin_job_id(url))
 
 
 def guest_description(url: str, *, timeout_seconds: int = 30) -> str:
@@ -294,6 +303,9 @@ def guest_description(url: str, *, timeout_seconds: int = 30) -> str:
         GUEST_JD_URL.format(job_id=linkedin_job_id(url)),
         timeout_seconds=timeout_seconds,
         retries=1,
+        # A redirect off LinkedIn is refused, as the ATS reader refuses one
+        # off its allow-list (spec 151 review).
+        url_allowed=_linkedin_host,
     )
     match = _DESC_RE.search(html)
     return strip_html(match.group(1) if match else "").strip()[:8000]
