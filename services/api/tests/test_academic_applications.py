@@ -259,7 +259,11 @@ def test_academic_letters_pass_the_same_claims_checks(
     # track's (review of PR #224).
     quoted = "I hold academic positioning."
     claims = [candidate(quoted, ACADEMIC_SIGN.rstrip("."))]
-    _sent(monkeypatch, letters_module, letter_json(f"{CHECKOUT} {INVOICES} {quoted}", claims))
+    _sent(
+        monkeypatch,
+        letters_module,
+        letter_json(f"{CHECKOUT} {INVOICES} {quoted}", claims, role_line=""),
+    )
     with pytest.raises(ClaimCheckError) as named:
         letters_module.generate_cover_letter(db, COMPANY, ROLE, jd_text=POSTING, scope=scope)
     assert any(
@@ -569,7 +573,8 @@ def test_the_three_commands_run_on_an_academic_call(
     _no_browser(monkeypatch, pages=2)
 
     ranking = _sent_prompt(monkeypatch, ai_module, "{}")
-    long_letter = letter_json(extra_paragraphs=(LONG_PARAGRAPH, LONG_PARAGRAPH))
+    # No role line: the academic letter has none (spec 158).
+    long_letter = letter_json(extra_paragraphs=(LONG_PARAGRAPH, LONG_PARAGRAPH), role_line="")
     assert len(json.loads(long_letter)["full_version"].split()) > 240
     _sent(monkeypatch, letters_module, long_letter)
     claims = [candidate(CHECKOUT, CHECKOUT_EVIDENCE)]
