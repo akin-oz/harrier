@@ -1,18 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 
-import type { components } from "@harrier/contract";
-
-import { api } from "../../shared/api/client";
-import { refusalMessage } from "../../shared/api/refusal";
-
-type Schedule = components["schemas"]["ScheduleOut"];
-type ScheduledJob = components["schemas"]["ScheduledJobOut"];
-
-async function fetchSchedule(): Promise<Schedule> {
-  const { data, error } = await api.GET("/ops/schedule");
-  if (error !== undefined) throw new Error(refusalMessage(error, "could not read the schedule"));
-  return data;
-}
+import {
+  SCHEDULE_KEY,
+  definitionUnreadable,
+  fetchSchedule,
+  inZone,
+  isHosted,
+  outcomeWords,
+} from "../../features/schedule";
+import type { HostedJob, Schedule, ScheduledJob } from "../../features/schedule";
 
 /**
  * When each scheduled job last worked, first on the page because a job that
@@ -24,7 +20,7 @@ async function fetchSchedule(): Promise<Schedule> {
  * section says so and names the command that reports it (spec 096).
  */
 export function ScheduleSection() {
-  const schedule = useQuery({ queryKey: ["ops", "schedule"], queryFn: fetchSchedule });
+  const schedule = useQuery({ queryKey: SCHEDULE_KEY, queryFn: fetchSchedule });
 
   return (
     <section className="ops-section" aria-labelledby="ops-schedule">
@@ -37,7 +33,12 @@ export function ScheduleSection() {
           {schedule.error.message}
         </p>
       )}
-      {schedule.isSuccess && <ScheduleBody schedule={schedule.data} />}
+      {schedule.isSuccess &&
+        (isHosted(schedule.data) ? (
+          <HostedScheduleBody schedule={schedule.data} />
+        ) : (
+          <ScheduleBody schedule={schedule.data} />
+        ))}
     </section>
   );
 }
@@ -102,5 +103,85 @@ function JobRow({ job }: { job: ScheduledJob }) {
         </ul>
       </td>
     </tr>
+  );
+}
+
+/**
+ * Hosted (spec 120): the owner's chosen jobs, the last run the scheduler
+ * recorded and the next slot, in the owner's zone. No host command: none is
+ * the owner's to run. Next slot is when a slot falls due, not a promise that
+ * it starts.
+ */
+function HostedScheduleBody({ schedule }: { schedule: Schedule }) {
+  const zone = schedule.timezone ?? "UTC";
+  return (
+    <>
+      {schedule.error !== null && (
+        <p role="alert" className="ops-error">
+          {definitionUnreadable(schedule)
+            ? "The schedule definition on the server could not be read: "
+            : "Your stored schedule could not be read: "}
+          {schedule.error}
+        </p>
+      )}
+      {schedule.jobs.length > 0 && (
+        <div className="ops-table-scroll">
+          <table className="ops-table">
+            <thead>
+              <tr>
+                <th scope="col">Job</th>
+                <th scope="col">Cadence</th>
+                <th scope="col">Last run</th>
+                <th scope="col">Next slot</th>
+              </tr>
+            </thead>
+            <tbody>
+              {schedule.jobs.map((job) => (
+                <tr key={job.name}>
+                  <th scope="row">{job.name}</th>
+                  <td>{job.cadence}</td>
+                  <td>
+                    <LastRun state={job.hosted} zone={zone} />
+                  </td>
+                  <td>
+                    {job.hosted?.next_slot_at == null ? (
+                      <span className="ops-muted">None</span>
+                    ) : (
+                      inZone(job.hosted.next_slot_at, zone)
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="ops-note">{schedule.installed_state}</p>
+    </>
+  );
+}
+
+function LastRun({ state, zone }: { state: HostedJob | null; zone: string }) {
+  const outcome = state?.last_outcome ?? null;
+  if (state === null || outcome === null) {
+    return <span className="ops-muted">No run recorded yet.</span>;
+  }
+  if (outcome === "running") {
+    const since = state.last_started_at ?? state.last_slot_at;
+    return (
+      <span className="ops-badge">
+        Running since {since === null ? "an unknown time" : inZone(since, zone)}
+      </span>
+    );
+  }
+  const at = state.last_finished_at;
+  const when = at === null ? "" : `, ${inZone(at, zone)}`;
+  if (outcome === "ok") return <span className="ops-badge">{`OK${when}`}</span>;
+  return (
+    // Words and a shape, not colour alone, as "Overdue" is shown.
+    <span className="ops-badge ops-badge--overdue">
+      <span className="ops-badge__mark" aria-hidden="true" />
+      {`${outcomeWords(outcome)}${when}`}
+    </span>
   );
 }

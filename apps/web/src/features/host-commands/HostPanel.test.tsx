@@ -46,6 +46,7 @@ const SCHEDULE: Schedule = {
           overdue: false,
         },
       ],
+      hosted: null,
     },
     {
       name: "gmail-watch",
@@ -58,11 +59,14 @@ const SCHEDULE: Schedule = {
           overdue: true,
         },
       ],
+      hosted: null,
     },
   ],
   error: null,
   installed_state: "Whether each job is installed and loaded is the host's to report.",
   host_command: "harrier schedule status",
+  timezone: null,
+  offered: null,
 };
 
 function facts(overrides: Partial<HostFacts> = {}): HostFacts {

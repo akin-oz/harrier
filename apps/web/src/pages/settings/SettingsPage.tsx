@@ -10,6 +10,7 @@ import { appMode } from "../../shared/config/appMode";
 import { BackupsSection } from "./BackupsSection";
 import { CredentialsSection } from "./CredentialsSection";
 import { ExportSection } from "./ExportSection";
+import { ScheduleChoiceSection } from "./ScheduleChoiceSection";
 import { TelegramSection } from "./TelegramSection";
 import "./SettingsPage.css";
 
@@ -59,6 +60,13 @@ export function SettingsPage() {
               Credentials
             </h3>
             <CredentialsSection />
+          </section>
+
+          <section className="settings-section" aria-labelledby="settings-schedule">
+            <h3 id="settings-schedule" className="settings-section__heading">
+              Schedule
+            </h3>
+            <ScheduleChoiceSection />
           </section>
 
           <section className="settings-section" aria-labelledby="settings-telegram">

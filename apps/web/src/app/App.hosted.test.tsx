@@ -108,7 +108,15 @@ function stubHosted(): void {
       if (path === "/runs/run1") return Promise.resolve(reply(RUN));
       if (path === "/ops/schedule") {
         return Promise.resolve(
-          reply({ jobs: [], error: null, installed_state: "", host_command: "" }),
+          // The hosted answer's shape (spec 120): no host command.
+          reply({
+            jobs: [],
+            error: null,
+            installed_state: "",
+            host_command: null,
+            timezone: null,
+            offered: [],
+          }),
         );
       }
       return Promise.resolve(reply([]));

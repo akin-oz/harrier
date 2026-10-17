@@ -9,9 +9,10 @@ import { refusalMessage } from "../../shared/api/refusal";
 
 type Credentials = components["schemas"]["CredentialsOut"];
 
-const KEY = ["settings", "credentials"] as const;
+export const CREDENTIALS_KEY = ["settings", "credentials"] as const;
+const KEY = CREDENTIALS_KEY;
 
-async function fetchCredentials(): Promise<Credentials> {
+export async function fetchCredentials(): Promise<Credentials> {
   const { data, error } = await api.GET("/credentials");
   if (error !== undefined) {
     throw new Error(refusalMessage(error, "could not read the credentials"));

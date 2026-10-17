@@ -80,7 +80,14 @@ function stubApi(): string[] {
         return reply({ routed: [], host: [], terminal: [], panel: [] });
       }
       if (url.pathname === "/api/ops/schedule") {
-        return reply({ jobs: [], error: null, installed_state: "", host_command: "" });
+        return reply({
+          jobs: [],
+          error: null,
+          installed_state: "",
+          host_command: "harrier schedule status",
+          timezone: null,
+          offered: null,
+        });
       }
       if (url.pathname === "/api/settings/backups") {
         return reply({ directory: "absent", archives: [] });

@@ -838,6 +838,8 @@ export interface paths {
          *
          *     No token: job names, cadences and times describe the installation, not
          *     the operator's search, and spec 050 lists this read as tokenless.
+         *     Hosted, every route but the public one needs a session (spec 114), and
+         *     the answer is the signed-in owner's choice and state (spec 120).
          */
         get: operations["getSchedule"];
         put?: never;
@@ -2425,6 +2427,27 @@ export interface components {
              */
             fact: "schedule" | "gmail_token" | "model" | "image" | "database_owner" | "profile";
         };
+        /**
+         * HostedJobOut
+         * @description A chosen job's scheduler state, hosted (spec 120). Times are ISO 8601
+         *     UTC text; each is null while `schedule_state` holds no row for the job.
+         *     `next_slot_at` is when the next slot falls due, not that it will start:
+         *     whether the scheduler runs is the operator's to see.
+         */
+        HostedJobOut: {
+            /** Last Finished At */
+            last_finished_at: string | null;
+            /** Last Ok At */
+            last_ok_at: string | null;
+            /** Last Outcome */
+            last_outcome: ("running" | "ok" | "failed" | "crashed" | "timed_out" | "not_configured" | "refused" | "interrupted" | "missed") | null;
+            /** Last Slot At */
+            last_slot_at: string | null;
+            /** Last Started At */
+            last_started_at: string | null;
+            /** Next Slot At */
+            next_slot_at: string | null;
+        };
         /** HunterCredentialIn */
         HunterCredentialIn: {
             /**
@@ -2664,6 +2687,19 @@ export interface components {
             date?: string | null;
         };
         /**
+         * OfferedJobOut
+         * @description A job a hosted owner may choose, with its committed cadence and the
+         *     credentials a run of it needs (spec 120).
+         */
+        OfferedJobOut: {
+            /** Cadence */
+            cadence: string;
+            /** Name */
+            name: string;
+            /** Needs */
+            needs: ("ai" | "apify" | "hunter" | "telegram")[];
+        };
+        /**
          * OutreachRowOut
          * @description A tracker row seen through the outreach axis, which is orthogonal to
          *     the status lifecycle and stays that way.
@@ -2795,21 +2831,30 @@ export interface components {
          *     There is no `installed` or `loaded` field on purpose. Only launchctl on
          *     the host can answer either, and a field this server filled would be a
          *     guess shown as a fact.
+         *
+         *     Hosted (spec 120), `jobs` is the owner's chosen jobs, `timezone` their
+         *     zone, `offered` every job they may choose, and `host_command` null: no
+         *     host command is theirs to run. Locally `timezone` and `offered` are null.
          */
         ScheduleOut: {
             /** Error */
             error: string | null;
             /** Host Command */
-            host_command: string;
+            host_command: string | null;
             /** Installed State */
             installed_state: string;
             /** Jobs */
             jobs: components["schemas"]["ScheduledJobOut"][];
+            /** Offered */
+            offered: components["schemas"]["OfferedJobOut"][] | null;
+            /** Timezone */
+            timezone: string | null;
         };
         /** ScheduledJobOut */
         ScheduledJobOut: {
             /** Cadence */
             cadence: string;
+            hosted: components["schemas"]["HostedJobOut"] | null;
             /** Name */
             name: string;
             /** Records */

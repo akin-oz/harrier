@@ -158,6 +158,48 @@ def latest_slot(job: ScheduleJob, zone: tzinfo, now: datetime) -> datetime | Non
     return best
 
 
+def next_slot(job: ScheduleJob, zone: tzinfo, now: datetime) -> datetime | None:
+    """The job's first slot after `now`, in UTC, read in `zone` as
+    `latest_slot` reads it, so the owner's page names the slot the scheduler
+    will find due (spec 120). Nine days ahead reach a weekly job's next slot
+    whatever the zone's offset."""
+    if job.kind != "calendar":
+        raise ValueError(f"{job.name} is not a calendar job")
+    today = now.astimezone(zone).date()
+    best: datetime | None = None
+    for ahead in range(-1, 9):
+        day = today + timedelta(days=ahead)
+        for time in job.times:
+            if time.weekday is not None and day.isoweekday() != time.weekday:
+                continue
+            local = datetime(day.year, day.month, day.day, time.hour, time.minute, tzinfo=zone)
+            instant = local.astimezone(UTC)
+            if instant > now and (best is None or instant < best):
+                best = instant
+    return best
+
+
+def owner_states(conn: Connection) -> dict[str, JobState]:
+    """The `schedule_state` rows of the connection's owner, by job
+    (spec 120). Row security returns that owner's rows alone, so the SQL
+    names no tenant (ADR-013 decision 2)."""
+    rows = conn.execute(
+        "SELECT job, last_slot_at, last_started_at, last_finished_at, last_outcome, "
+        "last_exit, last_ok_at FROM schedule_state"
+    ).fetchall()
+    return {
+        str(row[0]): JobState(
+            last_slot_at=str(row[1]),
+            last_started_at=None if row[2] is None else str(row[2]),
+            last_finished_at=None if row[3] is None else str(row[3]),
+            last_outcome=str(row[4]),
+            last_exit=None if row[5] is None else int(row[5]),
+            last_ok_at=None if row[6] is None else str(row[6]),
+        )
+        for row in rows
+    }
+
+
 # --- the committed cadence ---
 
 
