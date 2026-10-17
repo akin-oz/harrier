@@ -152,6 +152,8 @@ def test_every_parameterized_kind_is_reachable_from_a_page(env: Path) -> None:
         "digest": "/ops/digest",
         # Spec 095.
         "events-backfill": "/ops/events/backfill",
+        # Spec 151.
+        "description-backfill": "/ops/descriptions/backfill",
         "evaluate-prospects": "/ops/evaluate-prospects",
         "scoring-export": "/ops/scoring/export",
         "discovery": "/ops/discover",

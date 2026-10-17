@@ -206,6 +206,14 @@ None. Jobs discovered before this change already have their descriptions
 cached and show them. A job with none refuses tailoring until one is
 pasted, which is the intended change.
 
+**Correction (spec 151).** The first sentence held for the local store and
+not for the hosted account. There, rows found by hosted runs before commit
+`45e69f2` (spec 107, Amendment (2026-10-16): PR 3's build) had their
+descriptions written to the run machine's own disk, and rows imported by
+spec 141 never had theirs copied (spec 146, "Out of scope"). Both refuse
+until a description is stored: spec 151 fetches it from the posting, and
+spec 152 imports the local copies.
+
 ## Least confident
 
 - The 65,536-byte write limit is a choice, not a measured need.

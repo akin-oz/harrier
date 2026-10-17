@@ -1343,6 +1343,54 @@ def put_description(
     return DescriptionOut(text=stored, stored=True)
 
 
+FETCH_DESCRIPTION_ERRORS: dict[int | str, dict[str, Any]] = {
+    404: {"model": ErrorOut, "description": DESCRIPTION_SELECTOR_CAUSE},
+    409: {
+        "model": ErrorOut,
+        "description": "a description is already stored, the job has no URL, "
+        "or no reader serves the posting's host",
+    },
+    502: {
+        "model": ErrorOut,
+        "description": "the posting page could not be read, or held no description",
+    },
+    **TOKEN_RESPONSES,
+}
+
+
+@apply_router.post(
+    "/apply/{selector}/description/fetch",
+    operation_id="fetchDescription",
+    dependencies=[Depends(require_token)],
+    responses=FETCH_DESCRIPTION_ERRORS,
+)
+def fetch_description_route(
+    selector: str,
+    conn: Conn,
+    scope: Annotated[TrackScope, Depends(scope_for("description fetch"))],
+) -> DescriptionOut:
+    """`description fetch`: the job's missing description, from its posting
+    page, stored for every operation (spec 151)."""
+    from harrier.apply.description import (
+        DescriptionError,
+        FetchRefused,
+        JobHasNoUrlError,
+        PostingUnread,
+        fetch_description,
+    )
+
+    job = _job_for(conn, scope, selector)
+    try:
+        stored = fetch_description(int(job["id"]), job.get("url", ""))
+    except (FetchRefused, JobHasNoUrlError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except PostingUnread as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except DescriptionError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return DescriptionOut(text=stored, stored=True)
+
+
 runs_router = APIRouter(route_class=DatabaseRoute)
 
 # The run manager holds its runs in memory, so an id from before a restart

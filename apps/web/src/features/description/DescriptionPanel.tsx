@@ -38,7 +38,8 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
   // the operator does not paste again.
   const [draft, setDraft] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
-  const [saved, setSaved] = useState(false);
+  // What the last write did, said once it took.
+  const [notice, setNotice] = useState<string | null>(null);
   // Where focus goes when the box opens or closes: the control that opened
   // or replaced it is unmounted, and focus must not fall to the page.
   const box = useRef<HTMLTextAreaElement>(null);
@@ -65,7 +66,28 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
       queryClient.setQueryData(key, data);
       setDraft(null);
       setShowAll(false);
-      setSaved(true);
+      setNotice("Saved. Every operation reads this description.");
+      setFocusTarget("replace");
+    },
+  });
+
+  // The posting's own page, read by the server (spec 151). Offered only while
+  // nothing is stored; a refusal leaves the paste box as it was.
+  const fetchFromPosting = useMutation({
+    mutationFn: async (): Promise<Description> => {
+      const { data, error } = await api.POST("/apply/{selector}/description/fetch", {
+        params: { path: { selector: String(jobId) } },
+      });
+      if (error !== undefined) {
+        throw new Error(refusalMessage(error, "the description could not be fetched"));
+      }
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(key, data);
+      setDraft(null);
+      setShowAll(false);
+      setNotice("Fetched from the posting. Every operation reads this description.");
       setFocusTarget("replace");
     },
   });
@@ -114,9 +136,9 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
           >
             {stored.data.text}
           </div>
-          {saved && (
+          {notice !== null && (
             <p role="status" className="description-panel__note">
-              Saved. Every operation reads this description.
+              {notice}
             </p>
           )}
           <div className="description-panel__actions">
@@ -134,7 +156,7 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
               type="button"
               onClick={() => {
                 setDraft(stored.data.text);
-                setSaved(false);
+                setNotice(null);
                 setFocusTarget("box");
               }}
             >
@@ -163,9 +185,9 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
               }}
             />
           </label>
-          {save.error !== null && (
+          {(save.error ?? fetchFromPosting.error) !== null && (
             <p role="alert" className="description-panel__error">
-              {save.error.message}
+              {(save.error ?? fetchFromPosting.error)?.message}
             </p>
           )}
           <div className="description-panel__actions">
@@ -176,6 +198,18 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
             >
               Save
             </button>
+            {!stored.data.stored && (
+              <button
+                type="button"
+                disabled={fetchFromPosting.isPending || save.isPending}
+                onClick={() => {
+                  save.reset();
+                  fetchFromPosting.mutate();
+                }}
+              >
+                {fetchFromPosting.isPending ? "Fetching…" : "Fetch from the posting"}
+              </button>
+            )}
             {stored.data.stored && (
               <button
                 type="button"

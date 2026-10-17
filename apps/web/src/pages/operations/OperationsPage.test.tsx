@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
 
@@ -141,6 +141,9 @@ function stubApi(
         return reply(200, options.linked ?? { linked: 0, unmatched: 0 });
       }
       if (url.pathname === "/api/ops/events/backfill") return reply(200, runBody("bf1", "x"));
+      if (url.pathname === "/api/ops/descriptions/backfill") {
+        return reply(200, runBody(`db${String(calls.length)}`, "description-backfill"));
+      }
       if (url.pathname === "/api/ops/evaluate-prospects") {
         return reply(200, runBody(`ev${String(calls.length)}`, "evaluate-prospects"));
       }
@@ -521,6 +524,27 @@ test("a dry backfill comes first and writing names the count it will write", asy
     expect(posted(calls, "/ops/events/backfill")).toHaveLength(2);
   });
   expect(posted(calls, "/ops/events/backfill")[1]?.body).toEqual({ dry_run: false });
+});
+
+test("missing descriptions run as a dry run first, then a fetch (spec 151)", async () => {
+  const calls = stubApi();
+  const user = userEvent.setup();
+  renderPage();
+
+  const section = within(await screen.findByRole("region", { name: "Job descriptions" }));
+  await user.click(section.getByRole("button", { name: "Dry run" }));
+  await waitFor(() => {
+    expect(posted(calls, "/ops/descriptions/backfill")).toHaveLength(1);
+  });
+  expect(posted(calls, "/ops/descriptions/backfill")[0]?.body).toEqual({ dry_run: true });
+  act(() => {
+    lastSource().emit({ type: "state_change", state: "succeeded", exit_code: 0 });
+  });
+  await user.click(section.getByRole("button", { name: "Fetch missing" }));
+  await waitFor(() => {
+    expect(posted(calls, "/ops/descriptions/backfill")).toHaveLength(2);
+  });
+  expect(posted(calls, "/ops/descriptions/backfill")[1]?.body).toEqual({ dry_run: false });
 });
 
 test("batch evaluation offers rejection only after a report, naming the count", async () => {

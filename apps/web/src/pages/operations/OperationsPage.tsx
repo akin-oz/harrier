@@ -6,6 +6,7 @@ import { DiscoverySection } from "./DiscoverySection";
 import { EligibilitySection } from "./EligibilitySection";
 import { EvaluationSection } from "./EvaluationSection";
 import { FeedsSection } from "./FeedsSection";
+import { DescriptionsSection } from "./DescriptionsSection";
 import { HistorySection } from "./HistorySection";
 import "./OperationsPage.css";
 import { ReconsiderSection } from "./ReconsiderSection";
@@ -42,6 +43,7 @@ export function OperationsPage() {
       <DigestSection />
       <DataChecksSection />
       <HistorySection />
+      <DescriptionsSection />
       <EvaluationSection />
       <ScoringSection />
     </div>

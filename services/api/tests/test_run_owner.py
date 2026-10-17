@@ -357,6 +357,7 @@ START_CASES: tuple[StartCase, ...] = (
     StartCase("POST", "/ops/backup", "backup", {"json": {}}),
     StartCase("POST", "/ops/digest", "digest", {"json": {}}),
     StartCase("POST", "/ops/events/backfill", "events-backfill", {"json": {}}),
+    StartCase("POST", "/ops/descriptions/backfill", "description-backfill", {"json": {}}),
     StartCase("POST", "/ops/evaluate-prospects", "evaluate-prospects", {"json": {}}),
     StartCase("POST", "/ops/scoring/export", "scoring-export", {}),
     StartCase(

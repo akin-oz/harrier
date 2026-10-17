@@ -23,6 +23,7 @@ const POSTING = "Invented Labs is hiring a remote engineer to own an invented de
 function stubApi(options: {
   stored: { text: string; stored: boolean };
   put?: { status: number; body: unknown };
+  fetch?: { status: number; body: unknown };
 }): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal(
@@ -43,6 +44,11 @@ function stubApi(options: {
           headers: { "Content-Type": "application/json" },
         });
       if (url.pathname === "/api/session") return reply(200, { token: "test-token" });
+      if (request.method === "POST" && url.pathname.endsWith("/description/fetch")) {
+        return options.fetch
+          ? reply(options.fetch.status, options.fetch.body)
+          : reply(200, { text: POSTING, stored: true });
+      }
       if (request.method === "PUT") {
         if (options.put) return reply(options.put.status, options.put.body);
         const sent = JSON.parse(raw) as { text: string };
@@ -156,4 +162,42 @@ test("a refusal is shown in the API's words and the pasted text is kept", async 
   await waitFor(() => {
     expect(screen.getByLabelText("Paste the job description")).toHaveProperty("value", POSTING);
   });
+});
+
+test("fetch from the posting stores and shows the description (spec 151)", async () => {
+  const calls = stubApi({ stored: { text: "", stored: false } });
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(await screen.findByRole("button", { name: "Fetch from the posting" }));
+
+  expect((await screen.findByLabelText("Stored description")).textContent).toBe(POSTING);
+  expect(screen.getByRole("status").textContent).toBe(
+    "Fetched from the posting. Every operation reads this description.",
+  );
+  expect(screen.queryByRole("button", { name: "Fetch from the posting" })).toBeNull();
+  const post = calls.find((call) => call.method === "POST");
+  expect(post?.url).toBe("/api/apply/3/description/fetch");
+  expect(post?.token).toBe("test-token");
+});
+
+test("a fetch refusal is shown in the API's words and the paste box stays", async () => {
+  stubApi({
+    stored: { text: "", stored: false },
+    fetch: { status: 502, body: { detail: "the posting page held no description" } },
+  });
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(await screen.findByLabelText("Paste the job description"));
+  await user.paste("half a pasted posting");
+  await user.click(screen.getByRole("button", { name: "Fetch from the posting" }));
+
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "the posting page held no description",
+  );
+  expect(screen.getByLabelText("Paste the job description")).toHaveProperty(
+    "value",
+    "half a pasted posting",
+  );
 });

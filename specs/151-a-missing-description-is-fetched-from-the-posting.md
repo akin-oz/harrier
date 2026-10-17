@@ -1,7 +1,7 @@
 ---
 spec: 151
 title: A missing description is fetched from the posting
-status: accepted
+status: shipped
 approved: yes
 milestone: M10
 depends: [007, 009, 047, 095, 106, 107, 149]
@@ -148,36 +148,50 @@ which the operator asked for.
 
 ## Acceptance criteria
 
-- [ ] A LinkedIn job URL with no stored description is fetched from the
-      guest endpoint, stored, and served by the read route (planned
-      test_a_linkedin_description_is_fetched_and_stored).
-- [ ] An allow-listed ATS URL is fetched and stored; a redirect off the
-      list stores nothing (planned test_an_ats_description_is_fetched_and_a_bad_redirect_is_refused).
-- [ ] An unsupported host, a stored description and a missing URL are each
-      refused before any request (planned test_a_fetch_is_refused_before_any_request).
-- [ ] A page with fewer than 120 characters of text, and a page that
+- [x] A LinkedIn job URL with no stored description is fetched from the
+      guest endpoint, stored, and served by the read route (`services/api/tests/test_description_fetch.py::test_a_linkedin_description_is_fetched_and_stored`).
+- [x] An allow-listed ATS URL is fetched and stored; a redirect off the
+      list stores nothing (`services/api/tests/test_description_fetch.py::test_an_ats_description_is_fetched_and_a_bad_redirect_is_refused`).
+- [x] An unsupported host, a stored description and a missing URL are each
+      refused before any request (`services/api/tests/test_description_fetch.py::test_a_fetch_is_refused_before_any_request`).
+- [x] A page with fewer than 120 characters of text, and a page that
       answers 429, store nothing and are refused in the words above
-      (planned test_an_empty_or_failed_page_stores_nothing).
-- [ ] `POST /apply/{selector}/description/fetch` and `harrier description
-      fetch` reach the same function (planned
-      test_the_fetch_route_and_verb_reach_one_function).
-- [ ] The backfill fetches only non-rejected rows with a URL, no stored
+      (`services/api/tests/test_description_fetch.py::test_an_empty_or_failed_page_stores_nothing`).
+- [x] `POST /apply/{selector}/description/fetch` and `harrier description
+      fetch` reach the same function (`services/api/tests/test_description_fetch.py::test_the_fetch_route_and_verb_reach_one_function`).
+- [x] The backfill fetches only non-rejected rows with a URL, no stored
       description and a reader, honours `--limit`, requests nothing on a
-      dry run, and exits 0 when some fetches fail (planned
-      test_the_backfill_fetches_only_what_is_missing).
-- [ ] The backfill pauses between requests to one host (planned
-      test_the_backfill_pauses_between_requests_to_one_host).
-- [ ] `description-backfill` is offered hosted and reaches its start with
-      the caller as owner (an added case in
-      `services/api/tests/test_run_owner.py`).
-- [ ] The Apply panel's Fetch button shows the stored text on success and
-      the API's words on a refusal (planned DescriptionPanel test).
-- [ ] The Operations page starts a dry run and a fetch run (planned
+      dry run, and exits 0 when some fetches fail (`services/api/tests/test_description_fetch.py::test_the_backfill_fetches_only_what_is_missing`).
+- [x] The backfill pauses between requests to one host (`services/api/tests/test_description_fetch.py::test_the_backfill_pauses_between_requests_to_one_host`).
+- [x] `description-backfill` is offered hosted and reaches its start with
+      the caller as owner (an added case of
+      `services/api/tests/test_run_owner.py::test_a_kind_offered_hosted_reaches_its_start`).
+- [x] The Apply panel's Fetch button shows the stored text on success and
+      the API's words on a refusal (the tests "fetch from the posting stores and shows the description (spec 151)" and
+      "a fetch refusal is shown in the API's words and the paste box stays" in
+      `apps/web/src/features/description/DescriptionPanel.test.tsx`).
+- [x] The Operations page starts a dry run and a fetch run (planned
       OperationsPage test).
-- [ ] No log line from a fetch or a backfill carries the URL, company,
-      title or description (planned test_a_fetch_logs_no_posting_identity).
-- [ ] The contract is regenerated and declares both routes and every
+- [x] No log line from a fetch or a backfill carries the URL, company,
+      title or description (`services/api/tests/test_description_fetch.py::test_a_fetch_logs_no_posting_identity`).
+- [x] The contract is regenerated and declares both routes and every
       refusal (`just contract`).
+
+## Amendments found while implementing (2026-10-17)
+
+- **One attempt per page.** The shared `request_text` logs each retry with
+  the URL it retried (`services/api/src/harrier/screening/http.py`). A
+  fetch therefore makes one attempt (`retries=1`), so no log line names the
+  posting; the backfill's pause, not a retry, spaces the requests.
+  `services/api/tests/test_description_fetch.py::test_a_linkedin_description_is_fetched_and_stored`
+  pins the single attempt.
+- **A LinkedIn URL is a linkedin.com URL.** `linkedin_job_id` reads
+  `/jobs/view/<n>` on any host, so the id alone would send another site's
+  job to LinkedIn's guest endpoint and store a different posting. The
+  LinkedIn reader also requires a linkedin.com host or a subdomain of it
+  (`is_linkedin_job_url` in `services/api/src/harrier/screening/linkedin.py`;
+  the `example.com/jobs/view` case of
+  `services/api/tests/test_description_fetch.py::test_a_fetch_is_refused_before_any_request`).
 
 ## Proof / origin
 

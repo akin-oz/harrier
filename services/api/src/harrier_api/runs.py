@@ -163,6 +163,13 @@ PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
         switches=frozenset({"--dry-run"}),
         takes_job=False,
     ),
+    # Spec 151: every missing description in the account, one at a time.
+    "description-backfill": ParameterizedKind(
+        "description backfill",
+        switches=frozenset({"--dry-run"}),
+        numbers=frozenset({"--limit"}),
+        takes_job=False,
+    ),
     "evaluate-prospects": ParameterizedKind(
         "evaluate-prospects",
         switches=frozenset({"--apply", "--refresh", "--include-borderline"}),
@@ -366,6 +373,9 @@ HOSTED_RUN_KINDS: dict[str, HostedAnswer] = {
     "check-feeds": RUNS,
     "reconsider": RUNS,
     "events-backfill": RUNS,
+    # Spec 151: it writes descriptions through the run's binding to its
+    # owner's Storage prefix, which the description routes read.
+    "description-backfill": RUNS,
     "evaluate-prospects": HostedAnswer(runs=True, needs=("ai",)),
     # Lifted by spec 107's third pull request: each writes its files through
     # the run's binding to its owner's Storage prefix, which the artifact and
