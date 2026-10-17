@@ -76,6 +76,10 @@ def _add(url: str, *, status: str = "prospect", company: str = "Exampleco", trac
         conn.close()
 
 
+def _no_wait(seconds: float) -> None:
+    """A pause that does not wait."""
+
+
 def _no_request(*args: object, **kwargs: object) -> str:
     raise AssertionError("a request was made")
 
@@ -269,7 +273,7 @@ def test_the_backfill_fetches_only_what_is_missing(
 ) -> None:
     jobs = _account(env)
     asked = _readers(monkeypatch)
-    monkeypatch.setattr(description_module.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(description_module.time, "sleep", _no_wait)
 
     # A dry run requests nothing and stores nothing.
     assert main(["description", "backfill", "--dry-run"]) == 0
@@ -345,7 +349,7 @@ def test_a_fetch_logs_no_posting_identity(
         client.post(f"/apply/{job}/description/fetch", headers=auth())
         conn = connect()
         try:
-            backfill_descriptions(conn, sleep=lambda seconds: None)
+            backfill_descriptions(conn, sleep=_no_wait)
         finally:
             conn.close()
     assert "4000000077" not in caplog.text
