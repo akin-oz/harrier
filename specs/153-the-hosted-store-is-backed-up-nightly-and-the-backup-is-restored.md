@@ -1,8 +1,8 @@
 ---
 spec: 153
 title: The hosted store is backed up nightly, and each backup is restored before it counts
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [030, 105, 107, 110, 111, 141, 146]
 ---
@@ -161,6 +161,12 @@ spec 146's `import-artifacts` path or a sibling of it.
    plain dump, before encryption, so the job never needs the private key.
    Alternative: a separate weekly job that decrypts with a key held in
    GitHub, which puts the private key in GitHub.
+
+## Decisions taken (2026-10-17)
+
+Akin approved the spec with both open decisions as recommended: the dump is
+the `public` schema plus the rows of `auth.users` and `auth.identities`, and
+the restore check runs on the plain dump inside the job, before encryption.
 
 ## Out of scope
 
