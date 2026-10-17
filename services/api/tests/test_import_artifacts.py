@@ -1120,3 +1120,32 @@ def test_import_artifacts_never_upserts(
     sent = [r for r in storage.requests if storage.operation(r)[0] == "upload"]
     assert len(sent) == 7
     assert {request.headers["x-upsert"] for request in sent} == {"false"}
+
+
+def test_a_hosted_write_after_the_create_stops_the_run_at_the_size_check(
+    imported: Account, storage: FakeStorage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A hosted write of another size lands between the create and the look
+    after it: the run stops with spec 146's size message, and the hosted
+    object is left as Storage holds it."""
+    put_good_files()
+    held = object_name(imported.owner, f"resumes/{RESUME_STEM}.pdf")
+    other = b"%PDF-1.4 a longer hosted run written after the create\n"
+    looks: list[str] = []
+
+    def hosted_write(request: httpx.Request) -> None:
+        if storage.operation(request)[1] == held:
+            looks.append(held)
+            if len(looks) == 2:
+                storage.put(held, other, "application/pdf")
+
+    storage.before["info"] = hosted_write
+
+    result = run(capsys, imported)
+
+    assert result.code == 1
+    assert result.err == (
+        "error: upload resumes: the size read back differs from the local file; "
+        "the object is left as Storage holds it\n"
+    )
+    assert storage.objects[held].data == other

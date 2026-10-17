@@ -227,6 +227,16 @@ def test_create_leaves_an_existing_object_in_both_answer_shapes(
 
     assert storage.objects[name] is before
     assert storage.objects[name].data == b"# Hosted\n"
+    # The fake sent the shape this case is named for, so the 400 case is
+    # not a 409 in disguise.
+    (upload,) = storage.requests
+    answer = storage.handler(upload)
+    assert answer.status_code == (409 if as_409 else 400)
+    assert answer.json() == {
+        "statusCode": "409",
+        "error": "Duplicate",
+        "message": "The resource already exists",
+    }
 
 
 def test_create_fails_as_put_fails(storage: FakeStorage, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -252,6 +262,15 @@ def test_create_fails_as_put_fails(storage: FakeStorage, monkeypatch: pytest.Mon
             store.create(key, b"%PDF")
         check(caught, raised)
 
+    # Refused before any request: too large, or a type the bucket refuses.
+    storage.requests.clear()
+    with pytest.raises(FileStoreError) as caught:
+        store.create(key, b"x" * (SIZE_LIMIT + 1))
+    check(caught, FileTooLarge)
+    with pytest.raises(FileStoreError, match=r"^create resumes: the bucket accepts no file"):
+        store.create(f"resumes/{CANDIDATE}.docx", b"x")
+    assert storage.requests == []
+
     # Another 400: a refusal that is not the conflict.
     def refused(request: httpx.Request) -> httpx.Response:
         body = {"statusCode": "400", "error": "InvalidRequest", "message": "refused"}
@@ -265,15 +284,6 @@ def test_create_fails_as_put_fails(storage: FakeStorage, monkeypatch: pytest.Mon
         store.create(key, b"%PDF")
     check(caught, FileStoreError)
     assert caught.value.status == 400
-
-    # Refused before any request: too large, or a type the bucket refuses.
-    storage.requests.clear()
-    with pytest.raises(FileStoreError) as caught:
-        store.create(key, b"x" * (SIZE_LIMIT + 1))
-    check(caught, FileTooLarge)
-    with pytest.raises(FileStoreError, match=r"^create resumes: the bucket accepts no file"):
-        store.create(f"resumes/{CANDIDATE}.docx", b"x")
-    assert storage.requests == []
 
 
 def test_put_still_replaces_an_existing_object(storage: FakeStorage) -> None:

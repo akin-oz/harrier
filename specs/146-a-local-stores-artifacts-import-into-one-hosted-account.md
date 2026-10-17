@@ -387,6 +387,9 @@ of the command at once" is spec 154's. The output lines and the verdict
 rules are unchanged
 (`services/api/src/harrier/artifactimport.py`,
 `services/api/tests/test_import_artifacts.py::test_a_hosted_write_during_the_copy_is_never_overwritten`,
+`services/api/tests/test_import_artifacts.py::test_a_hosted_write_of_the_same_bytes_during_the_copy_is_already_there`,
+`services/api/tests/test_import_artifacts.py::test_a_hosted_description_written_during_the_copy_is_kept`,
+`services/api/tests/test_import_artifacts.py::test_an_object_gone_after_a_conflict_stops_the_run`,
 `services/api/tests/test_import_artifacts.py::test_import_artifacts_never_upserts`).
 
 ## Proof / origin
@@ -499,6 +502,11 @@ a differing hosted object is never overwritten.
 
 ## Honest limitations
 
+- **Create-only is Storage's guarantee.** That a create-only upload never
+  replaces a live object, even against a concurrent write, rests on
+  Supabase's docs and server code, not on a test here (spec 154, Honest
+  limitations, "The guarantee is Storage's"). The "Two copies of the
+  command at once" row depends on it.
 - **The Storage identity is unproven.** Spec 107 lists, for its staging
   project, that Storage runs a token's request as `authenticated` and that
   its policy reads back what was written. This spec adds one more: an object

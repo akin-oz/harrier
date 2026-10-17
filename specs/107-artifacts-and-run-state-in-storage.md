@@ -1188,7 +1188,10 @@ theirs, and spec 108's waits for PR 3 (below).
   those under Honest limitations:
   10. Upload is `POST /storage/v1/object/harrier-files/<name>`, the bytes
       as the body, with `x-upsert: true`, the content type and
-      `cache-control: no-cache` as headers, answering 200.
+      `cache-control: no-cache` as headers, answering 200. `create` sends
+      the same request with `x-upsert: false`; over an existing object it
+      answers HTTP 400 with `statusCode` "409" and `error` "Duplicate" in
+      the body, or HTTP 409 with that body (Amendment (2026-10-17)).
   11. Download is `GET /storage/v1/object/harrier-files/<name>`. An
       object's size, update time and entity tag come from `GET
       /storage/v1/object/info/harrier-files/<name>` (`size`, `updated_at`
@@ -1584,6 +1587,5 @@ create-only upload. Every other writer keeps `put`, which keeps upsert.
   "error": "Duplicate", "message": "The resource already exists"}`, the
   shape read 2026-10-17 from `supabase/storage`. Its `conflict_as_409` flag
   sends the same body under HTTP 409 (`services/api/tests/storage_support.py`).
-  Assumption 10 under "Settled by the build" gains: a create-only upload is
-  the same request with `x-upsert: false`, answering that conflict when the
-  object exists.
+  Assumption 10 under "Settled by the build" carries the create-only
+  request and its conflict answer.

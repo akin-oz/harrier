@@ -420,7 +420,7 @@ def load_mapping(key: str) -> dict[str, Any] | None:
 # The private bucket of ADR-013 decision 6, created by the storage migration.
 BUCKET = "harrier-files"
 
-# The largest object a `put` or an `append` sends, in bytes. Supabase's
+# The largest object a `put`, an `append` or a `create` sends, in bytes. Supabase's
 # guidance for standard uploads, not a measurement of harrier's files; the
 # bucket carries the same limit (spec 107, "Size"). Spec 146's import reads
 # it from here.
