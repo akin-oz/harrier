@@ -99,6 +99,12 @@ the text judged later is the text judged earlier.
 - Saving calls the write route. On success the panel shows the stored
   text. On a refusal it shows the API's words (spec 047) and keeps the
   pasted text in the box.
+- The stored text is a group labelled "Stored description". A save that
+  took says "Saved. Every operation reads this description." as a status
+  message; "Replace" clears it. "Replace" moves focus to the paste box, and
+  a save or "Cancel" moves it back to "Replace" (local review of PR #383).
+- The panel belongs to one job: a draft typed on one job's page is gone on
+  another job's page.
 - The per-operation "Job description (optional)" box is removed from the
   resume and evaluate operations. The API keeps their `jd_text` body field,
   unchanged, for any client that sends it.
@@ -120,6 +126,12 @@ Both use one check in the domain. `tailor --no-ai` refuses the same way:
 its content plan also ranks by the description. The check does not hand
 the stored text to `run_tailor`; it reads the text itself, so the CV's
 sidecar still records `jd_source: "cache"` (local review of PR #383).
+Text that is only whitespace counts as no text, in the check and in
+`run_tailor` alike. The description cache is keyed by the URL stripped, so
+every reader finds the entry whatever whitespace the row's URL carries (a
+legacy import copies URLs as they were). So a run the check lets through
+never tailors to an empty posting, and the event its move records pins the
+description's digest (post-merge review of PR #383; CodeRabbit on PR #387).
 
 `evaluate` does not refuse. It evaluates a recorded offer, and it already
 runs without a description today.
@@ -161,7 +173,10 @@ No log line carries the description text.
       with one stored, it reaches the operation
       (`services/api/tests/test_stored_description.py::test_a_stored_description_reaches_the_operation`,
       `services/api/tests/test_stored_description.py::test_tailor_leaves_the_stored_description_to_run_tailor`,
-      `services/api/tests/test_resume.py::test_a_stored_description_is_recorded_as_the_cache`).
+      `services/api/tests/test_resume.py::test_a_stored_description_is_recorded_as_the_cache`);
+      blank given text and a padded job URL still read the stored one
+      (`services/api/tests/test_resume.py::test_blank_given_text_reads_the_stored_description`,
+      `services/api/tests/test_resume.py::test_run_tailor_reads_the_description_stored_for_a_padded_url`).
 - [x] The resume, cover-letter and answers routes answer 409 with the
       detail above and start no run when no description is stored
       (`services/api/tests/test_stored_description.py::test_an_apply_route_without_a_description_starts_no_run`).
@@ -170,6 +185,14 @@ No log line carries the description text.
 - [x] The Apply page shows the stored text when there is one, the paste
       box when there is none, and the stored text after a save
       (the tests in `apps/web/src/features/description/DescriptionPanel.test.tsx`).
+- [x] The stored text is a labelled group, the save note shows after a save
+      and is cleared by "Replace", focus follows the box, and a draft does not
+      carry over to another job
+      (`DescriptionPanel.test.tsx::a stored description is shown, with no paste box`,
+      `DescriptionPanel.test.tsx::no stored description shows the paste box, and saving shows the stored text`,
+      `DescriptionPanel.test.tsx::replacing clears the saved note, so cancelling does not report a save`,
+      `DescriptionPanel.test.tsx::replace opens the box with the stored text, and cancel closes it`,
+      `ApplyPage.test.tsx::a half-pasted description does not carry over to another job's page`).
 - [x] The resume and evaluate operations on the Apply page no longer show
       a description box (the test "the resume and evaluate operations ask for no description" in
       `apps/web/src/pages/apply/ApplyPage.test.tsx`).

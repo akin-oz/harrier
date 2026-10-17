@@ -1189,6 +1189,76 @@ def test_a_stored_description_is_recorded_as_the_cache(tailor_env: int) -> None:
     assert metadata["jd_source"] == "cache"
 
 
+def test_blank_given_text_reads_the_stored_description(tailor_env: int) -> None:
+    """`harrier tailor --jd-text "   "` with a stored description: blank text
+    is no text, for the check and for run_tailor alike, so the CV is tailored
+    to the stored one and its sidecar says `cache` (post-merge review of
+    PR #383)."""
+    from unittest.mock import patch
+
+    from harrier.resume import tailor as tailor_module
+    from harrier.screening.descriptions import save_description_cache
+    from harrier_cli.main import main
+
+    save_description_cache("https://example.test/job", "React and TypeScript product role.")
+    real_run = tailor_module.run_tailor
+    results: list[Any] = []
+
+    def run(*args: Any, **kwargs: Any) -> Any:
+        result = real_run(
+            *args, **kwargs, render=_fake_render, validate=lambda pdf_path, html_text: []
+        )
+        results.append(result)
+        return result
+
+    with patch.object(tailor_module, "run_tailor", side_effect=run):
+        assert main(["tailor", "--job-id", str(tailor_env), "--jd-text", "   ", "--no-ai"]) == 0
+    metadata = json.loads(results[0].metadata_path.read_text(encoding="utf-8"))
+    assert metadata["jd_source"] == "cache"
+
+
+def test_run_tailor_reads_the_description_stored_for_a_padded_url(tailor_env: int) -> None:
+    """A row URL with spaces around it (a legacy import copies it as it was):
+    the check reads the description stored for the stripped URL, so
+    run_tailor must read that same entry rather than tailor to nothing, and
+    the event the move records pins that description's digest (post-merge
+    review of PR #383, and CodeRabbit on PR #387)."""
+    import hashlib
+
+    from harrier.screening.descriptions import save_description_cache
+    from harrier.tracker.store import list_events
+
+    conn = connect()
+    scope = default_scope(conn)
+    padded = add_job(
+        conn,
+        {
+            "company": "Padded Co",
+            "title": "Frontend Engineer",
+            "location": "Remote, Europe",
+            "url": "  https://example.test/padded  ",
+            "source": "greenhouse",
+            "status": "shortlisted",
+        },
+        scope=scope,
+    )
+    posting = "React and TypeScript product role."
+    save_description_cache("https://example.test/padded", posting)
+    result = run_tailor(
+        conn,
+        scope,
+        padded,
+        no_ai=True,
+        render=_fake_render,
+        validate=lambda pdf_path, html_text: [],
+    )
+    metadata = json.loads(result.metadata_path.read_text(encoding="utf-8"))
+    assert metadata["jd_source"] == "cache"
+    moved = list_events(conn, scope, padded)[-1]
+    assert moved["to_status"] == "tailored_cv_requested"
+    assert moved["description_sha256"] == hashlib.sha256(posting.encode("utf-8")).hexdigest()
+
+
 def test_failing_pdf_gate_leaves_tracker_row_unchanged(tailor_env: int) -> None:
     conn = connect()
     before = get_job(conn, default_scope(conn), tailor_env)

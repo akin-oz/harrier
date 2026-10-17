@@ -58,7 +58,10 @@ def enrich_url_allowed(url: str) -> bool:
 
 
 def _description_cache_key(url: str) -> str:
-    digest = hashlib.sha256(url.encode()).hexdigest()[:24]
+    # Keyed by the URL stripped, so every reader finds the entry whatever
+    # whitespace a row's URL carries: a legacy import copies URLs as they
+    # were (spec 149; CodeRabbit on PR #387).
+    digest = hashlib.sha256(url.strip().encode()).hexdigest()[:24]
     return f"descriptions/{digest}.json"
 
 
@@ -80,14 +83,14 @@ def save_description_cache(url: str, description: str) -> None:
     JSON is unindented, as it always was, which is why this does not go
     through write_json_atomic.
     """
-    if not url or not description:
+    if not (url and url.strip()) or not description:
         return
-    payload = json.dumps({"url": url, "description": description}, ensure_ascii=False)
+    payload = json.dumps({"url": url.strip(), "description": description}, ensure_ascii=False)
     files().put(_description_cache_key(url), payload.encode("utf-8"), atomic=True)
 
 
 def load_cached_description(url: str) -> str:
-    if not url:
+    if not (url and url.strip()):
         return ""
     try:
         raw = files().read(_description_cache_key(url))
