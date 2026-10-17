@@ -1,8 +1,8 @@
 ---
 spec: 157
 title: A hosted account trains its own scoring model from the browser
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M10
 depends: [077, 095, 106, 107]
 ---
@@ -186,6 +186,16 @@ container image installs `training` is open decision 1.
    "Train the model" separate, since the run table has one kind per command.
    Alternative: "Train the model" writes a fresh export first, in the same
    run.
+
+## Decisions taken (2026-10-17)
+
+Akin approved the spec with all three open decisions as recommended:
+
+1. The local container image installs `training` too, so "Train the model"
+   works locally and hosted alike, and `harrier scoring train` is no longer
+   a host-only command.
+2. One button trains with `--activate`; the gate decides activation.
+3. "Write the feature export" and "Train the model" stay two buttons.
 
 ## Out of scope
 
