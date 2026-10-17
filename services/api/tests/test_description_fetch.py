@@ -142,10 +142,10 @@ def test_an_ats_description_is_fetched_and_a_bad_redirect_is_refused(
     ("url", "stored", "status", "detail"),
     [
         (
-            "https://remoteok.com/remote-jobs/123",
+            "https://careers.example.org/openings/123",
             False,
             409,
-            "no description fetcher for remoteok.com",
+            "no description fetcher for careers.example.org",
         ),
         # The LinkedIn id pattern on another host is not a LinkedIn job.
         (
@@ -222,9 +222,12 @@ def test_the_fetch_route_and_verb_reach_one_function(env: Path, client: TestClie
 
 
 def test_the_fetch_verb_reports_a_refusal(env: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    job = _add("https://remoteok.com/remote-jobs/123")
+    job = _add("https://careers.example.org/openings/123")
     assert main(["description", "fetch", str(job)]) == 1
-    assert "description failed: no description fetcher for remoteok.com" in capsys.readouterr().err
+    assert (
+        "description failed: no description fetcher for careers.example.org"
+        in capsys.readouterr().err
+    )
 
 
 # --- every job ---
@@ -251,7 +254,7 @@ def _account(env: Path) -> dict[str, int]:
         "rejected": _add("https://www.linkedin.com/jobs/view/4000000010", status="rejected"),
         "no_url": _add("", company="Manualco"),
         "stored": _add(GREENHOUSE_URL, company="Storedco"),
-        "no_fetcher": _add("https://remoteok.com/remote-jobs/9", company="Remoteco"),
+        "no_fetcher": _add("https://careers.example.org/openings/9", company="Careersco"),
         "linkedin": _add(LINKEDIN_URL, company="Linkco"),
         "lever": _add("https://jobs.lever.co/exampleco/abc", company="Leverco"),
     }

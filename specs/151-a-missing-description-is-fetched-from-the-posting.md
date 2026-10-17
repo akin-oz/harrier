@@ -167,7 +167,8 @@ which the operator asked for.
       the caller as owner (an added case of
       `services/api/tests/test_run_owner.py::test_a_kind_offered_hosted_reaches_its_start`).
 - [x] The Apply panel's Fetch button shows the stored text on success and
-      the API's words on a refusal (the tests "fetch from the posting stores and shows the description (spec 151)" and
+      the API's words on a refusal (the test "fetch from the posting stores and shows the description (spec 151)" in
+      `apps/web/src/features/description/DescriptionPanel.test.tsx`, and the test
       "a fetch refusal is shown in the API's words and the paste box stays" in
       `apps/web/src/features/description/DescriptionPanel.test.tsx`).
 - [x] The Operations page starts a dry run and a fetch run (planned
