@@ -62,6 +62,13 @@ def _description_cache_key(url: str) -> str:
     return f"descriptions/{digest}.json"
 
 
+def description_cache_key(url: str) -> str:
+    """The key a URL's description is stored under. Public so the artifact
+    import names the entries the app would read rather than restating the
+    rule (spec 152)."""
+    return _description_cache_key(url)
+
+
 def save_description_cache(url: str, description: str) -> None:
     """Replace the entry whole or not at all (spec 007 amendment).
 

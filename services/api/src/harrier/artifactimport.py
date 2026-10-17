@@ -2,7 +2,8 @@
 
 `harrier store import-artifacts --owner <user id>` copies the regular files
 directly inside `data/resumes`, `data/cover-letters` and `data/answers` into
-the account's Storage prefix. The reading side is a `LocalFileStore`, the
+the account's Storage prefix, and the entries of `data/descriptions` that
+belong to the account's own jobs (spec 152). The reading side is a `LocalFileStore`, the
 writing side the operator's binding of spec 107's seam
 (`SupabaseFileStore.for_operator`). This module never builds an object name:
 the seam does, from the owner and the key, and the key is
@@ -18,7 +19,7 @@ The order of a run:
 4. Inside one owner transaction that only reads: the account has a track and
    a job, and the names the app would look for, built from the account's own
    rows.
-5. At least one of the three directories exists.
+5. At least one of the four directories exists.
 6. The files fit the account: at least one is in that set of names.
 7. The copy, family by family, file by file. There is no transaction: each
    upload is whole or absent, and a rerun skips what is already there.
@@ -64,11 +65,15 @@ from harrier.filestore import (
 from harrier.operator import OperatorError, read_admin
 from harrier.resume.content import ResumeBundleError, load_bundle
 from harrier.resume.tailor import RESUMES, resume_keys_for
+from harrier.screening.descriptions import description_cache_key
 from harrier.tracker.importlocal import check_login_role, hosted_url
 from harrier.tracks import Scope, list_tracks
 
 # The three directories, in the order a run copies and reports them.
 FAMILIES: tuple[str, ...] = (RESUMES, COVER_LETTERS, ANSWERS)
+# The fourth, copied after them: only the entries of the account's own jobs,
+# matched by URL, never weighed in check 6 (spec 152).
+DESCRIPTIONS = "descriptions"
 
 NO_ACCOUNT = "that owner sees no track: the account does not exist or has not been invited"
 NO_JOBS = (
@@ -76,8 +81,8 @@ NO_JOBS = (
     "or no artifact would be found for it"
 )
 NO_DIRECTORY = (
-    "none of the data directory's resumes, cover-letters and answers directories exists; "
-    "this is probably the wrong machine"
+    "none of the data directory's resumes, cover-letters, answers and descriptions "
+    "directories exists; this is probably the wrong machine"
 )
 FITS_NO_JOB = (
     "none of the files fits a job of this account, so --owner is probably not the account "
@@ -101,10 +106,16 @@ class Imported:
     differs: int = 0
     attached: int = 0
     unattached: int = 0
+    # Spec 152: a local description no hosted job reads, and a hosted one
+    # that differs, which is the newer. Neither makes the run incomplete.
+    no_hosted_job: int = 0
+    kept_newer: int = 0
 
     @property
     def complete(self) -> bool:
-        """Whether no file was left uncopied (spec 146, Open decision 4)."""
+        """Whether no file was left uncopied (spec 146, Open decision 4).
+        A description skipped or kept under spec 152's two counts was not
+        lost, so neither counts here."""
         return not (self.over_limit or self.other or self.differs)
 
 
@@ -128,6 +139,8 @@ class AccountNames:
 
     keys: frozenset[str]
     has_jobs: bool
+    # The description keys of the jobs that have a URL (spec 152).
+    description_keys: frozenset[str] = frozenset()
 
 
 def account_names(conn: Connection) -> AccountNames:
@@ -141,6 +154,7 @@ def account_names(conn: Connection) -> AccountNames:
     has no resume keys, as `artifacts_for_job` reports none for it.
     """
     keys: set[str] = set()
+    descriptions: set[str] = set()
     has_jobs = False
     for track in list_tracks(conn):
         candidate: str | None
@@ -149,22 +163,25 @@ def account_names(conn: Connection) -> AccountNames:
         except ResumeBundleError:
             candidate = None
         rows = conn.execute(
-            "SELECT company, title FROM jobs WHERE track_id = ? ORDER BY id", (track.id,)
+            "SELECT company, title, url FROM jobs WHERE track_id = ? ORDER BY id", (track.id,)
         ).fetchall()
         for row in rows:
             has_jobs = True
             company = str(row[0] or "")
             role = str(row[1] or "")
+            url = str(row[2] or "").strip()
+            if url:
+                descriptions.add(description_cache_key(url))
             if candidate is not None:
                 keys.update(resume_keys_for(candidate, company, role).values())
             keys.update(cover_letter_keys_for(company, role).values())
             keys.add(answers_key_for(company, role))
-    return AccountNames(frozenset(keys), has_jobs)
+    return AccountNames(frozenset(keys), has_jobs, frozenset(descriptions))
 
 
-def read_account(conn: Connection) -> frozenset[str]:
+def read_account(conn: Connection) -> AccountNames:
     """Checks 4 and 6's input, in one transaction that only reads: the owner
-    sees a track and a job, and the set of keys their jobs name."""
+    sees a track and a job, and the sets of keys their jobs name."""
     with conn.transaction():
         conn.execute("SET TRANSACTION READ ONLY")
         row = conn.execute("SELECT EXISTS (SELECT 1 FROM tracks)").fetchone()
@@ -173,7 +190,7 @@ def read_account(conn: Connection) -> frozenset[str]:
         names = account_names(conn)
         if not names.has_jobs:
             raise ArtifactImportRefused(NO_JOBS)
-        return names.keys
+        return names
 
 
 # --- the local files ---
@@ -239,16 +256,18 @@ RETRY_WAITS: tuple[int, ...] = (2, 4, 8, 16, 32, 60)
 _sleep: Callable[[float], None] = time.sleep
 
 
-def _patiently[T](call: Callable[[], T], report: Callable[[str], None]) -> T:
+def patiently[T](call: Callable[[], T], report: Callable[[str], None], what: str = "import") -> T:
     """`call()`, asked again after each wait in RETRY_WAITS while Storage
-    answers 429. Any other error, or a 429 after the last wait, is raised."""
+    answers 429. Any other error, or a 429 after the last wait, is raised.
+    `what` names the command in the line reported before each wait; spec 153's
+    `backup-files` shares this and the waits (spec 153, Scope)."""
     for wait in RETRY_WAITS:
         try:
             return call()
         except FileStoreError as error:
             if error.status != RATE_LIMITED:
                 raise
-        report(f"Storage asked the import to slow down; waiting {wait} s")
+        report(f"Storage asked the {what} to slow down; waiting {wait} s")
         _sleep(wait)
     return call()
 
@@ -295,19 +314,24 @@ def _copy_one(
     key = file.key
     data = _read_local(local, file)
     try:
-        found = _patiently(lambda: hosted.stat(key), report)
-        hosted_bytes = _patiently(lambda: hosted.read(key), report) if found is not None else None
+        found = patiently(lambda: hosted.stat(key), report)
+        hosted_bytes = patiently(lambda: hosted.read(key), report) if found is not None else None
     except FileStoreError as error:
         raise _stopped("check", family, error) from None
     if hosted_bytes is not None:
         if hosted_bytes != data:
-            result.differs += 1
+            if family == DESCRIPTIONS:
+                # Pasted or fetched on the account since: the newer one
+                # (spec 152).
+                result.kept_newer += 1
+            else:
+                result.differs += 1
             return
         count.present += 1
     else:
         try:
-            _patiently(lambda: hosted.put(key, data, atomic=True), report)
-            after = _patiently(lambda: hosted.stat(key), report)
+            patiently(lambda: hosted.put(key, data, atomic=True), report)
+            after = patiently(lambda: hosted.stat(key), report)
         except FileStoreError as error:
             raise _stopped("upload", family, error) from None
         if after is None or after.size != len(data):
@@ -316,6 +340,9 @@ def _copy_one(
                 "the object is left as Storage holds it"
             )
         count.copied += 1
+    if family == DESCRIPTIONS:
+        # Matched by URL before the copy; attachment counts the artifacts.
+        return
     if key in attached:
         result.attached += 1
     else:
@@ -324,6 +351,13 @@ def _copy_one(
 
 def _family_line(family: str, count: FamilyCount) -> str:
     return f"{family}: {count.copied} copied, {count.present} already there"
+
+
+def _descriptions_line(count: FamilyCount, kept_newer: int) -> str:
+    return (
+        f"{DESCRIPTIONS}: {count.copied} copied, {count.present} already there, "
+        f"{kept_newer} kept, newer on hosted"
+    )
 
 
 def import_artifacts(
@@ -351,14 +385,16 @@ def import_artifacts(
     check_login_role(url)
     conn = open_store({URL_VARIABLE: url}, owner=str(claims["sub"]))
     try:
-        attached = read_account(conn)
+        names = read_account(conn)
     finally:
         conn.close()
+    attached = names.keys
     # 5. The local directories.
     local = LocalFileStore()
-    if not any((local.root / family).is_dir() for family in FAMILIES):
+    if not any((local.root / family).is_dir() for family in (*FAMILIES, DESCRIPTIONS)):
         raise ArtifactImportRefused(NO_DIRECTORY)
     inventory = {family: local_files(local.root, family) for family in FAMILIES}
+    descriptions = local_files(local.root, DESCRIPTIONS)
     # 6. The files fit the account.
     everything = [file for files in inventory.values() for file in files]
     if everything and not any(file.key in attached for file in everything):
@@ -380,6 +416,21 @@ def import_artifacts(
                 else:
                     _copy_one(hosted, local, file, result, attached, report)
             report(_family_line(family, result.families[family]))
+        result.families[DESCRIPTIONS] = FamilyCount()
+        for file in descriptions:
+            if file.key not in names.description_keys:
+                # No hosted job reads it: skipped without a request.
+                result.no_hosted_job += 1
+                continue
+            reason = skip_reason(file)
+            if reason == "other":
+                result.other += 1
+            elif reason == "over":
+                result.over_limit += 1
+            else:
+                _copy_one(hosted, local, file, result, attached, report)
+        report(_descriptions_line(result.families[DESCRIPTIONS], result.kept_newer))
+    report(f"not copied, no hosted job: {result.no_hosted_job}")
     report(f"not copied, over the size limit: {result.over_limit}")
     report(f"not copied, other type or name: {result.other}")
     report(f"not copied, differs from the hosted object: {result.differs}")

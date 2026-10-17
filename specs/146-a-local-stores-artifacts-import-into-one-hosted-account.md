@@ -356,6 +356,19 @@ and
 prove both halves, with the waits recorded instead of slept. Both fail with
 the retry removed.
 
+## Amendment (2026-10-17): job descriptions, by spec 152
+
+Spec 152 moves job descriptions into scope as a fourth family, copied
+after the three, limited to the entries of jobs the account holds and
+matched by URL through the description cache's own key function. Two
+counts join the output, `kept, newer on hosted` on the descriptions line
+and `not copied, no hosted job` after it, and neither makes the run
+incomplete. Check 5 counts four directories; check 6 still weighs the
+three artifact families only. "Out of scope" below keeps its words for
+the record; spec 152 is what the command does
+(`services/api/src/harrier/artifactimport.py`,
+`services/api/tests/test_import_artifacts.py::test_a_description_of_a_hosted_job_is_imported`).
+
 ## Proof / origin
 
 - Akin's decision of 2026-10-14: artifacts come too, meaning generated

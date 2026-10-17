@@ -578,6 +578,17 @@ def _version(etag: object, updated: object, fallback: object) -> str:
 
 
 @dataclass(frozen=True)
+class StoredObject:
+    """One object of an owner's prefix, as the operator lists it: its name
+    below the prefix (a hashed name for most families), its size and a
+    version that changes whenever its bytes may have."""
+
+    name: str
+    size: int
+    version: str
+
+
+@dataclass(frozen=True)
 class SupabaseFileStore:
     """One owner's files in the private bucket, through Storage's HTTP API.
 
@@ -833,10 +844,11 @@ class SupabaseFileStore:
 
     # --- the operator's whole prefix (spec 111's erase; spec 107, Note) ---
 
-    def object_names(self) -> builtins.list[str]:
-        """Every object under the owner's prefix, at any depth, as full
-        object names. Folders are walked, never returned."""
-        names: builtins.list[str] = []
+    def _walk(self) -> builtins.list[tuple[str, dict[str, Any]]]:
+        """Every object under the owner's prefix, at any depth, as its full
+        object name and its listing entry. Folders are walked, never
+        returned."""
+        found: builtins.list[tuple[str, dict[str, Any]]] = []
         pending = [self.owner]
         while pending:
             folder = pending.pop()
@@ -848,8 +860,46 @@ class SupabaseFileStore:
                 if item.get("id") is None:
                     pending.append(full)
                 else:
-                    names.append(full)
-        return sorted(names)
+                    found.append((full, item))
+        return found
+
+    def object_names(self) -> builtins.list[str]:
+        """Every object under the owner's prefix, at any depth, as full
+        object names. Folders are walked, never returned."""
+        return sorted(full for full, _ in self._walk())
+
+    def stored_objects(self) -> builtins.list[StoredObject]:
+        """Every object under the owner's prefix, at any depth, by name below
+        the prefix, with its size and a version that changes whenever its
+        bytes may have (spec 153's `backup-files`)."""
+        start = len(self.owner) + 1
+        result: builtins.list[StoredObject] = []
+        for full, item in self._walk():
+            metadata = item.get("metadata")
+            meta = cast("dict[str, object]", metadata) if isinstance(metadata, dict) else {}
+            updated = item.get("updated_at")
+            result.append(
+                StoredObject(
+                    name=full[start:],
+                    size=_size(meta.get("size")),
+                    version=_version(meta.get("eTag"), updated, item.get("id")),
+                )
+            )
+        return sorted(result, key=lambda stored: stored.name)
+
+    def read_object(self, name: str) -> bytes | None:
+        """The bytes of an object by its name below the owner's prefix, as
+        `stored_objects` gives it, or None when it is gone. The name is
+        checked against the key grammar, so it cannot leave the prefix."""
+        check_key(name)
+        family = family_of(name)
+        response = self._send("read", family, "GET", f"/object/{BUCKET}/{self.owner}/{name}")
+        if response.status_code == 200:
+            return response.content
+        status = answered_status(response)
+        if _absent(status, response):
+            return None
+        raise storage_error("read", family, status)
 
     def delete_everything(self) -> int:
         """Delete every object under the owner's prefix through the Storage
