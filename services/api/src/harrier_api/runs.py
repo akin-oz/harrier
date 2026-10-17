@@ -178,6 +178,11 @@ PARAMETERIZED_KINDS: dict[str, ParameterizedKind] = {
         takes_job=False,
     ),
     "scoring-export": ParameterizedKind("scoring export", takes_job=False),
+    # Spec 157: the trainer reads the newest export; `--activate` lets the
+    # gate decide whether the model replaces the rules.
+    "scoring-train": ParameterizedKind(
+        "scoring train", switches=frozenset({"--activate"}), takes_job=False
+    ),
     # `KIND_COMMANDS["discovery"]` stays the no-option form `POST /runs`
     # starts. Both lock on the same kind, so one discovery runs at a time.
     "discovery": ParameterizedKind(
@@ -387,7 +392,10 @@ HOSTED_RUN_KINDS: dict[str, HostedAnswer] = {
     "find-contacts": HostedAnswer(runs=True, needs=("apify",)),
     "backfill-posters": RUNS,
     "outreach-draft": _no_hosted_reader("outreach-draft"),
-    "scoring-export": _no_hosted_reader("scoring-export"),
+    # Lifted by spec 157: the export's reader is the training run, and both
+    # read and write the owner's Storage prefix through the run's binding.
+    "scoring-export": RUNS,
+    "scoring-train": RUNS,
     # Spec 109's refusal and text (spec 106, Amendment (2026-10-13,
     # implementation), item 9): `start` raises `GmailNotHosted` first.
     "gmail-watch": HostedAnswer(runs=False, refusal=GMAIL_NOT_HOSTED_DETAIL),

@@ -939,6 +939,98 @@ def test_a_hosted_run_binds_its_owners_storage(
     assert not data.exists() or not any(path.is_file() for path in data.rglob("*"))
 
 
+def _export_bytes(seed: int, scenario: str) -> bytes:
+    """A synthetic export as `harrier scoring export` writes one: a header
+    and generated rows, no text from any posting."""
+    from test_scoring_model import _synthetic_rows  # pyright: ignore[reportPrivateUsage]
+
+    from harrier.scoring.features import FEATURE_ORDER
+
+    rows = _synthetic_rows(800, seed=seed, scenario=scenario)
+    header = {
+        "kind": "header",
+        "format_version": 1,
+        "created_at": "2026-10-06",
+        "feature_order": list(FEATURE_ORDER),
+        "rules_version": "5e5e5e5e5e5e",
+        "rows": len(rows),
+        "excluded": {},
+    }
+    lines = [json.dumps(header), *(json.dumps(row) for row in rows)]
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def test_a_hosted_training_run_writes_only_its_owners_model(
+    storage: FakeStorage,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Spec 157: `harrier scoring train --activate` as a hosted run reads
+    the export in its owner's Storage prefix, writes the model and the
+    report there, and activates the model there when it beats the rules. A
+    second owner's prefix, which holds an export of its own, is neither
+    read nor written, and nothing lands on the machine's disk."""
+    import harrier.scoring.train as train_module
+    from harrier.scoring.model import ACTIVE_MODEL_KEY
+    from harrier_cli import main as cli
+
+    # Fewer resamples keep the run quick; the world is built so the verdict
+    # does not hang on the interval's last digit (tests/test_scoring_model.py).
+    monkeypatch.setattr(train_module, "BOOTSTRAP_RESAMPLES", 300)
+    export_key = "scoring/exports/features-20261006.jsonl"
+    store_a, store_b = store_for(OWNER_A), store_for(OWNER_B)
+    store_a.put(export_key, _export_bytes(6, "learnable"), atomic=True)
+    # The other owner's export is one the rules win, so a model trained
+    # from it would never be activated.
+    store_b.put(export_key, _export_bytes(6, "rules_win"), atomic=True)
+    theirs = {
+        name: stored.data
+        for name, stored in storage.objects.items()
+        if name.startswith(f"{OWNER_B}/")
+    }
+    storage.requests.clear()
+
+    data = data_dir()
+    monkeypatch.delenv("HARRIER_AUTH", raising=False)
+    monkeypatch.setenv("HARRIER_DATABASE_URL", "postgresql://run:synthetic@127.0.0.1:1/postgres")
+    monkeypatch.setenv("HARRIER_RUN_OWNER", OWNER_A)
+    monkeypatch.setenv("HARRIER_SUPABASE_URL", SUPABASE_URL)
+    monkeypatch.setenv("HARRIER_SUPABASE_PUBLISHABLE_KEY", PUBLISHABLE_KEY)
+    monkeypatch.setenv(STORAGE_TOKEN_VARIABLE, TOKEN)
+    # Its setup opens the run's store, which this test has none of; the
+    # trainer itself opens none.
+    monkeypatch.setattr(cli, "configure_logging", lambda: None)
+
+    code = cli.main(["scoring", "train", "--activate"])
+
+    out = capsys.readouterr().out
+    assert code == train_module.EXIT_OK, out
+    assert "activated model " in out
+    ours = sorted(name for name in storage.names() if name.startswith(f"{OWNER_A}/"))
+    assert [name for name in ours if name.startswith(f"{OWNER_A}/scoring/models/")]
+    assert [name for name in ours if name.startswith(f"{OWNER_A}/scoring/reports/")]
+    assert store_a.object_name(ACTIVE_MODEL_KEY) in ours
+    # The active model is the model the run wrote.
+    [model] = [name for name in ours if name.startswith(f"{OWNER_A}/scoring/models/")]
+    active = storage.objects[store_a.object_name(ACTIVE_MODEL_KEY)].data
+    assert active == storage.objects[model].data
+
+    # The other owner's prefix is as it was, and no request named it.
+    after = {
+        name: stored.data
+        for name, stored in storage.objects.items()
+        if name.startswith(f"{OWNER_B}/")
+    }
+    assert after == theirs
+    assert store_b.object_name(ACTIVE_MODEL_KEY) not in storage.names()
+    # A list names its prefix in the body, so the body is read too.
+    assert storage.requests
+    for request in storage.requests:
+        assert OWNER_B not in str(request.url), storage.operation(request)
+        assert OWNER_B.encode() not in request.content, storage.operation(request)
+    assert not data.exists() or not any(path.is_file() for path in data.rglob("*"))
+
+
 def _hosted_academic_runs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from test_filestore import _academic_scope  # pyright: ignore[reportPrivateUsage]
 

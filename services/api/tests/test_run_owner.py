@@ -360,6 +360,7 @@ START_CASES: tuple[StartCase, ...] = (
     StartCase("POST", "/ops/descriptions/backfill", "description-backfill", {"json": {}}),
     StartCase("POST", "/ops/evaluate-prospects", "evaluate-prospects", {"json": {}}),
     StartCase("POST", "/ops/scoring/export", "scoring-export", {}),
+    StartCase("POST", "/ops/scoring/train", "scoring-train", {"json": {"activate": True}}),
     StartCase(
         "POST",
         "/ops/discover",
@@ -373,14 +374,12 @@ START_CASES: tuple[StartCase, ...] = (
 # Spec 106's table, "Which kinds run hosted", written out here rather than
 # read from the code: each refused kind's detail. A kind not listed runs.
 SPEC_REFUSALS: dict[str, str] = {
-    # Spec 107's third pull request lifted the other six of spec 106's
-    # "501 until spec 107" kinds; these two write files no hosted route
-    # serves (spec 107, Amendment (2026-10-16): PR 3's build).
-    **{
-        kind: f"{kind} runs are not available on the hosted API: "
-        "no hosted route serves their files (spec 107)"
-        for kind in ("outreach-draft", "scoring-export")
-    },
+    # Spec 107's third pull request lifted six of spec 106's "501 until
+    # spec 107" kinds, and spec 157 lifted `scoring-export`. This one writes
+    # files no hosted route serves (spec 107, Amendment (2026-10-16): PR 3's
+    # build).
+    "outreach-draft": "outreach-draft runs are not available on the hosted API: "
+    "no hosted route serves their files (spec 107)",
     # Spec 109's text, which its own refusal answers (spec 106, Amendment
     # (2026-10-13, implementation), item 9).
     "gmail-watch": GMAIL_NOT_HOSTED_DETAIL,

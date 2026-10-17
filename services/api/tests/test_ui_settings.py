@@ -122,6 +122,19 @@ def test_every_cli_subcommand_has_exactly_one_place(env: Path) -> None:
     assert not run_verbs & unrouted, f"a run executes {sorted(run_verbs & unrouted)}"
 
 
+def test_scoring_train_is_a_routed_command(client: TestClient) -> None:
+    """Spec 157: training runs from the Operations page, hosted and local,
+    so the Settings list routes it and no longer lists it as a host
+    command. The model fact stays on the host panel."""
+    assert COMMAND_PLACES["scoring train"] == Routed("POST /ops/scoring/train")
+    body = client.get("/settings/commands", headers=auth()).json()
+    assert {"command": "scoring train", "route": "POST /ops/scoring/train", "note": None} in (
+        body["routed"]
+    )
+    assert "scoring train" not in {entry["command"] for entry in body["host"]}
+    assert "model" in [row["fact"] for row in body["panel"]]
+
+
 def test_the_page_reads_the_list_from_the_api(client: TestClient) -> None:
     body = client.get("/settings/commands", headers=auth()).json()
     places = {

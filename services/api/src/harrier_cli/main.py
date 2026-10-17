@@ -132,6 +132,10 @@ RUN_CLASS: frozenset[str] = frozenset(
         "backfill-posters",
         # Spec 151: its descriptions go to the owner's Storage prefix.
         "description backfill",
+        # Spec 157: the export and the model it trains go to the owner's
+        # Storage prefix.
+        "scoring export",
+        "scoring train",
     }
 )
 
@@ -1922,11 +1926,12 @@ def _cmd_eligibility(args: argparse.Namespace) -> int:
 
 def _cmd_scoring(args: argparse.Namespace) -> int:
     """The learned fit score's offline half (spec 077): export where the
-    database lives, train on the host from the export alone."""
+    database lives, train from the export alone."""
     if args.scoring_command == "export":
         from harrier.scoring.export import export_features
 
-        with closing(connect()) as conn:
+        # The run's store, hosted: the owner's rows (spec 157).
+        with closing(_open_store()) as conn:
             scope = _scope(conn, args)
             result = export_features(conn, scope)
         print(
@@ -1939,11 +1944,11 @@ def _cmd_scoring(args: argparse.Namespace) -> int:
     try:
         from harrier.scoring.train import train
     except ImportError:
-        # The container installs --no-dev, and scikit-learn is a dev
-        # dependency: training is a host command (spec 077).
+        # scikit-learn is in the `training` group, which both images and
+        # the dev group install (spec 157). An environment without it says so.
         print(
-            "scikit-learn is not installed here. Train on the host, where the dev group "
-            "is installed: cd services/api && uv sync",
+            "scikit-learn is not installed here. Install the training group: "
+            "cd services/api && uv sync --group training",
             file=sys.stderr,
         )
         return 2
@@ -3365,8 +3370,8 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "deploy check-scheduler-tick": _HOST,
     "deploy project-cost": _HOST,
     # The export reads the tracker, so it runs where the database lives. The
-    # trainer reads only the export and needs scikit-learn, which the image
-    # does not install, so it runs here (spec 077).
+    # trainer reads only the export and opens no database, so it runs where
+    # it is typed (spec 077); the browser starts it as a run (spec 157).
     "scoring export": _DB,
     "scoring train": _HOST,
     "reevaluate": _DB,

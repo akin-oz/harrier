@@ -296,7 +296,7 @@ otherwise. Synthetic rows only.
       "linking contact ids is a separate confirmed action that names the count",
       "a dry backfill comes first and writing names the count it will write",
       "batch evaluation offers rejection only after a report, naming the count",
-      "the feature export runs here and training is said to stay on the host",
+      "the feature export runs here beside training",
       "discovery options and an upload are sent as multipart and stream on the runs panel")
 - [x] `just contract` regenerates the contract and the web app type-checks
       against it with no hand-written request or response shape

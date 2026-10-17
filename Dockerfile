@@ -81,7 +81,8 @@ RUN /app/services/api/.venv/bin/playwright install --with-deps chromium \
 # --- the hosted image (spec 110) -----------------------------------------------
 #
 # The API for many owners, on Fly. The dependency groups it needs are `pdf`
-# (above), `postgres` for the store and `hosted` for the bearer tokens. It
+# (above), `postgres` for the store, `hosted` for the bearer tokens and
+# `training` for the scoring model's training run (spec 157). It
 # installs no `gmail` group (spec 109 offers no hosted Gmail), carries no
 # `claude` CLI (ADR-013 decision 8: the hosted deployment offers the API LLM
 # providers only) and no SPA (ADR-013 decision 7: Vercel serves it).
@@ -93,7 +94,7 @@ FROM base AS hosted
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     cd services/api && uv sync --frozen --no-install-project --no-dev \
-        --group pdf --group postgres --group hosted
+        --group pdf --group postgres --group hosted --group training
 
 COPY services/api services/api
 COPY config config
@@ -103,7 +104,7 @@ COPY docs docs
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     cd services/api && uv sync --frozen --no-dev \
-        --group pdf --group postgres --group hosted
+        --group pdf --group postgres --group hosted --group training
 
 # What this image is, readable at `GET /health`: the deploy compares `revision`
 # with the commit it built, so a machine still running an older image is seen
@@ -132,13 +133,15 @@ FROM base AS runtime
 # `gmail` backs the mail watch run that `POST /mail/watch` starts. It was
 # absent from the first image and failed the way `pdf` did: a run that dies on
 # a lazy import telling the operator to run an install command, inside a
-# container. `postgres` and `hosted` are the hosted image's (spec 110): the
-# local container runs on SQLite.
+# container. `training` backs the scoring model's training run (spec 157),
+# for the same reason. `postgres` and `hosted` are the hosted image's (spec
+# 110): the local container runs on SQLite.
 #
 # Dependencies as their own layer: the project itself is installed after the
 # source arrives, so editing a module does not reinstall FastAPI.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    cd services/api && uv sync --frozen --no-install-project --no-dev --group pdf --group gmail
+    cd services/api && uv sync --frozen --no-install-project --no-dev \
+        --group pdf --group gmail --group training
 
 COPY services/api services/api
 
@@ -164,7 +167,7 @@ COPY docs docs
 COPY --from=web /build/apps/web/dist apps/web/dist
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    cd services/api && uv sync --frozen --no-dev --group pdf --group gmail
+    cd services/api && uv sync --frozen --no-dev --group pdf --group gmail --group training
 
 # The `claude` CLI, for the same reason as Chromium above: AI_PROVIDER selects
 # it, the UI can reach every feature that calls it, and the container could not

@@ -156,6 +156,8 @@ def test_every_parameterized_kind_is_reachable_from_a_page(env: Path) -> None:
         "description-backfill": "/ops/descriptions/backfill",
         "evaluate-prospects": "/ops/evaluate-prospects",
         "scoring-export": "/ops/scoring/export",
+        # Spec 157.
+        "scoring-train": "/ops/scoring/train",
         "discovery": "/ops/discover",
         # Spec 096: an archive from the Settings page's listing.
         "verify-backup": "/settings/backups/{name}/verify",

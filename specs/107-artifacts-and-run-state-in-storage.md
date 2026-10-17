@@ -645,7 +645,8 @@ PR 2 (hosted):
 - **Scoring models are not trained hosted.** Training needs scikit-learn,
   which is a dev dependency the image does not install
   (`services/api/pyproject.toml:41-45`). A hosted owner has no model, and
-  the rules score, until a later spec says otherwise.
+  the rules score, until a later spec says otherwise. Spec 157 lifts this
+  (Amendment (2026-10-17): spec 157 trains hosted).
 - **Read-modify-write is not safe under concurrency**, hosted or local:
   staged candidates, outreach targets and the two appended files can lose
   a change.
@@ -1589,3 +1590,24 @@ create-only upload. Every other writer keeps `put`, which keeps upsert.
   sends the same body under HTTP 409 (`services/api/tests/storage_support.py`).
   Assumption 10 under "Settled by the build" carries the create-only
   request and its conflict answer.
+
+## Amendment (2026-10-17): spec 157 trains hosted
+
+Spec 157, approved 2026-10-17, lifts this spec's refusal of
+`scoring-export` and its limitation "Scoring models are not trained
+hosted".
+
+- **The export runs hosted.** Its reader is now the training run, so the
+  reason in the PR 3 table ("read only by training, which does not run
+  hosted") no longer holds. `HOSTED_RUN_KINDS["scoring-export"]` is `RUNS`
+  (`services/api/src/harrier_api/runs.py`;
+  `services/api/tests/test_hosted_runs.py::test_hosted_scoring_runs_are_allowed`).
+  `outreach-draft` keeps its 501.
+- **Training runs hosted.** A run kind `scoring-train`, started by
+  `POST /ops/scoring/train`, reads the owner's newest export and writes the
+  model, the report and, when the gate passes, `scoring/active-model.json`
+  through the run's binding to the owner's prefix
+  (`services/api/tests/test_hosted_files.py::test_a_hosted_training_run_writes_only_its_owners_model`).
+- **The image installs scikit-learn.** It moved from the `dev` group to a
+  `training` group, which `dev` includes and both images install
+  (`services/api/tests/test_deploy_files.py::test_the_hosted_image_installs_the_training_group`).

@@ -6,21 +6,36 @@ import { api } from "../../shared/api/client";
 import { RunOutput, refusalMessage } from "./RunOutput";
 
 /**
- * The learned score's export (`harrier scoring export`, spec 077), as a run
- * whose log ends with its counts and the reasons rows were left out.
- * Training needs scikit-learn, which the image does not install, so it runs
- * on the host.
+ * The learned score (spec 077) as two runs: the export
+ * (`harrier scoring export`), whose log ends with its counts and the reasons
+ * rows were left out, and training (`harrier scoring train --activate`,
+ * spec 157), which reads the newest export and activates the model only if
+ * it beats the rules. Each streams its own output.
  */
 export function ScoringSection() {
-  const stream = useRunStream();
-  const start = useMutation({
+  const exportStream = useRunStream();
+  const exportStart = useMutation({
     mutationFn: async (): Promise<RunOut> => {
       const { data, error } = await api.POST("/ops/scoring/export");
       if (error !== undefined) throw new Error(refusalMessage(error, "the export was refused"));
       return data;
     },
     onSuccess: (data) => {
-      stream.begin(data);
+      exportStream.begin(data);
+    },
+  });
+
+  const trainStream = useRunStream();
+  const trainStart = useMutation({
+    mutationFn: async (): Promise<RunOut> => {
+      const { data, error } = await api.POST("/ops/scoring/train", {
+        body: { activate: true },
+      });
+      if (error !== undefined) throw new Error(refusalMessage(error, "training was refused"));
+      return data;
+    },
+    onSuccess: (data) => {
+      trainStream.begin(data);
     },
   });
 
@@ -30,26 +45,41 @@ export function ScoringSection() {
         Learned score
       </h3>
       <p className="ops-note">
-        Writes the labelled feature export the trainer reads. Training runs on the host, where
-        scikit-learn is installed; this server does not have it.
+        Writes the labelled feature export the trainer reads. Training uses the newest export, and
+        activates the model only if it beats the rules.
       </p>
       <div className="ops-actions">
         <button
           type="button"
-          disabled={stream.active || start.isPending}
+          disabled={exportStream.active || exportStart.isPending}
           onClick={() => {
-            start.mutate();
+            exportStart.mutate();
           }}
         >
           Write the feature export
         </button>
+        <button
+          type="button"
+          disabled={trainStream.active || trainStart.isPending}
+          onClick={() => {
+            trainStart.mutate();
+          }}
+        >
+          Train the model
+        </button>
       </div>
-      {start.error !== null && (
+      {exportStart.error !== null && (
         <p role="alert" className="ops-error">
-          {start.error.message}
+          {exportStart.error.message}
         </p>
       )}
-      <RunOutput stream={stream} label="Feature export" />
+      {trainStart.error !== null && (
+        <p role="alert" className="ops-error">
+          {trainStart.error.message}
+        </p>
+      )}
+      <RunOutput stream={exportStream} label="Feature export" />
+      <RunOutput stream={trainStream} label="Model training" />
     </section>
   );
 }

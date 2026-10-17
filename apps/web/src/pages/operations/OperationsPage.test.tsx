@@ -765,12 +765,13 @@ test("batch evaluation offers rejection only after a report, naming the count", 
   });
 });
 
-test("the feature export runs here and training is said to stay on the host", async () => {
+test("the feature export runs here beside training", async () => {
   const calls = stubApi();
   const user = userEvent.setup();
   renderPage();
 
-  expect(await screen.findByText(/Training runs on the host/)).toBeTruthy();
+  expect(await screen.findByText(/Training uses the newest export/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Train the model" })).toBeTruthy();
   await user.click(screen.getByRole("button", { name: "Write the feature export" }));
   await waitFor(() => {
     expect(posted(calls, "/ops/scoring/export")).toHaveLength(1);

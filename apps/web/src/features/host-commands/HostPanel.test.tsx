@@ -26,7 +26,8 @@ const PLACES: CommandPlaces = {
   panel: [
     { fact: "schedule", commands: ["harrier schedule status", "harrier schedule install"] },
     { fact: "gmail_token", commands: ["harrier gmail-oauth"] },
-    { fact: "model", commands: ["harrier scoring train --activate"] },
+    // Training is a run on the Operations page (spec 157).
+    { fact: "model", commands: [] },
     { fact: "image", commands: ["just container-up"] },
     { fact: "database_owner", commands: ["harrier doctor", "harrier doctor --integrity"] },
     { fact: "profile", commands: ["harrier profile export --to <directory>"] },

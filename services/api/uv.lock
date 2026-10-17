@@ -550,6 +550,9 @@ pdf = [
 postgres = [
     { name = "psycopg", extra = ["binary"] },
 ]
+training = [
+    { name = "scikit-learn" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -583,6 +586,7 @@ hosted = [
 ]
 pdf = [{ name = "playwright", specifier = ">=1.40" }]
 postgres = [{ name = "psycopg", extras = ["binary"], specifier = ">=3.2" }]
+training = [{ name = "scikit-learn", specifier = ">=1.9.1" }]
 
 [[package]]
 name = "httpcore"

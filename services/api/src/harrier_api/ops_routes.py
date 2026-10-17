@@ -672,11 +672,39 @@ async def evaluate_prospects_route(
 async def export_scoring_features(
     manager: Manager, scope: Annotated[TrackScope, Depends(scope_for("scoring export"))]
 ) -> RunOut:
-    """`scoring export` as a run. Training reads only the export and needs
-    scikit-learn, which the image does not install, so it stays on the host
-    (spec 077)."""
+    """`scoring export` as a run. Training reads only the export, which is
+    why the export runs hosted too (spec 157)."""
     del scope
     return run_out(await manager.start("scoring-export", RunParams()))
+
+
+class ScoringTrainIn(BaseModel):
+    """Train without activating unless the body says otherwise. With
+    `activate`, the gate still decides: a model that does not beat the rules
+    is written and not activated (spec 077)."""
+
+    activate: bool = False
+
+
+@ops_router.post(
+    "/ops/scoring/train",
+    operation_id="trainScoringModel",
+    dependencies=[Depends(require_token)],
+    responses=merge_responses(TOKEN_RESPONSES, RUN_CONFLICT_RESPONSES),
+)
+async def train_scoring_model(
+    manager: Manager,
+    scope: Annotated[TrackScope, Depends(scope_for("scoring train"))],
+    body: ScoringTrainIn = ScoringTrainIn(),  # noqa: B008
+) -> RunOut:
+    """`scoring train` as a run (spec 157). It reads the newest export and
+    writes a model and a report; the run ends with the command's own exit
+    code, so a refusal reads as a failed run whose output says why."""
+    del scope
+    params = RunParams(
+        switches=frozenset({"--activate"}) if body.activate else frozenset(),
+    )
+    return run_out(await manager.start("scoring-train", params))
 
 
 DISCOVER_RESPONSES: dict[int | str, dict[str, Any]] = {

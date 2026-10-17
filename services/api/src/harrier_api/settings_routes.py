@@ -181,6 +181,8 @@ COMMAND_PLACES: dict[str, Place] = {
     "check": Routed("GET /ops/check", note="With --link-contacts: POST /ops/check/link-contacts."),
     "evaluate-prospects": Routed("POST /ops/evaluate-prospects"),
     "scoring export": Routed("POST /ops/scoring/export"),
+    # Spec 157: the image installs the training group, so it runs as a run.
+    "scoring train": Routed("POST /ops/scoring/train"),
     "reconsider": Routed("POST /ops/reconsider"),
     "digest": Routed("POST /ops/digest"),
     "config check-feeds": Routed("POST /ops/feeds", note="With --prune: POST /ops/feeds/prune."),
@@ -208,10 +210,6 @@ COMMAND_PLACES: dict[str, Place] = {
     "gmail-oauth": OnHost(
         "harrier gmail-oauth",
         "A browser consent flow that writes the mail token; the container mounts it read-only.",
-    ),
-    "scoring train": OnHost(
-        "harrier scoring train --activate",
-        "Needs scikit-learn, which the image does not install (spec 077).",
     ),
     "doctor": OnHost(
         "harrier doctor",
@@ -294,7 +292,9 @@ HostFact = Literal["schedule", "gmail_token", "model", "image", "database_owner"
 HOST_PANEL: tuple[tuple[HostFact, tuple[str, ...]], ...] = (
     ("schedule", ("harrier schedule status", "harrier schedule install")),
     ("gmail_token", ("harrier gmail-oauth",)),
-    ("model", ("harrier scoring train --activate",)),
+    # Training is a run on the Operations page (spec 157), so no host
+    # command changes this fact; the fact itself is read as before.
+    ("model", ()),
     ("image", ("just container-up",)),
     ("database_owner", ("harrier doctor", "harrier doctor --integrity")),
     ("profile", ("harrier profile export --to <directory>",)),

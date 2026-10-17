@@ -38,17 +38,22 @@ dev = [
     "pyright>=1.1.390",
     "import-linter>=2.0",
     "httpx>=0.28",
-    # Fits the learned fit score offline (`harrier scoring train`, spec 077)
-    # and proves in CI that plain-Python inference reproduces it. Dev only:
-    # the image installs --no-dev, and an import-linter contract below keeps
-    # sklearn and numpy off every path except the trainer.
-    "scikit-learn>=1.9.1",
+    # The trainer, so CI proves that plain-Python inference reproduces it
+    # (spec 077).
+    {include-group = "training"},
     # The Postgres store's tests run in CI and wherever a test server is
     # named (spec 103, tests/pg_support.py).
     {include-group = "postgres"},
     # The hosted API's token tests run everywhere, with keys made in the
     # test (spec 104).
     {include-group = "hosted"},
+]
+# Fits the learned fit score (`harrier scoring train`, spec 077). Both images
+# install it, so training runs from the browser, hosted and local (spec 157).
+# An import-linter contract below keeps sklearn and numpy off every path
+# except the trainer, which runs as a subprocess, never in the API process.
+training = [
+    "scikit-learn>=1.9.1",
 ]
 # The hosted Postgres store is optional: install with `uv sync --group
 # postgres`. Without it, a postgresql:// HARRIER_DATABASE_URL is refused with
@@ -143,7 +148,7 @@ forbidden_modules = [
 
 [[tool.importlinter.contracts]]
 # Inference is plain Python over a JSON model (spec 077). The trainer is the
-# one module allowed scikit-learn and numpy, which the image does not install.
+# one module allowed scikit-learn and numpy, from the `training` group.
 name = "only the trainer imports scikit-learn or numpy"
 type = "forbidden"
 source_modules = ["harrier", "harrier_api", "harrier_cli"]

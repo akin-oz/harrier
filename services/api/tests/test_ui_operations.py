@@ -638,6 +638,8 @@ NEW_RUNS: dict[str, tuple[str, str]] = {
     ),
     "evaluate-prospects": ("/ops/evaluate-prospects", "harrier.offers.evaluate_prospects"),
     "scoring-export": ("/ops/scoring/export", "harrier.scoring.export.export_features"),
+    # Spec 157.
+    "scoring-train": ("/ops/scoring/train", "harrier.scoring.train.train"),
     "discovery": ("/ops/discover", "harrier.discovery.run_discovery"),
 }
 
@@ -655,6 +657,21 @@ def test_every_new_route_calls_the_cli_verbs_function(
     with patch(function) as domain, suppress(Exception):
         main(as_cli(run))
     assert domain.call_args is not None, f"{path} did not reach {function}"
+
+
+def test_scoring_train_route_starts_the_run(client: TestClient, manager: RunManager) -> None:
+    """Spec 157: `activate` adds `--activate` and nothing else; a body
+    without it, or no body at all, trains without activating."""
+    run = started(
+        manager, client.post("/ops/scoring/train", json={"activate": True}, headers=auth())
+    )
+    assert run.kind == "scoring-train"
+    assert as_cli(run) == ["scoring", "train", "--activate"]
+    for body in ({"json": {}}, {}):
+        ended(manager)
+        run = started(manager, client.post("/ops/scoring/train", headers=auth(), **body))
+        assert run.kind == "scoring-train"
+        assert as_cli(run) == ["scoring", "train"]
 
 
 def test_every_new_request_calls_the_cli_verbs_function(
@@ -1188,6 +1205,8 @@ def test_every_route_that_starts_a_run_declares_the_refusal(env: Path) -> None:
         ("/ops/descriptions/backfill", "post"),
         ("/ops/evaluate-prospects", "post"),
         ("/ops/scoring/export", "post"),
+        # Spec 157.
+        ("/ops/scoring/train", "post"),
         ("/ops/discover", "post"),
         # Spec 096: verifying an archive from the Settings page's list.
         ("/settings/backups/{name}/verify", "post"),
