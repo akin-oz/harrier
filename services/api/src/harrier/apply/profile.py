@@ -112,9 +112,10 @@ def load_profile_json(conn: Connection, scope: Scope) -> dict[str, object]:
 
 
 STORY_BANK_KIND = "story_bank"
-# The parts of a story a letter may cite (spec 158). `jd_hook` and
-# `opening_line` are prose a model once wrote, never evidence.
-STORY_EVIDENCE_FIELDS = ("situation", "task", "action", "result")
+# The parts of a story the letter payload carries as context (spec 158).
+# The offer evaluator's model wrote every field, so none is evidence
+# (amendment 15); `jd_hook` and `opening_line` are left out entirely.
+STORY_CONTEXT_FIELDS = ("situation", "task", "action", "result")
 
 
 def load_story_bank(conn: Connection) -> list[dict[str, str]]:
@@ -144,11 +145,11 @@ def load_story_bank(conn: Connection) -> list[dict[str, str]]:
         story.update(
             {
                 key: value
-                for key in STORY_EVIDENCE_FIELDS
+                for key in STORY_CONTEXT_FIELDS
                 if isinstance(value := star.get(key), str) and value.strip()
             }
         )
-        if any(key in story for key in STORY_EVIDENCE_FIELDS):
+        if any(key in story for key in STORY_CONTEXT_FIELDS):
             stories.append(story)
     return stories
 

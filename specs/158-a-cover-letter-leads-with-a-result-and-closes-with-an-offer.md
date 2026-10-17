@@ -291,9 +291,10 @@ kind's range and cap.
   range (`services/api/tests/test_letter_structure.py::test_the_industry_letter_has_five_to_eight_blocks`).
 - [x] A focused letter without a logistics block is refused
   (`services/api/tests/test_letter_structure.py::test_the_focused_letter_has_a_logistics_block`).
-- [x] A candidate claim citing a story bank `result` string passes; one
-  citing its `opening_line` is refused as unverified
-  (`services/api/tests/test_letter_structure.py::test_story_bank_results_are_evidence_and_openers_are_not`).
+- [x] A candidate claim citing any story bank string is refused as
+  unverified, and the payload still carries the STAR strings as context
+  (amendment 15)
+  (`services/api/tests/test_letter_structure.py::test_story_bank_text_is_context_not_evidence`).
 - [x] A candidate claim citing the candidate document's location or entity
   status passes; one citing a value under any other key is refused
   (amendment 10) (`services/api/tests/test_letter_structure.py::test_candidate_document_values_are_evidence`).
@@ -440,6 +441,16 @@ The build found these places where the Behavior was wrong or silent.
     evaluator stores each story with the posting it was written for, not
     the candidate's employer (`services/api/src/harrier/offers/stories.py`).
     The payload carries a story's theme and its four STAR strings only.
+15. **The story bank is context, not evidence.** The Behavior made the
+    story bank's STAR strings citable on the belief that the operator wrote
+    them. The offer evaluator's model writes them, and may invent stories
+    for themes the profile does not cover (`services/api/src/harrier/offers/evaluate.py`,
+    `services/api/src/harrier/offers/stories.py`); nothing checks them
+    against the truth sources (review of #405). Akin decided on 2026-10-18:
+    context only. The payload carries the STAR strings so the model sees
+    how a result was achieved; a letter cites only the truth sources, the
+    two candidate fields and the brief's evidence. This replaces open
+    decision 1's answer.
 
 ## Out of scope
 

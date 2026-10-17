@@ -42,7 +42,6 @@ from harrier.apply.claims import (
 )
 from harrier.apply.letterlint import LintContext, lint_letter
 from harrier.apply.profile import (
-    STORY_EVIDENCE_FIELDS,
     ApplicationProfileError,
     load_candidate_document,
     load_profile_json,
@@ -125,8 +124,11 @@ LETTER_SHARED: tuple[str, ...] = (
 - No invented experience
 - Use the application profile for positioning and safe framing only. Every
   fact about the candidate must come from resume_truth_source_md,
-  latest_project_achievements_md, story_bank, or candidate_json's
-  candidate.location and candidate.eu_entity_status.
+  latest_project_achievements_md, or candidate_json's candidate.location
+  and candidate.eu_entity_status.
+- story_bank is context only: it shows how a result was achieved, but it
+  was written by a model and is never evidence. A fact you take from it
+  must also be stated in the truth sources, and you cite that line.
 """,
     """Banned phrasing:
 """
@@ -138,8 +140,7 @@ Claims and evidence:
   as it appears in your letter, whether it is about the candidate or the
   employer, and one or more evidence fragments.
 - Evidence is quoted verbatim. Candidate evidence comes only from
-  resume_truth_source_md, latest_project_achievements_md, the situation,
-  task, action and result of a story_bank entry, or candidate_json's
+  resume_truth_source_md, latest_project_achievements_md, or candidate_json's
   candidate.location or candidate.eu_entity_status. Employer evidence comes
   only from job_description_text.
 - Never cite job_description_text or the application profile as candidate
@@ -282,8 +283,9 @@ def build_cover_letter_payload(
             "resume_truth_source_md": sources.truth_text,
             "latest_project_achievements_md": sources.achievements_text,
             "candidate_json": candidate,
-            # The four STAR strings of each story, which a letter may cite
-            # (spec 158). The story's opening line and hook are left out.
+            # The four STAR strings of each story, as context only: the
+            # offer evaluator's model wrote them, so a letter never cites
+            # them (spec 158, amendment 15).
             "story_bank": load_story_bank(conn),
             "application_profile_md": load_profile_markdown(conn, scope),
             "application_profile_json": load_profile_json(conn, scope),
@@ -643,15 +645,11 @@ def _candidate_facts(document: dict[str, object]) -> list[str]:
 def letter_evidence(conn: Connection, brief: Brief = EMPTY_BRIEF) -> dict[str, TruthSources]:
     """Each document a letter's candidate claim may cite, by the name the
     draft's "Facts used" gives it (spec 158). The truth and achievements
-    documents as today; the four STAR strings of each story; the candidate
-    document's allowlisted fields; and the brief's evidence (spec 066)."""
+    documents as today; the candidate document's allowlisted fields; and
+    the brief's evidence (spec 066). The story bank is not one: it is
+    unchecked model output, carried in the payload as context only
+    (amendment 15)."""
     truth = load_truth_sources(conn)
-    stories = "\n".join(
-        story[key]
-        for story in load_story_bank(conn)
-        for key in STORY_EVIDENCE_FIELDS
-        if key in story
-    )
     try:
         candidate = "\n".join(_candidate_facts(load_candidate_document(conn)))
     except ApplicationProfileError:
@@ -660,7 +658,6 @@ def letter_evidence(conn: Connection, brief: Brief = EMPTY_BRIEF) -> dict[str, T
     return {
         "resume_truth": TruthSources(truth_text=truth.truth_text, achievements_text=""),
         "achievements": TruthSources(truth_text="", achievements_text=truth.achievements_text),
-        "story_bank": TruthSources(truth_text="", achievements_text=stories),
         "candidate": TruthSources(truth_text="", achievements_text=candidate),
         "operator_evidence": TruthSources(truth_text="", achievements_text=operator),
     }

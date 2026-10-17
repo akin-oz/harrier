@@ -117,16 +117,24 @@ def test_the_focused_letter_has_a_logistics_block() -> None:
 # --- the evidence ------------------------------------------------------------------
 
 
-def test_story_bank_results_are_evidence_and_openers_are_not(
+def test_story_bank_text_is_context_not_evidence(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The offer evaluator's model wrote the story bank, so no field of it
+    verifies a claim (amendment 15). The payload still carries the STAR
+    strings as context."""
     _store_story_bank(db)
-    claims = [*GROUNDED_CLAIMS, candidate(REFUND, REFUND_RESULT)]
-    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {REFUND}", claims))
-    letter = generate(db)
-    assert any(
-        fact.evidence == REFUND_RESULT and fact.source == "story_bank" for fact in letter.facts_used
-    )
+    seen: list[str] = []
+
+    def fake(system_prompt: str, user_input: str) -> str:
+        seen.append(user_input)
+        claims = [*GROUNDED_CLAIMS, candidate(REFUND, REFUND_RESULT)]
+        return letter_json(f"{CHECKOUT} {INVOICES} {REFUND}", claims)
+
+    monkeypatch.setattr(letters_module, "generate_text", fake)
+    assert f"unverified evidence: {REFUND_RESULT}" in refusal(db)
+    bank = json.loads(seen[0])["truth_sources"]["story_bank"]
+    assert bank[0]["result"] == f"{REFUND_RESULT}."
 
     opener = "I once rebuilt the refund queue for the whole company."
     claims = [*GROUNDED_CLAIMS, candidate(opener, REFUND_OPENER)]

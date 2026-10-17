@@ -59,7 +59,7 @@ from harrier_cli.main import main
 # The letter's changed on purpose with spec 158's structure.
 INDUSTRY_PROMPT_SHA256 = {
     "tailor": "e4d6e724cbb0bca98688928bfe01dcac3f4eaa77b5d14c94f52a8bc530ec8525",
-    "letter": "1e93d3311a77a38ad6f5d144078271acb9092b8135f4453a22da32af57387eba",
+    "letter": "692e402e40a8e7a0628e3d2672c2fcad2c9ff4ad68c42a8abc092befe8b9badb",
     "answers": "5f4c2ce48f22338680ed62668bf294116c01931a608407710d7377791acb1a00",
 }
 
@@ -69,8 +69,8 @@ NAMED_TRUTH_RULES = {
     "tailor": ["Return only IDs from the supplied bullet_pool"],
     "letter": [
         "Every fact about the candidate must come from resume_truth_source_md, "
-        "latest_project_achievements_md, story_bank, or candidate_json's "
-        "candidate.location and candidate.eu_entity_status",
+        "latest_project_achievements_md, or candidate_json's candidate.location "
+        "and candidate.eu_entity_status",
         "No invented experience",
         "Never cite job_description_text or the application profile as candidate evidence",
     ],
@@ -90,7 +90,7 @@ NAMED_TRUTH_RULES = {
 # purpose: the reviewer sees it.
 SHARED_BLOCK_SHA256 = {
     "tailor": "a329a5bab049cb38abdc5d41866f7df4b922a4ba1eb1db5511797988d1afb30e",
-    "letter": "b2491d703d03ff0a3e4a1c576bfb7ab6ec01b32953b6f9401097f4edd5e8d2e6",
+    "letter": "a817e3ecad4970037e4c509ecb593160e1ae19a9e2c09e44628a795090e7cf1a",
     "answers": "4ecacc81eec0b311f60307d946db6da1f62a8602c214c59a767f38047850bbad",
 }
 
