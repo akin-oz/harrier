@@ -561,6 +561,17 @@ def _absent(status: int, response: httpx.Response) -> bool:
     )
 
 
+def _created(response: httpx.Response, family: str) -> bool:
+    """A create-only upload's answer (spec 154): True when stored, False when
+    Storage said the object exists, or the error any other answer maps to."""
+    if response.status_code == 200:
+        return True
+    status = answered_status(response)
+    if status == CONFLICT:
+        return False
+    raise storage_error("create", family, status)
+
+
 def _parse_time(value: object) -> float:
     if not isinstance(value, str) or not value:
         return 0.0
@@ -718,13 +729,7 @@ class SupabaseFileStore:
         True when stored; False when Storage answered that the object
         exists, which leaves it unchanged. Not on the `FileStore` protocol:
         only the artifact import must never replace a hosted object."""
-        response = self._send_upload("create", key, data, upsert=False)
-        if response.status_code == 200:
-            return True
-        status = answered_status(response)
-        if status == CONFLICT:
-            return False
-        raise storage_error("create", family_of(key), status)
+        return _created(self._send_upload("create", key, data, upsert=False), family_of(key))
 
     def _upload(self, operation: str, key: str, data: bytes) -> None:
         response = self._send_upload(operation, key, data, upsert=True)
@@ -735,7 +740,14 @@ class SupabaseFileStore:
     def _send_upload(
         self, operation: str, key: str, data: bytes, *, upsert: bool
     ) -> httpx.Response:
-        name = self.object_name(key)
+        return self._send_upload_to(operation, key, self.object_name(key), data, upsert=upsert)
+
+    def _send_upload_to(
+        self, operation: str, key: str, name: str, data: bytes, *, upsert: bool
+    ) -> httpx.Response:
+        """Upload `data` to the full object name `name`. `key` gives the
+        family a message names and the extension the content type comes
+        from."""
         family = family_of(key)
         content_type = content_type_for(operation, key)
         if len(data) > SIZE_LIMIT:
@@ -922,6 +934,17 @@ class SupabaseFileStore:
         if _absent(status, response):
             return None
         raise storage_error("read", family, status)
+
+    def create_object(self, name: str, data: bytes) -> bool:
+        """Upload `data` under a name below the owner's prefix, as
+        `stored_objects` gives it, only when no object is there (spec 154's
+        create-only upload; spec 155's `restore-files`). True when stored;
+        False when Storage answered that the object exists, which leaves it
+        unchanged. The name is checked against the key grammar, so it cannot
+        leave the prefix, and its extension gives the content type."""
+        check_key(name)
+        response = self._send_upload_to("create", name, f"{self.owner}/{name}", data, upsert=False)
+        return _created(response, family_of(name))
 
     def delete_everything(self) -> int:
         """Delete every object under the owner's prefix through the Storage

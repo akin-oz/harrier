@@ -2097,6 +2097,8 @@ def _cmd_store(args: argparse.Namespace) -> int:
         return _store_backup_seal(args)
     if args.store_command == "backup-files":
         return _store_backup_files(args)
+    if args.store_command == "restore-files":
+        return _store_restore_files(args)
     try:
         target = store_target()
         if args.store_command == "backup-dump":
@@ -2283,6 +2285,27 @@ def _store_backup_files(args: argparse.Namespace) -> int:
     return 0 if result.complete else 1
 
 
+def _store_restore_files(args: argparse.Namespace) -> int:
+    """`harrier store restore-files --owner <user id> --from <dated directory>`
+    (spec 155).
+
+    Uploads a `backup-files` copy into the account's Storage prefix,
+    create-only. A host command: the Storage client is imported here, never
+    at start. The output names counts, never a key, a name, the owner or the
+    host. A refusal or a stop prints one line to stderr and exits 1; so does
+    a run that left a file not written.
+    """
+    from harrier.connection import StoreError
+    from harrier.filesrestore import restore_files
+
+    try:
+        result = restore_files(args.owner, args.source, os.environ, print)
+    except StoreError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    return 0 if result.complete else 1
+
+
 def _owner_id(value: str) -> str:
     """`--owner`: a Supabase user id, a UUID. The text of a refusal never
     quotes the value."""
@@ -2294,16 +2317,17 @@ def _owner_id(value: str) -> str:
         raise argparse.ArgumentTypeError("--owner must be the account's user id, a UUID") from None
 
 
-# The deploy's store steps (spec 110): they run as the migrator on a Postgres
-# store, and refuse a SQLite one.
-STORE_DEPLOY_COMMANDS = ("grant-tenant", "grant-schedule-reader", "check-deploy")
+# The deploy's store steps (spec 110), and the restore's Storage step (spec
+# 155): they run as the migrator on a Postgres store, and refuse a SQLite one.
+STORE_DEPLOY_COMMANDS = ("grant-tenant", "grant-schedule-reader", "check-deploy", "restore-storage")
 
 
 def _store_deploy(args: argparse.Namespace, url: str) -> int:
-    """`harrier store grant-tenant`, `grant-schedule-reader` and `check-deploy`.
+    """`harrier store grant-tenant`, `grant-schedule-reader`, `check-deploy`
+    and `restore-storage`.
 
     A refusal, or a check that fails, is a `StoreDeployRefused`, which
-    `_cmd_store` prints as one line and exits 1. None of the three prints the
+    `_cmd_store` prints as one line and exits 1. None of them prints the
     URL.
     """
     from harrier.storedeploy import (
@@ -2312,6 +2336,7 @@ def _store_deploy(args: argparse.Namespace, url: str) -> int:
         check_deploy,
         grant_schedule_reader,
         grant_tenant,
+        restore_storage,
     )
 
     command: str = args.store_command
@@ -2323,6 +2348,10 @@ def _store_deploy(args: argparse.Namespace, url: str) -> int:
         return 0
     if command == "grant-schedule-reader":
         print(grant_schedule_reader(url, args.role))
+        return 0
+    if command == "restore-storage":
+        for line in restore_storage(url):
+            print(line)
         return 0
     tenant_roles = cast("list[str]", args.login or [])
     scheduler_roles = cast("list[str]", args.scheduler_login or [])
@@ -3323,6 +3352,11 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "store backup-check": _HOST,
     "store backup-seal": _HOST,
     "store backup-files": _HOST,
+    # The restore's Storage steps (spec 155): the bucket and policy as the
+    # migrator, as the deploy's steps run; the files from the operator's
+    # `backup-files` copy under the data directory's never-in-git `hosted/`.
+    "store restore-storage": _HOST,
+    "store restore-files": _HOST,
     # Read no database: the project's Auth settings, a Fly listing on stdin,
     # Fly's events and figures typed in (spec 110).
     "deploy check-auth-settings": _HOST,
@@ -3932,6 +3966,30 @@ def build_parser() -> argparse.ArgumentParser:
         type=_owner_id,
         metavar="USER_ID",
         help="the account's Supabase user id, as the dashboard's Users page shows it",
+    )
+    store_sub.add_parser(
+        "restore-storage",
+        help="make the Storage bucket and policy a restored store lacks, as the migrator "
+        "(spec 155)",
+    )
+    restore_files_cmd = store_sub.add_parser(
+        "restore-files",
+        help="upload a backup-files copy into one hosted account's Storage, create-only (spec 155)",
+    )
+    restore_files_cmd.add_argument(
+        "--owner",
+        required=True,
+        type=_owner_id,
+        metavar="USER_ID",
+        help="the account's Supabase user id, as the dashboard's Users page shows it",
+    )
+    restore_files_cmd.add_argument(
+        "--from",
+        dest="source",
+        required=True,
+        type=Path,
+        metavar="DIRECTORY",
+        help="a dated directory under data/hosted/backups/files",
     )
     store_cmd.set_defaults(func=_cmd_store)
 
