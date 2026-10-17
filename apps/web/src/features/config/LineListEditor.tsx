@@ -79,16 +79,22 @@ export function LineListEditor({
           }}
         />
       </label>
-      {routed && routing.data !== undefined && routing.data.length > 0 && (
-        <div role="status" className="config-unrouted">
-          <p className="config-unrouted__lead">
-            Discovery skips these lines. They can still be saved.
-          </p>
-          <ul className="config-unrouted__list">
-            {routing.data.map((item) => (
-              <li key={item.url}>{item.message}</li>
-            ))}
-          </ul>
+      {/* Rendered before any line is checked, so the list is announced when it
+          arrives (spec 156). */}
+      {routed && (
+        <div role="status">
+          {routing.data !== undefined && routing.data.length > 0 && (
+            <div className="config-unrouted">
+              <p className="config-unrouted__lead">
+                Discovery skips these lines. They can still be saved.
+              </p>
+              <ul className="config-unrouted__list">
+                {routing.data.map((item) => (
+                  <li key={item.url}>{item.message}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </KindFrame>

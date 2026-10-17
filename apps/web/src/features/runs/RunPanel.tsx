@@ -169,12 +169,16 @@ export function RunPanel({
           {mutationError.message}
         </p>
       )}
-      {disconnected && (
-        <p role="status" className="run-panel__disconnected">
-          Lost the log stream. The run may still be going; its state above is refreshed from the
-          server.
-        </p>
-      )}
+      {/* Always rendered, so the lost stream is announced when it is lost
+          (spec 156). The bordered paragraph sits inside it. */}
+      <div role="status">
+        {disconnected && (
+          <p className="run-panel__disconnected">
+            Lost the log stream. The run may still be going; its state above is refreshed from the
+            server.
+          </p>
+        )}
+      </div>
       {waiting && <p className="run-panel__last-line">waiting for the first line…</p>}
       {lastLine !== null && !expanded && (
         <p className={`run-panel__last-line${failed ? " run-panel__last-line--failed" : ""}`}>

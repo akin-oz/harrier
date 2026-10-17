@@ -331,12 +331,14 @@ export function ApplyPage({ job, track, onBack }: { job: Job; track: Track; onBa
             </p>
           )}
 
-          {disconnected && (
-            <p role="status" className="apply-page__muted">
-              Lost the log stream. The run may still be going; its state above is refreshed from the
-              server.
-            </p>
-          )}
+          <p role="status" className="apply-page__muted">
+            {disconnected && (
+              <>
+                Lost the log stream. The run may still be going; its state above is refreshed from
+                the server.
+              </>
+            )}
+          </p>
 
           {lines.length > 0 && (
             <div className="apply-page__log">

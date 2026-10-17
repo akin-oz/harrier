@@ -1,7 +1,7 @@
 ---
 spec: 156
 title: A status message goes into a live region that was already there
-status: accepted
+status: shipped
 approved: yes
 milestone: M6
 depends: []
@@ -23,11 +23,12 @@ Whether a region inserted together with its text is announced depends on
 the browser and screen reader pair. So a message that arrives that way may
 be shown and never spoken.
 
-A survey of every `role="status"` in `apps/web/src` on 2026-10-17 found 21
-regions. Seven already follow the rule: the region is always rendered and
-only its text changes. Fourteen mount the region with its message, and one
-of the seven hides its region with `display: none` while empty, which takes
-it out of the accessibility tree the same way.
+A survey of every `role="status"` in `apps/web/src` on 2026-10-17 found 22
+regions. Seven are always rendered and change only their text. Fifteen
+mount the region with its message. Two of the seven hide their region with
+`display: none` while empty, which takes it out of the accessibility tree
+the same way. TracksPage's hiding rule and BackupsSection's computed role
+were found while building; see the amendments below.
 
 Who it hurts: an operator using a screen reader, who saves a brief or loses
 a log stream and hears nothing.
@@ -49,6 +50,7 @@ Mounted with the message (each changes under this spec):
 | `features/tracker/JobActions.tsx` | `job-actions__failure` | `failure !== null` (focus also moves to it) |
 | `features/config/LineListEditor.tsx` | `config-unrouted` | routing has unrouted lines |
 | `features/schedule/ScheduleForm.tsx` | `schedule-form__state` in `Saved` | `savedOnce` |
+| `pages/settings/BackupsSection.tsx` | `settings-result`, as `role={failed ? "alert" : "status"}` | a run has finished and printed a line |
 | `features/runs/RunPanel.tsx` | `run-panel__disconnected` | `disconnected` |
 | `pages/apply/ApplyPage.tsx` | `apply-page__muted` | `disconnected` |
 | `pages/inbox/InboxPage.tsx` | `inbox-page__muted` | `disconnected` |
@@ -62,17 +64,18 @@ Always mounted, but hidden while empty:
 | File | Region | How |
 |---|---|---|
 | `features/tracks/ArchiveTrack.tsx` | `archive-track__message` | `.archive-track__message:empty { display: none; }` in its stylesheet |
+| `pages/tracks/TracksPage.tsx` | `tracks-page__notice` | `.tracks-page__notice:empty { display: none; }` in `TracksPage.css` |
 
 Already following the rule (unchanged): `features/config/KindFrame.tsx`,
 `features/config/ImportConfig.tsx`, `features/tracks/AddTrack.tsx`,
-`features/host-commands/CopyCommand.tsx`, `pages/tracks/TracksPage.tsx`,
+`features/host-commands/CopyCommand.tsx`,
 `pages/settings/ExportSection.tsx`.
 
 ## Scope
 
 1. The rule, stated once, for every `role="status"` region in
    `apps/web/src`.
-2. The fifteen regions above brought under it.
+2. The seventeen regions above brought under it.
 3. One test per changed component proving its region is in the document
    before the message, and that the message lands in that same element.
 
@@ -116,8 +119,9 @@ same place, at the same moment. Only the element structure changes.
 - **JobActions.** The region is always rendered. The failure paragraph
   inside it keeps its `ref` and `tabIndex={-1}`, and focus still moves to it
   when a failure appears, as `TracksPage` already does with its notice.
-- **LineListEditor.** The region is always rendered. The bordered
-  `config-unrouted` box mounts inside it when there are unrouted lines.
+- **LineListEditor.** The region is always rendered for the feeds kind,
+  the only kind whose lines are checked. The bordered `config-unrouted` box
+  mounts inside it when there are unrouted lines.
 - **ScheduleForm.** The region sits in the form. `Saved` renders its content
   into it once the form has saved.
 - **RunPanel, ApplyPage, InboxPage.** The region sits in the panel (for
@@ -130,9 +134,13 @@ same place, at the same moment. Only the element structure changes.
   `ReportView` renders its content into it.
 - **RunOutput.** With no run, it renders its state region, empty, and
   nothing else visible. With a run, the state line fills that same region.
-- **ArchiveTrack.** The `:empty { display: none; }` rule is removed. The
-  empty paragraph has no margin, so it takes no height; it may add one
-  flex gap.
+- **BackupsSection.** A finished run that failed keeps its `role="alert"`
+  paragraph, mounted with its message as an alert is meant to be. A run
+  that succeeded puts its last line in a `role="status"` paragraph that is
+  always rendered in the section.
+- **ArchiveTrack, TracksPage.** The `:empty { display: none; }` rules are
+  removed. Each empty paragraph has no margin, so it takes no height; it
+  may add one flex gap. TracksPage still moves focus to its notice.
 
 ## Failure modes
 
@@ -147,66 +155,100 @@ same place, at the same moment. Only the element structure changes.
 ## Acceptance criteria
 
 Each test renders the owner, finds the region before the action, takes the
-action, and checks that the message is in that same element
-(`toBe` on the node).
+action, and checks that the message is in that same element (`toBe` on the
+node), or, where a view holds several regions, in one of the regions that
+were there before the action, with no region holding the message mounted
+since (a nested region kept inside the new one would be that insertion). Each one fails with the components as they
+were before this change; the other five tests named in the last criterion
+fail too.
 
-- [ ] BriefPanel: the region is present and empty before a save, and holds
-      "Brief saved." after one (planned `BriefPanel.test.tsx` test
-      "the saved note lands in a status region that was already there").
-- [ ] DescriptionPanel: the region is present while the paste box is open,
+- [x] BriefPanel: the region is present and empty before a save, and holds
+      "Brief saved." after one
+      (`BriefPanel.test.tsx::the saved note lands in a status region that was already there`).
+- [x] DescriptionPanel: the region is present while the paste box is open,
       and holds the save note after a save
-      (planned `DescriptionPanel.test.tsx` test
-      "the saved note lands in a status region that was already there").
-- [ ] SignInForm: the region is present before the first send, and holds
-      the message after it (planned `SignInForm.test.tsx` test
-      "the sign-in message lands in a status region that was already there").
-- [ ] AddJob: the region is present when the form opens, and holds the
-      outcome after a save (planned `TrackerPage.test.tsx` test
-      "the outcome lands in a status region that was already there").
-- [ ] JobActions: the region is present before a refused action, holds the
+      (`DescriptionPanel.test.tsx::the saved note lands in a status region that was already there`).
+- [x] SignInForm: the region is present before the first send, and holds
+      the message after it
+      (`SignInForm.test.tsx::the sign-in message lands in a status region that was already there`).
+- [x] AddJob: the region is present when the form opens, and holds the
+      outcome after a save
+      (`TrackerPage.test.tsx::the outcome lands in a status region that was already there`).
+- [x] JobActions: the region is present before a refused action, holds the
       failure after it, and the failure paragraph has focus
-      (planned `TrackerPage.test.tsx` test
-      "a failure lands in a status region that was already there and takes focus").
-- [ ] LineListEditor: the region is present before the blur, and holds the
-      unrouted list after it (planned `LineListEditor.test.tsx` test
-      "unrouted lines land in a status region that was already there").
-- [ ] ScheduleForm: the region is present before a save, and holds the
-      saved note after it (planned `ScheduleChoiceSection.hosted.test.tsx`
-      test "the saved note lands in a status region that was already there").
-- [ ] RunPanel: the region is present before the stream is lost, and holds
-      "Lost the log stream" after (planned `RunPanel.test.tsx` test
-      "a lost stream is told in a status region that was already there").
-- [ ] ApplyPage: the same, for the operation panel (planned
-      `ApplyPage.test.tsx` test
-      "a lost stream is told in a status region that was already there").
-- [ ] InboxPage: the same, for the watch (planned `InboxPage.test.tsx` test
-      "a lost stream is told in a status region that was already there").
-- [ ] DataChecksSection: the region is present before linking, and holds
-      the outcome after (planned `OperationsPage.test.tsx` test
-      "the link outcome lands in a status region that was already there").
-- [ ] DigestSection: the region is present before a send, and holds the
-      outcome after (planned `OperationsPage.test.tsx` test
-      "the digest outcome lands in a status region that was already there").
-- [ ] EligibilitySection: the "Eligibility report" region is present before
-      a run, and holds the report after (planned `OperationsPage.test.tsx`
-      test "the eligibility report lands in a status region that was already there").
-- [ ] RunOutput: a section with no run renders an empty state region, and
-      the run's state fills that same element (planned
-      `OperationsPage.test.tsx` test
-      "a run's state lands in a status region that was already there").
-- [ ] ArchiveTrack: the stylesheet has no rule that hides the message while
-      empty. This one is checked in the diff, not by a test: jsdom computes
-      no stylesheet `:empty` rule a test could rely on.
-- [ ] Existing tests that assert `queryByRole("status")` is null for "no
-      message" (`RunPanel.test.tsx`, `DescriptionPanel.test.tsx`,
-      `ScheduleChoiceSection.hosted.test.tsx`) assert an empty region
-      instead, and still fail if the message appears.
-- [ ] `grep -rn 'role="status"' apps/web/src` after the change lists no
-      region inside a `&&` or ternary on its own message. Checked in review.
+      (`TrackerPage.test.tsx::a failure lands in a status region that was already there and takes focus`).
+- [x] LineListEditor: the region is present before the blur, and holds the
+      unrouted list after it
+      (`LineListEditor.test.tsx::unrouted lines land in a status region that was already there`).
+- [x] ScheduleForm: the region is present before a save, and holds the
+      saved note after it
+      (`ScheduleChoiceSection.hosted.test.tsx::the saved note lands in a status region that was already there`).
+- [x] RunPanel: the region is present before the stream is lost, and holds
+      "Lost the log stream" after
+      (`RunPanel.test.tsx::a lost stream is told in a status region that was already there`).
+- [x] ApplyPage: the same, for the operation panel
+      (`ApplyPage.test.tsx::a lost stream is told in a status region that was already there`).
+- [x] InboxPage: the same, for the watch
+      (`InboxPage.test.tsx::a lost stream is told in a status region that was already there`).
+- [x] DataChecksSection: the region is present before linking, and holds
+      the outcome after
+      (`OperationsPage.test.tsx::the link outcome lands in a status region that was already there`).
+- [x] DigestSection: the region is present before a send, and holds the
+      outcome after
+      (`OperationsPage.test.tsx::the digest outcome lands in a status region that was already there`).
+- [x] EligibilitySection: the "Eligibility report" region is present before
+      a run, and holds the report after
+      (`OperationsPage.test.tsx::the eligibility report lands in a status region that was already there`).
+- [x] RunOutput: a section with no run renders an empty state region, and
+      the run's state fills that same element
+      (`OperationsPage.test.tsx::a run's state lands in a status region that was already there`).
+- [x] BackupsSection: the region is present before a backup, and holds the
+      finished run's line after it
+      (`SettingsPage.test.tsx::a finished backup is told in a status region that was already there`);
+      a failed backup is still an alert
+      (`SettingsPage.test.tsx::a failed backup says no archive was written`).
+- [x] ArchiveTrack and TracksPage: no stylesheet rule hides the message
+      while empty. Checked in the diff of `features/tracks/tracks.css` and
+      `pages/tracks/TracksPage.css`, not by a test: jsdom computes no
+      stylesheet `:empty` rule a test could rely on.
+- [x] Existing tests that asserted `queryByRole("status")` is null for "no
+      message" assert an empty region instead, and still fail if the
+      message appears
+      (`RunPanel.test.tsx::a recovered stream stops saying it is disconnected`,
+      `::a run the stream does not know stops the reconnecting`,
+      `::an event that is not JSON is skipped, and the stream carries on`;
+      `DescriptionPanel.test.tsx::replacing clears the saved note, so cancelling does not report a save`;
+      `ScheduleChoiceSection.hosted.test.tsx::settings schedule section shows the store's refusal`).
+      Tests that found the region to read its first message now wait for
+      the words, since the region is found at once, empty
+      (`message` in `SignInForm.test.tsx`, `eligibilityReport` in
+      `OperationsPage.test.tsx`).
+- [x] `grep -rnE 'role="status"|role=\{' apps/web/src` after the change
+      lists no status region inside a `&&` or ternary on its own message,
+      and no role computed between `alert` and `status`. Checked in review.
+      The second pattern is there because `role="status"` alone missed
+      BackupsSection.
 
 Every file named above exists today. AddJob and JobActions are tested
 through `pages/tracker/TrackerPage.test.tsx`, and the four operations
 sections through `pages/operations/OperationsPage.test.tsx`, as they are now.
+
+## Amendments found while implementing (2026-10-17)
+
+- **TracksPage hides its notice while empty.** The survey listed
+  `pages/tracks/TracksPage.tsx` as following the rule. Its stylesheet has
+  `.tracks-page__notice:empty { display: none; }`, the same breach as
+  ArchiveTrack's. The rule is removed. Its focus move is unchanged.
+- **BackupsSection computed its role.** Its finished-run paragraph was
+  `role={failed ? "alert" : "status"}` and mounted with its line, so a
+  success was a status region inserted with its text. The survey's grep
+  for `role="status"` could not see it; the local fsd-reviewer on PR #401
+  did. The alert and the status are now two elements, and the review
+  criterion greps for a computed role too.
+- **LineListEditor renders its region for the feeds kind only.** The
+  editor serves other line-list kinds, which never check their lines and
+  so never have a message. The region's condition is the kind, fixed for
+  the editor's life, not the message.
 
 ## Proof / origin
 

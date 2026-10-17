@@ -425,6 +425,29 @@ test("a duplicate is reported in the domain's words and the form keeps its input
   expect(screen.getByLabelText("Company")).toHaveProperty("value", "Northwind");
 });
 
+test("the outcome lands in a status region that was already there", async () => {
+  stubApi({
+    add: { code: 200, body: { status: "duplicate", message: "already tracked", job: null } },
+  });
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.click(screen.getByRole("button", { name: "Add a job by hand" }));
+  const form = screen.getByLabelText("Company").closest("form");
+  if (form === null) throw new Error("no add form");
+  // A region inserted with its text may never be spoken (spec 156).
+  const region = within(form).getByRole("status");
+  expect(region.textContent).toBe("");
+  await user.type(screen.getByLabelText("Company"), "Northwind");
+  await user.type(screen.getByLabelText("Title"), "Senior Frontend Engineer");
+  await user.click(screen.getByRole("button", { name: "Add" }));
+
+  await waitFor(() => {
+    expect(region.textContent).toBe("already tracked");
+  });
+  expect(within(form).getByRole("status")).toBe(region);
+});
+
 test("a successful add clears the form and refetches the tracker", async () => {
   const calls = stubApi({});
   const user = userEvent.setup();
@@ -1059,6 +1082,27 @@ test("a refused company response takes focus to its reason", async () => {
   await within(row).findByRole("button", { name: "Reopen" });
   await waitFor(() => {
     expect(document.activeElement).toBe(reason);
+  });
+});
+
+test("a failure lands in a status region that was already there and takes focus", async () => {
+  stubApi({
+    jobs: [job(1, "Northwind", "80")],
+    status: { code: 409, body: { detail: "a reason is only recorded on a rejection" } },
+  });
+  const user = userEvent.setup();
+  renderPage();
+
+  const row = await rowFor("Northwind");
+  // A region inserted with its text may never be spoken (spec 156).
+  const region = within(row).getByRole("status");
+  expect(region.textContent).toBe("");
+  await user.click(within(row).getByRole("button", { name: "Shortlist" }));
+
+  const failure = await within(region).findByText("a reason is only recorded on a rejection");
+  expect(within(row).getByRole("status")).toBe(region);
+  await waitFor(() => {
+    expect(document.activeElement).toBe(failure);
   });
 });
 

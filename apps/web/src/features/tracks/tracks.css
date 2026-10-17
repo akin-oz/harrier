@@ -161,9 +161,6 @@
   font-size: 12px;
   color: var(--color-text-secondary);
 }
-.archive-track__message:empty {
-  display: none;
-}
 
 @media (max-width: 640px) {
   .tracks-button,

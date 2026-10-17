@@ -112,11 +112,9 @@ export function SignInForm() {
           </button>
         </>
       )}
-      {message !== null && (
-        <p role="status" className="sign-in-form__message">
-          {message}
-        </p>
-      )}
+      <p role="status" className="sign-in-form__message">
+        {message}
+      </p>
     </form>
   );
 }

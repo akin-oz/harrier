@@ -194,6 +194,21 @@ test("a dropped stream says so instead of looking stuck", async () => {
   });
 });
 
+test("a lost stream is told in a status region that was already there", async () => {
+  stubStartResponse();
+  renderPanel();
+  // A region inserted with its text may never be spoken (spec 156).
+  const region = screen.getByRole("status");
+  expect(region.textContent).toBe("");
+  await startRun();
+  streams.last.fail();
+
+  await waitFor(() => {
+    expect(region.textContent).toContain("Lost the log stream");
+  });
+  expect(screen.getByRole("status")).toBe(region);
+});
+
 test("a stream ended at token expiry resumes where it stopped", async () => {
   stubStartResponse();
   renderPanel();
@@ -312,10 +327,10 @@ test("a recovered stream stops saying it is disconnected", async () => {
   });
   expect(streams.last.lastEventId).toBe("1");
   // Still disconnected until an event arrives on the new connection.
-  expect(screen.getByRole("status")).toBeDefined();
+  expect(screen.getByRole("status").textContent).toContain("Lost the log stream");
   streams.last.emit({ type: "log_line", line: "back" });
   await waitFor(() => {
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("");
   });
 });
 
@@ -332,7 +347,7 @@ test("a run the stream does not know stops the reconnecting", async () => {
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(timers.waiting).toBe(0);
   expect(streams.requests).toBe(1);
-  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.getByRole("status").textContent).toBe("");
 });
 
 test("a stream that failed is not reopened once the run is over", async () => {
@@ -368,5 +383,5 @@ test("an event that is not JSON is skipped, and the stream carries on", async ()
     expect(screen.getByText("after the bad one")).toBeDefined();
   });
   // Not read as the stream dropping.
-  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.getByRole("status").textContent).toBe("");
 });

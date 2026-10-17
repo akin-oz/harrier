@@ -77,7 +77,11 @@ export function EligibilitySection() {
           {run.error.message}
         </p>
       )}
-      {shown !== null && <ReportView report={shown} />}
+      {/* The region is here before the first run, so the report is announced
+          when it arrives (spec 156). */}
+      <div role="status" aria-label="Eligibility report">
+        {shown !== null && <ReportView report={shown} />}
+      </div>
     </section>
   );
 }
@@ -87,7 +91,7 @@ function ReportView({ report }: { report: Report }) {
   // verdicts in their order, so a key outside them is never shown (spec 123).
   const counts = new Map(Object.entries(report.by_verdict));
   return (
-    <div className="ops-outcome" role="status" aria-label="Eligibility report">
+    <div className="ops-outcome">
       <p>
         {report.applied ? "Written. Counts are from this run. " : "Nothing written yet. "}
         {report.applied ? "Assessed" : "Would assess"} {report.assessed} of {report.examined} rows:{" "}

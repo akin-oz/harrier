@@ -195,6 +195,32 @@ function posted(calls: Call[], path: string): Call[] {
   return calls.filter((call) => call.method === "POST" && call.url === `/api${path}`);
 }
 
+// The report's region is there, empty, before the first report (spec 156), so
+// a finder returns it at once. This waits for the report itself.
+async function eligibilityReport(): Promise<HTMLElement> {
+  const report = await screen.findByRole("status", { name: "Eligibility report" });
+  await waitFor(() => {
+    expect(report.textContent).not.toBe("");
+  });
+  return report;
+}
+
+// Every status region on the page once a section's button is there. A region
+// inserted with its text may never be spoken (spec 156), so each outcome must
+// land in one of these.
+async function regionsBefore(button: string): Promise<HTMLElement[]> {
+  await screen.findByRole("button", { name: button });
+  return screen.getAllByRole("status");
+}
+
+// And no region came with the outcome. A region that mounted since (a
+// section that finished loading) must be empty; one holding the outcome
+// would be the insertion spec 156 forbids.
+function expectNoRegionCameWithIt(before: HTMLElement[]): void {
+  const added = screen.getAllByRole("status").filter((region) => !before.includes(region));
+  expect(added.filter((region) => region.textContent !== "")).toEqual([]);
+}
+
 // --- the schedule -------------------------------------------------------------
 
 test("a job with no recent success reads as overdue and nothing reads as healthy", async () => {
@@ -521,6 +547,42 @@ test("a delivered digest says so", async () => {
   expect(await screen.findByText("Delivered to Telegram.")).toBeTruthy();
 });
 
+test("the digest outcome lands in a status region that was already there", async () => {
+  stubApi();
+  const user = userEvent.setup();
+  renderPage();
+
+  const before = await regionsBefore("Send to Telegram");
+  await user.click(screen.getByRole("button", { name: "Send to Telegram" }));
+  await waitFor(() => {
+    expect(streams.connections.length).toBeGreaterThan(0);
+  });
+  act(() => {
+    lastSource().emit({ type: "progress", step: 1, total: 2, message: "digest produced" });
+    lastSource().emit({ type: "progress", step: 2, total: 2, message: "digest delivered" });
+    lastSource().emit({ type: "state_change", state: "succeeded", exit_code: 0 });
+  });
+
+  const outcome = await screen.findByText("Delivered to Telegram.");
+  expect(before.some((region) => region.contains(outcome))).toBe(true);
+  expectNoRegionCameWithIt(before);
+});
+
+test("a run's state lands in a status region that was already there", async () => {
+  stubApi();
+  const user = userEvent.setup();
+  renderPage();
+
+  const before = await regionsBefore("Check feeds");
+  await user.click(screen.getByRole("button", { name: "Check feeds" }));
+
+  // The feed section's run state fills the region its section rendered
+  // before any run.
+  await waitFor(() => {
+    expect(before.some((region) => region.textContent.includes("Feed check: running"))).toBe(true);
+  });
+});
+
 // --- the token ----------------------------------------------------------------
 
 test("every operations write carries the token and no read does", async () => {
@@ -599,6 +661,28 @@ test("linking contact ids is a separate confirmed action that names the count", 
   await user.click(screen.getByRole("button", { name: "Link them" }));
   expect(await screen.findByText("Linked 1; 1 left unmatched.")).toBeTruthy();
   expect(posted(calls, "/ops/check/link-contacts")[0]?.body).toEqual({ confirm: true });
+});
+
+test("the link outcome lands in a status region that was already there", async () => {
+  stubApi({
+    check: {
+      breaches: [],
+      unresolved_links: [
+        { contact: "Avery Invented", breach: "a linked job that matches no tracked job" },
+      ],
+    },
+    linked: { linked: 1, unmatched: 0 },
+  });
+  const user = userEvent.setup();
+  renderPage();
+
+  const before = await regionsBefore("Link contact ids…");
+  await user.click(screen.getByRole("button", { name: "Link contact ids…" }));
+  await user.click(screen.getByRole("button", { name: "Link them" }));
+
+  const outcome = await screen.findByText("Linked 1; 0 left unmatched.");
+  expect(before.some((region) => region.contains(outcome))).toBe(true);
+  expectNoRegionCameWithIt(before);
 });
 
 test("a dry backfill comes first and writing names the count it will write", async () => {
@@ -829,7 +913,7 @@ test("reassess reports before it writes", async () => {
 
   expect(screen.queryByRole("button", { name: "Assess what the report found" })).toBeNull();
   await user.click(await screen.findByRole("button", { name: "Report what would be assessed" }));
-  const report = await screen.findByRole("status", { name: "Eligibility report" });
+  const report = await eligibilityReport();
   expect(posted(calls, "/ops/eligibility-reassess")[0]?.body).toEqual({ apply: false });
   expect(posted(calls, "/ops/eligibility-reassess")[0]?.token).toBe("test-token");
   expect(report.textContent).toContain("Nothing written yet.");
@@ -876,9 +960,27 @@ test("reassess ignores an unknown verdict key", async () => {
   const user = userEvent.setup();
   renderPage();
   await user.click(await screen.findByRole("button", { name: "Report what would be assessed" }));
-  const report = await screen.findByRole("status", { name: "Eligibility report" });
+  const report = await eligibilityReport();
   expect(report.textContent).not.toContain("maybe");
   expect(report.textContent).not.toContain("9");
+});
+
+test("the eligibility report lands in a status region that was already there", async () => {
+  stubApi();
+  const user = userEvent.setup();
+  renderPage();
+
+  const button = await screen.findByRole("button", { name: "Report what would be assessed" });
+  const region = screen.getByRole("status", { name: "Eligibility report" });
+  expect(region.textContent).toBe("");
+  await user.click(button);
+
+  await waitFor(() => {
+    expect(region.textContent).toContain("Would assess 5 of 12 rows");
+  });
+  expect(screen.getByRole("status", { name: "Eligibility report" })).toBe(region);
+  // No unnamed region came with the report either.
+  expect(within(region).queryByRole("status")).toBeNull();
 });
 
 test("a refused reassess shows the API's words", async () => {

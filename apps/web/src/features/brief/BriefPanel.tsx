@@ -329,11 +329,9 @@ export function BriefPanel({ jobId }: { jobId: number }) {
             {save.error.message}
           </p>
         )}
-        {save.isSuccess && (
-          <p role="status" className="brief-panel__muted">
-            Brief saved.
-          </p>
-        )}
+        <p role="status" className="brief-panel__muted">
+          {save.isSuccess && "Brief saved."}
+        </p>
         <button type="submit" className="brief-panel__save" disabled={save.isPending}>
           Save the brief
         </button>

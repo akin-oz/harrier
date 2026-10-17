@@ -41,7 +41,15 @@ export function RunOutput({
   failureLine?: boolean;
 }) {
   const { run, lines, lastLogLine, disconnected, failed } = stream;
-  if (run === null) return null;
+  // Before the first run only the state region renders, empty. The run's
+  // state then fills that same element, so it is announced (spec 156).
+  if (run === null) {
+    return (
+      <div className="ops-run">
+        <p className="ops-run__state" role="status" />
+      </div>
+    );
+  }
   const running = !TERMINAL_STATES.has(run.state);
   return (
     <div className="ops-run">

@@ -103,11 +103,13 @@ export function DataChecksSection() {
           {link.error.message}
         </p>
       )}
-      {link.isSuccess && (
-        <p role="status" className="ops-outcome">
-          Linked {link.data.linked}; {link.data.unmatched} left unmatched.
-        </p>
-      )}
+      <p role="status" className="ops-outcome">
+        {link.isSuccess && (
+          <>
+            Linked {link.data.linked}; {link.data.unmatched} left unmatched.
+          </>
+        )}
+      </p>
     </section>
   );
 }

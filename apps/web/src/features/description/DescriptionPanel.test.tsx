@@ -124,14 +124,33 @@ test("replacing clears the saved note, so cancelling does not report a save", as
   await user.click(await screen.findByLabelText("Paste the job description"));
   await user.paste(POSTING);
   await user.click(screen.getByRole("button", { name: "Save" }));
-  expect((await screen.findByRole("status")).textContent).toBe(
+  await screen.findByRole("button", { name: "Replace" });
+  expect(screen.getByRole("status").textContent).toBe(
     "Saved. Every operation reads this description.",
   );
 
   await user.click(screen.getByRole("button", { name: "Replace" }));
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   // Nothing was saved this time, so nothing says it was.
-  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.getByRole("status").textContent).toBe("");
+});
+
+test("the saved note lands in a status region that was already there", async () => {
+  stubApi({ stored: { text: "", stored: false } });
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(await screen.findByLabelText("Paste the job description"));
+  // The region is there, empty, while the paste box is open: a region
+  // inserted with its text may never be spoken (spec 156).
+  const region = screen.getByRole("status");
+  expect(region.textContent).toBe("");
+  await user.paste(POSTING);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+
+  await screen.findByLabelText("Stored description");
+  expect(region.textContent).toBe("Saved. Every operation reads this description.");
+  expect(screen.getByRole("status")).toBe(region);
 });
 
 test("replace opens the box with the stored text, and cancel closes it", async () => {
