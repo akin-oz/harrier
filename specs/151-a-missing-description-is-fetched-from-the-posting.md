@@ -235,6 +235,10 @@ change. Each finding below was reproduced before it was fixed.
   refusal does not reappear after a save and Replace" in
   `apps/web/src/features/description/DescriptionPanel.test.tsx`). The
   route's declared 502 now names text the store refuses as a cause.
+- **Save waits for a fetch.** Save is disabled while a fetch from the
+  posting is in flight, so the two writes cannot race (CodeRabbit on PR
+  #392; the test "save waits while a fetch from the posting is in flight" in
+  `apps/web/src/features/description/DescriptionPanel.test.tsx`).
 
 ## Proof / origin
 

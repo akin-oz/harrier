@@ -24,6 +24,8 @@ function stubApi(options: {
   stored: { text: string; stored: boolean };
   put?: { status: number; body: unknown };
   fetch?: { status: number; body: unknown };
+  // Holds the fetch's answer until resolved, to see the panel mid-fetch.
+  fetchGate?: Promise<void>;
 }): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal(
@@ -45,6 +47,7 @@ function stubApi(options: {
         });
       if (url.pathname === "/api/session") return reply(200, { token: "test-token" });
       if (request.method === "POST" && url.pathname.endsWith("/description/fetch")) {
+        if (options.fetchGate) await options.fetchGate;
         return options.fetch
           ? reply(options.fetch.status, options.fetch.body)
           : reply(200, { text: POSTING, stored: true });
@@ -219,4 +222,25 @@ test("an earlier fetch refusal does not reappear after a save and Replace", asyn
 
   expect(screen.getByLabelText("Paste the job description")).toHaveProperty("value", POSTING);
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("save waits while a fetch from the posting is in flight", async () => {
+  let release: (() => void) | undefined;
+  stubApi({
+    stored: { text: "", stored: false },
+    fetchGate: new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  });
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(await screen.findByLabelText("Paste the job description"));
+  await user.paste(POSTING);
+  await user.click(screen.getByRole("button", { name: "Fetch from the posting" }));
+
+  expect(await screen.findByRole("button", { name: "Fetching…" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Save" }).hasAttribute("disabled")).toBe(true);
+  release?.();
+  expect(await screen.findByLabelText("Stored description")).toBeTruthy();
 });

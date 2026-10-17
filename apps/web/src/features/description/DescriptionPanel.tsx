@@ -198,7 +198,8 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
             <button
               type="submit"
               className="description-panel__save"
-              disabled={save.isPending || (draft ?? "").trim() === ""}
+              // Not while a fetch is in flight: whichever landed last would win.
+              disabled={save.isPending || fetchFromPosting.isPending || (draft ?? "").trim() === ""}
             >
               Save
             </button>
