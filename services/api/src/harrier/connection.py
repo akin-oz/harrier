@@ -148,6 +148,17 @@ class ArtifactImportStopped(StoreError):
     never the file, the key or the owner. Objects already copied stay."""
 
 
+class HostedBackupRefused(StoreError):
+    """A step of the nightly hosted backup failed, or its restore check found
+    a difference (spec 153). The text names the step and, for a count, the
+    table, never a URL, a host, an owner or a row's value."""
+
+
+class FilesBackupStopped(StoreError):
+    """`harrier store backup-files` stopped at a step (spec 153). The text
+    names the step, never a key, an object name, an owner or the host."""
+
+
 class AccountRefused(StoreError):
     """A check of a `harrier --owner` command refused it before anything was
     written (spec 144). The text names the check, never an owner, a host or

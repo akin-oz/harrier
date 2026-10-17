@@ -1,0 +1,5 @@
+# The age public key the nightly backup (.github/workflows/backup.yml) encrypts to.
+# The private key lives only in the operator's password manager (spec 153).
+# If this file ever holds the word REPLACE_WITH_AGE_PUBLIC_KEY instead of a key,
+# `harrier store backup-seal` refuses and the workflow fails.
+age12y7czcn6v3mdyt2fpsd7r8t5mpgjppm77g74n889qu9enwchzanspu7tyq

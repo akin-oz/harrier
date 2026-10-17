@@ -256,16 +256,18 @@ RETRY_WAITS: tuple[int, ...] = (2, 4, 8, 16, 32, 60)
 _sleep: Callable[[float], None] = time.sleep
 
 
-def _patiently[T](call: Callable[[], T], report: Callable[[str], None]) -> T:
+def patiently[T](call: Callable[[], T], report: Callable[[str], None], what: str = "import") -> T:
     """`call()`, asked again after each wait in RETRY_WAITS while Storage
-    answers 429. Any other error, or a 429 after the last wait, is raised."""
+    answers 429. Any other error, or a 429 after the last wait, is raised.
+    `what` names the command in the line reported before each wait; spec 153's
+    `backup-files` shares this and the waits (spec 153, Scope)."""
     for wait in RETRY_WAITS:
         try:
             return call()
         except FileStoreError as error:
             if error.status != RATE_LIMITED:
                 raise
-        report(f"Storage asked the import to slow down; waiting {wait} s")
+        report(f"Storage asked the {what} to slow down; waiting {wait} s")
         _sleep(wait)
     return call()
 
@@ -312,8 +314,8 @@ def _copy_one(
     key = file.key
     data = _read_local(local, file)
     try:
-        found = _patiently(lambda: hosted.stat(key), report)
-        hosted_bytes = _patiently(lambda: hosted.read(key), report) if found is not None else None
+        found = patiently(lambda: hosted.stat(key), report)
+        hosted_bytes = patiently(lambda: hosted.read(key), report) if found is not None else None
     except FileStoreError as error:
         raise _stopped("check", family, error) from None
     if hosted_bytes is not None:
@@ -328,8 +330,8 @@ def _copy_one(
         count.present += 1
     else:
         try:
-            _patiently(lambda: hosted.put(key, data, atomic=True), report)
-            after = _patiently(lambda: hosted.stat(key), report)
+            patiently(lambda: hosted.put(key, data, atomic=True), report)
+            after = patiently(lambda: hosted.stat(key), report)
         except FileStoreError as error:
             raise _stopped("upload", family, error) from None
         if after is None or after.size != len(data):

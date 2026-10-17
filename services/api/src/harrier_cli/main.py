@@ -2032,8 +2032,16 @@ def _cmd_store(args: argparse.Namespace) -> int:
         return _store_import_local(args)
     if args.store_command == "import-artifacts":
         return _store_import_artifacts(args)
+    if args.store_command == "backup-check":
+        return _store_backup_check(args)
+    if args.store_command == "backup-seal":
+        return _store_backup_seal(args)
+    if args.store_command == "backup-files":
+        return _store_backup_files(args)
     try:
         target = store_target()
+        if args.store_command == "backup-dump":
+            return _store_backup_dump(args, target.url if target.is_postgres else "")
         if args.store_command in STORE_DEPLOY_COMMANDS:
             try:
                 return _store_deploy(args, target.url if target.is_postgres else "")
@@ -2129,6 +2137,87 @@ def _store_import_artifacts(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    except StoreError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    return 0 if result.complete else 1
+
+
+def _store_backup_dump(args: argparse.Namespace, url: str) -> int:
+    """`harrier store backup-dump --out DIR` (spec 153): the dump and its
+    manifest, as the migrator the workflow's secret names. Prints table names
+    and counts and the schema version, never the URL or a value."""
+    from harrier.connection import StoreConnectionError, StoreError
+    from harrier.hostedbackup import dump_hosted
+
+    if not url:
+        print("error: harrier store backup-dump needs a Postgres store", file=sys.stderr)
+        return 1
+    try:
+        dump_hosted(url, args.out, print)
+    except StoreConnectionError:
+        # Built from the host, which names the project, in a public log.
+        print(
+            "error: harrier store backup-dump could not connect to the store; "
+            "check the migrator's URL",
+            file=sys.stderr,
+        )
+        return 1
+    except StoreError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _store_backup_check(args: argparse.Namespace) -> int:
+    """`harrier store backup-check --dir DIR --into URL` (spec 153): restore
+    the dump into an empty Postgres and compare with the manifest."""
+    from harrier.connection import StoreConnectionError, StoreError
+    from harrier.hostedbackup import check_restore
+
+    try:
+        check_restore(args.dir, args.into, print)
+    except StoreConnectionError:
+        print(
+            "error: harrier store backup-check could not connect to the database named by --into",
+            file=sys.stderr,
+        )
+        return 1
+    except StoreError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _store_backup_seal(args: argparse.Namespace) -> int:
+    """`harrier store backup-seal --dir DIR --recipient FILE --out FILE`
+    (spec 153): encrypt a checked dump to the `age` recipient."""
+    from harrier.connection import StoreError
+    from harrier.hostedbackup import seal
+
+    try:
+        seal(args.dir, args.recipient, args.out)
+    except StoreError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+    print("sealed")
+    return 0
+
+
+def _store_backup_files(args: argparse.Namespace) -> int:
+    """`harrier store backup-files --owner <user id>` (spec 153).
+
+    Copies the account's Storage objects into `data/hosted/backups/files/`.
+    A host command: the Storage client is imported here, never at start. The
+    output names counts, never a key, a name, the owner or the host. A
+    refusal or a stop prints one line to stderr and exits 1; so does a run
+    that left an object unwritten.
+    """
+    from harrier.connection import StoreError
+    from harrier.filesbackup import backup_files
+
+    try:
+        result = backup_files(args.owner, os.environ, print)
     except StoreError as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -3166,6 +3255,13 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     # Storage prefix (spec 146). Never delegated: a container that owns the
     # data directory is a refusal.
     "store import-artifacts": _HOST,
+    # The hosted backup (spec 153). The three database steps run in the
+    # backup workflow and read no local store; `backup-files` reads Storage
+    # and writes under the data directory's never-in-git `hosted/`.
+    "store backup-dump": _HOST,
+    "store backup-check": _HOST,
+    "store backup-seal": _HOST,
+    "store backup-files": _HOST,
     # Read no database: the project's Auth settings, a Fly listing on stdin,
     # Fly's events and figures typed in (spec 110).
     "deploy check-auth-settings": _HOST,
@@ -3711,6 +3807,47 @@ def build_parser() -> argparse.ArgumentParser:
         "Storage, after import-local (spec 146)",
     )
     import_artifacts_cmd.add_argument(
+        "--owner",
+        required=True,
+        type=_owner_id,
+        metavar="USER_ID",
+        help="the account's Supabase user id, as the dashboard's Users page shows it",
+    )
+    backup_dump_cmd = store_sub.add_parser(
+        "backup-dump",
+        help="dump the hosted store and write its manifest, as the migrator (spec 153)",
+    )
+    backup_dump_cmd.add_argument(
+        "--out", required=True, type=Path, help="a new or empty directory for the dump files"
+    )
+    backup_check_cmd = store_sub.add_parser(
+        "backup-check",
+        help="restore a dump into an empty Postgres and compare it with its manifest (spec 153)",
+    )
+    backup_check_cmd.add_argument(
+        "--dir", required=True, type=Path, help="the directory backup-dump wrote"
+    )
+    backup_check_cmd.add_argument(
+        "--into", required=True, help="the URL of an empty throwaway Postgres 17 database"
+    )
+    backup_seal_cmd = store_sub.add_parser(
+        "backup-seal",
+        help="encrypt a checked dump to the age recipient (spec 153)",
+    )
+    backup_seal_cmd.add_argument(
+        "--dir", required=True, type=Path, help="the directory backup-check passed"
+    )
+    backup_seal_cmd.add_argument(
+        "--recipient", required=True, type=Path, help="deploy/backup-recipient.txt"
+    )
+    backup_seal_cmd.add_argument(
+        "--out", required=True, type=Path, help="the encrypted file to write"
+    )
+    backup_files_cmd = store_sub.add_parser(
+        "backup-files",
+        help="copy one hosted account's Storage objects under data/hosted/backups/files (spec 153)",
+    )
+    backup_files_cmd.add_argument(
         "--owner",
         required=True,
         type=_owner_id,

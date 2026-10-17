@@ -77,7 +77,7 @@ is downtime. Nothing checks this rule.
 
 | Value | Lives in | Never in |
 |---|---|---|
-| The `postgres` role's session-pooler URL (the migrator) | GitHub environment secret `HARRIER_MIGRATE_DATABASE_URL` | Fly, Vercel, `.env`, git |
+| The `postgres` role's session-pooler URL (the migrator) | GitHub environment secret `HARRIER_MIGRATE_DATABASE_URL` (the deploy reads it, and so does the nightly backup's dump step) | Fly, Vercel, `.env`, git |
 | `harrier_api`'s URL | Fly secret `HARRIER_DATABASE_URL` on the API app | GitHub, Vercel, `.env`, git |
 | `harrier_run`'s URL | Fly secret `HARRIER_RUN_DATABASE_URL` on the API app | GitHub, Vercel, `.env`, git |
 | `HARRIER_CREDENTIALS_KEY` | Fly secret on the API app and on the scheduler app | GitHub, Vercel, `.env`, git |
@@ -91,6 +91,7 @@ is downtime. Nothing checks this rule.
 | `HARRIER_AUTH`, `HARRIER_ALLOWED_HOSTS`, `HARRIER_CORS_ORIGINS` | `[env]` in the app's Fly configuration file | none of them is secret |
 | `HARRIER_SUPABASE_URL`, `HARRIER_SUPABASE_PUBLISHABLE_KEY` | placeholders in `[env]` of the Fly configuration file, filled from the GitHub variables into a copy at deploy (`harrier deploy fill-fly-config`) | a project's real values in git |
 | The operator login's URL and `HARRIER_SUPABASE_SECRET_KEY` | the operator's shell, for the one command that needs it | Fly, GitHub, Vercel, `.env`, git |
+| The `age` private key that opens the nightly backup (spec 153); its public half is `deploy/backup-recipient.txt` | the operator's password manager (`harrier-backup-age-key`) | GitHub, Fly, Vercel, `.env`, the repository |
 | The service role key, any `sb_secret_` key | nowhere in the pipeline | Fly (the API refuses to start), GitHub, Vercel, git |
 
 GitHub never holds the API's password, Fly never holds the migrator's, and
@@ -144,11 +145,12 @@ advisory lock needs. A custom role connects to it as `<role>.<project ref>`.
 The project's current Postgres major version is the one Supabase created it on;
 the CI store runs 17.
 
-Backups: Supabase Free has no automatic backups, and this pipeline adds none. The
-hosted store needs its own backup, a scheduled dump held to spec 030's rule that a
-backup is proven by a restore; that is an open item, not a done one. **Nothing
-backs up the Storage bucket `harrier-files` either, until a spec adds a backup,
-and a deleted or overwritten object is gone** (spec 107, Honest limitations).
+Backups: Supabase Free has no automatic backups. `.github/workflows/backup.yml`
+dumps the database every night and keeps the encrypted dump for 30 days (see
+"Backing up the hosted store"). **Nothing backs up the Storage bucket
+`harrier-files` on a schedule: `harrier store backup-files` copies it when the
+operator runs it, and a deleted or overwritten object is gone until then**
+(spec 107, Honest limitations; spec 153).
 
 ### 2. The login roles
 
@@ -670,6 +672,144 @@ resume_truth` store the shared documents, and either is refused, with
 nothing stored, when the edit gives any track's `profile check` a failure it
 did not have. `tests/test_account_writes.py` holds each of these.
 
+## Backing up the hosted store
+
+Spec 153. The database is backed up by `.github/workflows/backup.yml`, at 03:30
+UTC every day on `main` and by hand (`gh workflow run backup.yml`). It runs in
+the `staging` environment and reads one secret, `HARRIER_MIGRATE_DATABASE_URL`,
+the migrator's URL the deploy already holds there. It never reads a Supabase API
+key. Its steps, in this order, each a command in
+`services/api/src/harrier/hostedbackup.py`:
+
+1. `harrier store backup-dump`: `pg_dump` 17, custom format, at one snapshot, of
+   the `public` schema (`public.dump`) and of the rows of `auth.users` and
+   `auth.identities` (`auth.dump`); and `manifest.json`, which holds the time the
+   dump started, the schema version and each table's row count. Nothing else
+   from `auth` or `storage` is dumped.
+2. `harrier store backup-check`: restores both dumps, plain, into an empty
+   Postgres 17 service container and compares every table's count and the
+   schema version with the manifest. A difference fails the job and nothing is
+   uploaded. The job holds no private key, which is why this runs before the
+   encryption.
+3. `harrier store backup-seal`: encrypts the dumps and the manifest together
+   with `age` to the public key in `deploy/backup-recipient.txt`. A missing,
+   malformed or placeholder recipient fails the job.
+4. The encrypted file alone is uploaded as the artifact
+   `hosted-backup-<UTC date>`, kept 30 days.
+
+The repository is public, so anyone signed in to GitHub can download the
+artifact. Only the `age` private key opens it, and that key is in the operator's
+password manager (`harrier-backup-age-key`) and nowhere in GitHub, Fly, Vercel
+or the repository. A failed run uploads nothing, and GitHub's failed-run notice
+to the repository owner is the alert. GitHub pauses schedules on a repository
+with no activity for 60 days; a skipped night shows only as a gap in the artifact
+list (`gh run list --workflow backup.yml`).
+
+### Files, on demand
+
+The Storage secret key never enters GitHub, so the files are copied from the
+operator's machine:
+
+```
+export HARRIER_SUPABASE_URL=...          # the project's https://<ref>.supabase.co
+read -rs HARRIER_SUPABASE_SECRET_KEY     # paste the secret key
+export HARRIER_SUPABASE_SECRET_KEY
+uv run --project services/api harrier store backup-files --owner <user id>
+unset HARRIER_SUPABASE_SECRET_KEY
+```
+
+The key is refused if `.env` defines it, as for spec 111's commands. Each object
+is written to `data/hosted/backups/files/<UTC date>/<name>`, where `<name>` is
+the object's name in the bucket (a hashed name for most files, since Storage
+never holds a file name). An object that has not changed since the newest earlier
+copy is hard linked from it, not downloaded again. The command prints counts and
+no name, and exits 1 with the step named when an object was not written. A
+Storage 429 waits and asks again, as `import-artifacts` does. Files are as fresh
+as the last run of this command.
+
+## Restoring the hosted store
+
+Rehearse this once on a scratch Supabase project before it is needed. The
+nightly check proves a dump restores into a plain Postgres 17; it does not prove
+each step below on Supabase, and a restore nobody has run is the failure spec 030
+exists to prevent.
+
+A restore goes into a new, empty Supabase project, never over a live one:
+dropping the `public` schema of a live project would also drop the trigger and the
+Storage policy that depend on it. Make the project and its settings as "One-time
+setup, per environment" says (step 1), and its migrator URL as step 2 says.
+
+1. Download the artifact and open it. The private key comes from the password
+   manager into a file in a private directory, and is deleted afterwards:
+
+   ```
+   cd "$(mktemp -d)" && umask 077
+   gh run list --workflow backup.yml --limit 10
+   gh run download <run id> --name hosted-backup-<UTC date>
+   age --decrypt --identity <the key file> hosted-backup.tar.age | tar -x
+   cat manifest.json
+   ```
+
+   The directory now holds `public.dump`, `auth.dump` and `manifest.json`.
+   `started_at` in the manifest is the time the backup's snapshot was taken.
+2. Stop the API: `fly scale count 0 --app <api app>`. On production, stop the
+   scheduler machine too.
+3. Make harrier's two roles in the new project, as the migrator (the roles
+   belong to the server, so no dump carries them):
+
+   ```
+   CREATE ROLE harrier_tenant NOLOGIN NOINHERIT NOBYPASSRLS;
+   CREATE ROLE harrier_schedule_reader NOLOGIN NOINHERIT NOBYPASSRLS;
+   ```
+4. Restore, as the migrator, in this order. The `public` schema is filled, not
+   made again, because the project already has it with the grants Supabase gives
+   it. This is the order `harrier store backup-check` runs, which is why the
+   `auth` rows come between the two halves of `public`:
+
+   ```
+   pg_restore --list public.dump | grep -v -E ' (SCHEMA - public|COMMENT - SCHEMA public|ACL - SCHEMA public) ' > public.list
+   pg_restore --no-owner --dbname "$RESTORE_URL" --use-list=public.list --section=pre-data public.dump
+   pg_restore --no-owner --dbname "$RESTORE_URL" --data-only --schema=auth auth.dump
+   pg_restore --no-owner --dbname "$RESTORE_URL" --use-list=public.list --section=data --section=post-data public.dump
+   pg_restore --list auth.dump | grep ' TRIGGER auth users harrier_new_owner ' > trigger.list
+   pg_restore --no-owner --dbname "$RESTORE_URL" --use-list=trigger.list auth.dump
+   ```
+
+   `RESTORE_URL` is the new project's migrator URL, read with `read -rs` as in
+   step 2 of the setup. The nightly check adds `--exit-on-error` and
+   `--no-privileges` and restores the `auth` tables whole, since its database has
+   none; here the project has `auth.users` and `auth.identities` already, so only
+   their rows come back, and the privileges come back so the tenant role keeps its
+   grants. If a `GRANT` names a role the new project lacks, `pg_restore` reports
+   it and goes on: read each reported line.
+5. Re-erase every owner erased since the backup. The ledger of erasures is
+   `data/hosted/erasures.jsonl` on the operator's machine (spec 111), and a
+   restore brings back every owner that was erased after the manifest's time.
+   Run `harrier operator erase` for each id the ledger records after
+   `started_at`:
+
+   ```
+   jq -r --arg since "<started_at from manifest.json>" 'select(.at > $since) | .user_id' data/hosted/erasures.jsonl
+   uv run --project services/api harrier operator erase <user id> --confirm <user id>
+   ```
+6. Run `harrier store check-deploy` as the migrator, with the same `--login`
+   arguments the deploy passes (step 4 of "One deploy, in order"). It reports a
+   role, a grant or a Storage policy the restore did not bring back.
+   **The dump holds none of `storage`**, so the bucket `harrier-files` and the
+   policy `harrier_files_owner_only` on `storage.objects` are not restored.
+   They are made by the statements `POSTGRES_STORAGE` holds in
+   `services/api/src/harrier/tracker/schema.py`; no command applies them to a
+   restored store yet (spec 153, Honest limitations).
+7. Point the deployment at the new project (the secrets table above lists each
+   value: the Fly secrets, the GitHub environment secret and variables, the
+   Vercel variables), then start the API: `fly scale count 1 --app <api app>`.
+8. Files: if the machine's `data/` still holds `resumes`, `cover-letters` and
+   `answers`, `harrier store import-artifacts --owner <user id>` copies them back
+   (spec 146). A copy made by `backup-files` is named by object name, and no
+   command uploads from it yet.
+
+A restore loses up to a day of writes: the backup is nightly.
+
 ## A deploy that fails halfway
 
 harrier has no down migrations (spec 090): a bad migration is fixed forward.
@@ -746,7 +886,10 @@ the check reports and the operator decides. The test is
 - The Vercel token is account wide.
 - Fly's log store keeps 7 days and does not say where it runs.
 - Supabase Free pauses a project after 1 week of inactivity, and has no
-  automatic backups.
+  automatic backups; the nightly backup above is this pipeline's own.
+- The restore procedure is rehearsed by the nightly check on a plain Postgres,
+  not on Supabase. A dump carries no `storage` object, no role and no role
+  setting (spec 153).
 - `harrier deploy check-scheduler-tick` reads the machine's events from `fly
   machine status --json`, whose time format is read as epoch milliseconds or an
   ISO time and is not confirmed on a real machine.
