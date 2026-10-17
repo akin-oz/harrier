@@ -9,6 +9,7 @@ approval writes a contact.
 
 from __future__ import annotations
 
+import re
 from typing import cast
 from urllib.parse import urlparse
 
@@ -16,6 +17,9 @@ from harrier.connection import Connection
 from harrier.outreach.contacts import infer_relevance, normalize
 from harrier.outreach.discovery import load_candidates_artifact, write_candidates_artifact
 from harrier.tracker import list_contacts
+
+_SCHEME = re.compile(r"([a-z][a-z0-9+.-]*)://", re.IGNORECASE)
+_IN_SEGMENT = re.compile(r"^(/*)in(?=/|$)", re.IGNORECASE)
 
 
 def profile_url(raw: str) -> str:
@@ -52,12 +56,19 @@ def _stored_profile_url(url: str) -> str:
 
     A contact typed by hand can lack the scheme or use http. That is not a
     link to stage, but it still names the person, so for comparison it is
-    read as https (review of PR #381)."""
-    if url.lower().startswith("http://"):
-        url = "https://" + url[len("http://") :]
-    elif "://" not in url:
-        url = "https://" + url
-    return profile_url(url)
+    read as https (review of PR #381). A scheme counts only at the start,
+    so a `://` in a query is not one; a link starting with `//` has none;
+    and `/IN/` is `/in/` (post-merge review of spec 150)."""
+    match = _SCHEME.match(url)
+    if match:
+        if match.group(1).lower() not in ("http", "https"):
+            return ""
+        url = url[match.end() :]
+    elif url.startswith("//"):
+        url = url[2:]
+    host, slash, path = url.partition("/")
+    path = _IN_SEGMENT.sub(r"\1in", path)
+    return profile_url(f"https://{host}{slash}{path}")
 
 
 def contact_url_keys(conn: Connection) -> set[str]:
