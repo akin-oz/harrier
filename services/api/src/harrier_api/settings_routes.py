@@ -148,6 +148,8 @@ COMMAND_PLACES: dict[str, Place] = {
     "brief set": Routed("PUT /apply/{selector}/brief"),
     "description show": Routed("GET /apply/{selector}/description"),
     "description set": Routed("PUT /apply/{selector}/description"),
+    "description fetch": Routed("POST /apply/{selector}/description/fetch"),
+    "description backfill": Routed("POST /ops/descriptions/backfill"),
     "find-contacts": Routed("POST /outreach/{selector}/find-contacts"),
     "contacts list": Routed("GET /outreach/contacts"),
     "contacts approve": Routed("POST /outreach/{selector}/candidates/approve"),

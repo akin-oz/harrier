@@ -424,6 +424,34 @@ def link_contact_ids(
     return LinkContactsOut(linked=linked, unmatched=unmatched)
 
 
+class DescriptionsBackfillIn(BaseModel):
+    """A dry run unless the body says otherwise: what would be fetched first."""
+
+    dry_run: bool = True
+    limit: int | None = Field(default=None, ge=1)
+
+
+@ops_router.post(
+    "/ops/descriptions/backfill",
+    operation_id="backfillDescriptions",
+    dependencies=[Depends(require_token)],
+    responses=merge_responses(TOKEN_RESPONSES, RUN_CONFLICT_RESPONSES),
+)
+async def backfill_descriptions_route(
+    manager: Manager,
+    scope: Annotated[TrackScope, Depends(scope_for("description backfill"))],
+    body: DescriptionsBackfillIn = DescriptionsBackfillIn(),  # noqa: B008
+) -> RunOut:
+    """`description backfill` as a run: it walks every track's jobs and
+    fetches each missing description from its posting (spec 151)."""
+    del scope  # the default track's; any other is refused by the dependency
+    params = RunParams(
+        switches=frozenset({"--dry-run"}) if body.dry_run else frozenset(),
+        numbers={"--limit": body.limit} if body.limit is not None else {},
+    )
+    return run_out(await manager.start("description-backfill", params))
+
+
 class EventsBackfillIn(BaseModel):
     """A dry run unless the body says otherwise: the counts first."""
 

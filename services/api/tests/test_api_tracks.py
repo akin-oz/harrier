@@ -285,6 +285,7 @@ def test_the_cli_and_the_api_share_one_allowlist() -> None:
         # (spec 149).
         "description show",
         "description set",
+        "description fetch",
     }
 
 

@@ -621,6 +621,10 @@ def _job_id() -> int:
 
 NEW_RUNS: dict[str, tuple[str, str]] = {
     "events-backfill": ("/ops/events/backfill", "harrier.tracker.store.backfill_events"),
+    "description-backfill": (
+        "/ops/descriptions/backfill",
+        "harrier.apply.description.backfill_descriptions",
+    ),
     "evaluate-prospects": ("/ops/evaluate-prospects", "harrier.offers.evaluate_prospects"),
     "scoring-export": ("/ops/scoring/export", "harrier.scoring.export.export_features"),
     "discovery": ("/ops/discover", "harrier.discovery.run_discovery"),
@@ -1170,6 +1174,7 @@ def test_every_route_that_starts_a_run_declares_the_refusal(env: Path) -> None:
         ("/ops/backup", "post"),
         ("/ops/digest", "post"),
         ("/ops/events/backfill", "post"),
+        ("/ops/descriptions/backfill", "post"),
         ("/ops/evaluate-prospects", "post"),
         ("/ops/scoring/export", "post"),
         ("/ops/discover", "post"),

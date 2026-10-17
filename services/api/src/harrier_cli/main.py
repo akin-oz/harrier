@@ -130,6 +130,8 @@ RUN_CLASS: frozenset[str] = frozenset(
         "evaluate",
         "find-contacts",
         "backfill-posters",
+        # Spec 151: its descriptions go to the owner's Storage prefix.
+        "description backfill",
     }
 )
 
@@ -987,6 +989,52 @@ def _cmd_description_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_description_fetch(args: argparse.Namespace) -> int:
+    """Fetch a job's missing description from its posting page (spec 151)."""
+    from harrier.apply.description import (
+        DescriptionError,
+        FetchRefused,
+        PostingUnread,
+        fetch_description,
+    )
+    from harrier.tracker import get_job
+
+    with closing(_open_store()) as conn:
+        scope = _scope(conn, args)
+        try:
+            row = get_job(conn, scope, args.job_id)
+            fetch_description(args.job_id, row.get("url", ""))
+        except (FetchRefused, PostingUnread, DescriptionError, TrackerError, OSError) as error:
+            print(f"description failed: {error}", file=sys.stderr)
+            return 1
+    print(f"description fetched for job {args.job_id}")
+    return 0
+
+
+def _cmd_description_backfill(args: argparse.Namespace) -> int:
+    """Fetch every missing description in the account (spec 151). Exits 0
+    once every job was walked, whatever the failures: a closed posting is an
+    expected outcome, not a fault."""
+    from harrier.apply.description import backfill_descriptions
+
+    with closing(_open_store()) as conn:
+        try:
+            summary = backfill_descriptions(
+                conn,
+                dry_run=args.dry_run,
+                limit=args.limit,
+                emit=lambda line: print(line, flush=True),
+            )
+        except OSError as error:
+            # The store could not be read or written (Storage refused it,
+            # hosted): the walk cannot go on. The class only, never a key.
+            print(f"description backfill stopped: {type(error).__name__}", file=sys.stderr)
+            return 1
+    for line in summary.closing(args.dry_run):
+        print(line)
+    return 0
+
+
 def _cmd_brief_show(args: argparse.Namespace) -> int:
     from harrier.apply.brief import brief_text
 
@@ -1545,6 +1593,17 @@ def _iso_date(value: str) -> str:
         return date.fromisoformat(value).isoformat()
     except ValueError as error:
         raise argparse.ArgumentTypeError(f"not a YYYY-MM-DD date: {value}") from error
+
+
+def _non_negative_int(value: str) -> int:
+    """A count where 0 means none set; a negative one is a usage error."""
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"not a whole number: {value}") from None
+    if number < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or more: {value}")
+    return number
 
 
 def _positive_int(value: str) -> int:
@@ -3210,6 +3269,8 @@ COMMAND_CLASSES: dict[str, CommandClass] = {
     "profile check": _DB,
     "brief show": _DB,
     "description show": _DB,
+    "description fetch": _DB,
+    "description backfill": _DB,
     "evaluate-prospects": _DB,
     "find-contacts": _DB,
     "contacts list": _DB,
@@ -3501,6 +3562,24 @@ def build_parser() -> argparse.ArgumentParser:
     description_show = description_sub.add_parser("show", help="print a job's stored description")
     description_show.add_argument("job_id", type=int)
     description_show.set_defaults(func=_cmd_description_show)
+    description_fetch = description_sub.add_parser(
+        "fetch", help="fetch a job's missing description from its posting page"
+    )
+    description_fetch.add_argument("job_id", type=int)
+    description_fetch.set_defaults(func=_cmd_description_fetch)
+    description_backfill = description_sub.add_parser(
+        "backfill", help="fetch every missing description in the account"
+    )
+    description_backfill.add_argument(
+        "--dry-run", action="store_true", help="report what would be fetched; request nothing"
+    )
+    description_backfill.add_argument(
+        "--limit",
+        type=_non_negative_int,
+        default=0,
+        help="fetch at most N descriptions (0: no limit)",
+    )
+    description_backfill.set_defaults(func=_cmd_description_backfill)
 
     evaluate = sub.add_parser(
         "evaluate", help="six-block offer evaluation for a tracker job (spec 015)"

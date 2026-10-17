@@ -1,7 +1,7 @@
 ---
 spec: 151
 title: A missing description is fetched from the posting
-status: accepted
+status: shipped
 approved: yes
 milestone: M10
 depends: [007, 009, 047, 095, 106, 107, 149]
@@ -148,36 +148,97 @@ which the operator asked for.
 
 ## Acceptance criteria
 
-- [ ] A LinkedIn job URL with no stored description is fetched from the
-      guest endpoint, stored, and served by the read route (planned
-      test_a_linkedin_description_is_fetched_and_stored).
-- [ ] An allow-listed ATS URL is fetched and stored; a redirect off the
-      list stores nothing (planned test_an_ats_description_is_fetched_and_a_bad_redirect_is_refused).
-- [ ] An unsupported host, a stored description and a missing URL are each
-      refused before any request (planned test_a_fetch_is_refused_before_any_request).
-- [ ] A page with fewer than 120 characters of text, and a page that
+- [x] A LinkedIn job URL with no stored description is fetched from the
+      guest endpoint, stored, and served by the read route (`services/api/tests/test_description_fetch.py::test_a_linkedin_description_is_fetched_and_stored`).
+- [x] An allow-listed ATS URL is fetched and stored; a redirect off the
+      list stores nothing (`services/api/tests/test_description_fetch.py::test_an_ats_description_is_fetched_and_a_bad_redirect_is_refused`).
+- [x] An unsupported host, a stored description and a missing URL are each
+      refused before any request (`services/api/tests/test_description_fetch.py::test_a_fetch_is_refused_before_any_request`).
+- [x] A page with fewer than 120 characters of text, and a page that
       answers 429, store nothing and are refused in the words above
-      (planned test_an_empty_or_failed_page_stores_nothing).
-- [ ] `POST /apply/{selector}/description/fetch` and `harrier description
-      fetch` reach the same function (planned
-      test_the_fetch_route_and_verb_reach_one_function).
-- [ ] The backfill fetches only non-rejected rows with a URL, no stored
+      (`services/api/tests/test_description_fetch.py::test_an_empty_or_failed_page_stores_nothing`).
+- [x] `POST /apply/{selector}/description/fetch` and `harrier description
+      fetch` reach the same function (`services/api/tests/test_description_fetch.py::test_the_fetch_route_and_verb_reach_one_function`).
+- [x] The backfill fetches only non-rejected rows with a URL, no stored
       description and a reader, honours `--limit`, requests nothing on a
-      dry run, and exits 0 when some fetches fail (planned
-      test_the_backfill_fetches_only_what_is_missing).
-- [ ] The backfill pauses between requests to one host (planned
-      test_the_backfill_pauses_between_requests_to_one_host).
-- [ ] `description-backfill` is offered hosted and reaches its start with
-      the caller as owner (an added case in
-      `services/api/tests/test_run_owner.py`).
-- [ ] The Apply panel's Fetch button shows the stored text on success and
-      the API's words on a refusal (planned DescriptionPanel test).
-- [ ] The Operations page starts a dry run and a fetch run (planned
-      OperationsPage test).
-- [ ] No log line from a fetch or a backfill carries the URL, company,
-      title or description (planned test_a_fetch_logs_no_posting_identity).
-- [ ] The contract is regenerated and declares both routes and every
+      dry run, and exits 0 when some fetches fail (`services/api/tests/test_description_fetch.py::test_the_backfill_fetches_only_what_is_missing`).
+- [x] The backfill pauses between requests to one host (`services/api/tests/test_description_fetch.py::test_the_backfill_pauses_between_requests_to_one_host`).
+- [x] `description-backfill` is offered hosted and reaches its start with
+      the caller as owner (an added case of
+      `services/api/tests/test_run_owner.py::test_a_kind_offered_hosted_reaches_its_start`).
+- [x] The Apply panel's Fetch button shows the stored text on success and
+      the API's words on a refusal (the test "fetch from the posting stores and shows the description (spec 151)" in
+      `apps/web/src/features/description/DescriptionPanel.test.tsx`, and the test
+      "a fetch refusal is shown in the API's words and the paste box stays" in
+      `apps/web/src/features/description/DescriptionPanel.test.tsx`).
+- [x] The Operations page starts a dry run and a fetch run (the test "missing descriptions run as a dry run first, then a fetch (spec 151)" in
+      `apps/web/src/pages/operations/OperationsPage.test.tsx`).
+- [x] No log line from a fetch or a backfill carries the URL, company,
+      title or description (`services/api/tests/test_description_fetch.py::test_a_fetch_logs_no_posting_identity`).
+- [x] The contract is regenerated and declares both routes and every
       refusal (`just contract`).
+
+## Amendments found while implementing (2026-10-17)
+
+- **One attempt per page.** The shared `request_text` logs each retry with
+  the URL it retried (`services/api/src/harrier/screening/http.py`). A
+  fetch therefore makes one attempt (`retries=1`), so no log line names the
+  posting; the backfill's pause, not a retry, spaces the requests.
+  `services/api/tests/test_description_fetch.py::test_a_linkedin_description_is_fetched_and_stored`
+  pins the single attempt.
+- **A LinkedIn URL is a linkedin.com URL.** `linkedin_job_id` reads
+  `/jobs/view/<n>` on any host, so the id alone would send another site's
+  job to LinkedIn's guest endpoint and store a different posting. The
+  LinkedIn reader also requires a linkedin.com host or a subdomain of it
+  (`is_linkedin_job_url` in `services/api/src/harrier/screening/linkedin.py`;
+  the `example.com/jobs/view` case of
+  `services/api/tests/test_description_fetch.py::test_a_fetch_is_refused_before_any_request`).
+
+## Amendments from the local review of PR #392 (2026-10-17)
+
+CodeRabbit was rate limited, so the repository's review agents read the
+change. Each finding below was reproduced before it was fixed.
+
+- **The job id is the trailing number.** `linkedin_job_id` matched lazily
+  and stopped at the first digits after a hyphen, so
+  `senior-engineer-at-3m-3912345678` read as job 3 and the fetch would have
+  stored that posting. It now takes the number that ends the path segment.
+  The function is shared, so discovery's page verdicts and the poster
+  backfill read the right job too
+  (`services/api/tests/test_apify_linkedin.py::test_linkedin_job_id_handles_both_url_shapes`,
+  `services/api/tests/test_description_fetch.py::test_a_slugged_linkedin_url_fetches_its_own_posting`).
+- **Redirects keep to the posting.** An ATS redirect is followed only to an
+  allow-listed host with the requested path, so a closed posting's redirect
+  to its board's listing stores nothing
+  (`services/api/tests/test_description_fetch.py::test_an_ats_redirect_must_keep_the_posting_path`). The guest
+  endpoint's redirects are held to linkedin.com
+  (`services/api/tests/test_description_fetch.py::test_a_linkedin_description_is_fetched_and_stored`).
+- **The pause is per endpoint.** Every LinkedIn job is read from the one
+  guest endpoint, so the pause is keyed on the host requested, not the
+  subdomain the job's URL names
+  (`services/api/tests/test_description_fetch.py::test_the_backfill_pauses_for_every_linkedin_subdomain`).
+- **An unreadable store stops a fetch.** The check for a stored description
+  reads strictly (`read_description_strictly` in
+  `services/api/src/harrier/screening/descriptions.py`): a store that
+  cannot be read raises instead of reading as empty, so a fetch never
+  writes over a pasted description it could not see
+  (`services/api/tests/test_description_fetch.py::test_an_unreadable_store_is_never_read_as_empty`).
+- **The backfill finishes or says why it stopped.** A description stored
+  after the walk looked is counted as already stored and the run goes on
+  (`services/api/tests/test_description_fetch.py::test_a_description_stored_mid_run_is_counted_and_the_run_goes_on`).
+  A store error ends the run with exit 1 and `description backfill
+  stopped: <class>` on stderr, the "could not walk the jobs" case above
+  (`services/api/tests/test_description_fetch.py::test_a_store_error_stops_the_backfill`). A negative `--limit` is a
+  usage error, exit 2 (`services/api/tests/test_description_fetch.py::test_a_negative_backfill_limit_is_a_usage_error`).
+- **A refusal does not outlive its edit.** A fetch refusal on the Apply
+  panel clears on Replace, Cancel and a save (the test "an earlier fetch
+  refusal does not reappear after a save and Replace" in
+  `apps/web/src/features/description/DescriptionPanel.test.tsx`). The
+  route's declared 502 now names text the store refuses as a cause.
+- **Save waits for a fetch.** Save is disabled while a fetch from the
+  posting is in flight, so the two writes cannot race (CodeRabbit on PR
+  #392; the test "save waits while a fetch from the posting is in flight" in
+  `apps/web/src/features/description/DescriptionPanel.test.tsx`).
 
 ## Proof / origin
 

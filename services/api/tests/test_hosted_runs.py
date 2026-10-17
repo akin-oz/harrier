@@ -750,6 +750,8 @@ RUN_VERBS: dict[str, list[str]] = {
     "evaluate": ["evaluate", "--job-id", "1"],
     "find-contacts": ["find-contacts", "--job-id", "1"],
     "backfill-posters": ["backfill-posters", "--dry-run"],
+    # Spec 151.
+    "description backfill": ["description", "backfill", "--dry-run"],
 }
 
 

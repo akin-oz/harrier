@@ -302,6 +302,8 @@ NON_DEFAULT_OPERATIONS: frozenset[str] = frozenset(
         # Spec 149: a description is posting data, whatever track holds the row.
         "description show",
         "description set",
+        # Spec 151: a fetch is a write of the same posting data.
+        "description fetch",
     }
 )
 

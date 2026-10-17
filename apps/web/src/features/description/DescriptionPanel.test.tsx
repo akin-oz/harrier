@@ -23,6 +23,9 @@ const POSTING = "Invented Labs is hiring a remote engineer to own an invented de
 function stubApi(options: {
   stored: { text: string; stored: boolean };
   put?: { status: number; body: unknown };
+  fetch?: { status: number; body: unknown };
+  // Holds the fetch's answer until resolved, to see the panel mid-fetch.
+  fetchGate?: Promise<void>;
 }): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal(
@@ -43,6 +46,12 @@ function stubApi(options: {
           headers: { "Content-Type": "application/json" },
         });
       if (url.pathname === "/api/session") return reply(200, { token: "test-token" });
+      if (request.method === "POST" && url.pathname.endsWith("/description/fetch")) {
+        if (options.fetchGate) await options.fetchGate;
+        return options.fetch
+          ? reply(options.fetch.status, options.fetch.body)
+          : reply(200, { text: POSTING, stored: true });
+      }
       if (request.method === "PUT") {
         if (options.put) return reply(options.put.status, options.put.body);
         const sent = JSON.parse(raw) as { text: string };
@@ -156,4 +165,82 @@ test("a refusal is shown in the API's words and the pasted text is kept", async 
   await waitFor(() => {
     expect(screen.getByLabelText("Paste the job description")).toHaveProperty("value", POSTING);
   });
+});
+
+test("fetch from the posting stores and shows the description (spec 151)", async () => {
+  const calls = stubApi({ stored: { text: "", stored: false } });
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(await screen.findByRole("button", { name: "Fetch from the posting" }));
+
+  expect((await screen.findByLabelText("Stored description")).textContent).toBe(POSTING);
+  expect(screen.getByRole("status").textContent).toBe(
+    "Fetched from the posting. Every operation reads this description.",
+  );
+  expect(screen.queryByRole("button", { name: "Fetch from the posting" })).toBeNull();
+  const post = calls.find((call) => call.method === "POST");
+  expect(post?.url).toBe("/api/apply/3/description/fetch");
+  expect(post?.token).toBe("test-token");
+});
+
+test("a fetch refusal is shown in the API's words and the paste box stays", async () => {
+  stubApi({
+    stored: { text: "", stored: false },
+    fetch: { status: 502, body: { detail: "the posting page held no description" } },
+  });
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(await screen.findByLabelText("Paste the job description"));
+  await user.paste("half a pasted posting");
+  await user.click(screen.getByRole("button", { name: "Fetch from the posting" }));
+
+  expect((await screen.findByRole("alert")).textContent).toBe(
+    "the posting page held no description",
+  );
+  expect(screen.getByLabelText("Paste the job description")).toHaveProperty(
+    "value",
+    "half a pasted posting",
+  );
+});
+
+test("an earlier fetch refusal does not reappear after a save and Replace", async () => {
+  stubApi({
+    stored: { text: "", stored: false },
+    fetch: { status: 502, body: { detail: "the posting page held no description" } },
+  });
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(await screen.findByRole("button", { name: "Fetch from the posting" }));
+  expect(await screen.findByRole("alert")).toBeTruthy();
+  await user.click(screen.getByLabelText("Paste the job description"));
+  await user.paste(POSTING);
+  await user.click(screen.getByRole("button", { name: "Save" }));
+  await user.click(await screen.findByRole("button", { name: "Replace" }));
+
+  expect(screen.getByLabelText("Paste the job description")).toHaveProperty("value", POSTING);
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("save waits while a fetch from the posting is in flight", async () => {
+  let release: (() => void) | undefined;
+  stubApi({
+    stored: { text: "", stored: false },
+    fetchGate: new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+  });
+  const user = userEvent.setup();
+  renderPanel();
+
+  await user.click(await screen.findByLabelText("Paste the job description"));
+  await user.paste(POSTING);
+  await user.click(screen.getByRole("button", { name: "Fetch from the posting" }));
+
+  expect(await screen.findByRole("button", { name: "Fetching…" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Save" }).hasAttribute("disabled")).toBe(true);
+  release?.();
+  expect(await screen.findByLabelText("Stored description")).toBeTruthy();
 });

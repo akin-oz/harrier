@@ -116,6 +116,27 @@ def load_cached_description(url: str) -> str:
     return ""
 
 
+def read_description_strictly(url: str) -> str:
+    """The stored description, "" when none is stored or the entry is
+    damaged, and the store's own error when it cannot be read.
+
+    For a writer that must not mistake an unreadable store for an empty
+    one: `load_cached_description` reads a failure as missing, so a fetch
+    that trusted it would write over a pasted description (spec 151)."""
+    raw = files().read(_description_cache_key(url))
+    if raw is None:
+        return ""
+    try:
+        parsed: object = json.loads(raw.decode("utf-8"))
+        if not isinstance(parsed, dict):
+            return ""
+        description = str(parsed.get("description", ""))  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        description.encode("utf-8")
+    except (ValueError, UnicodeError):
+        return ""
+    return description.strip()
+
+
 def cache_job_descriptions(jobs: list[NormalizedJob]) -> int:
     """Cache descriptions for every job carrying one (spec 009).
 
