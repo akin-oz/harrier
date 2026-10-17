@@ -23,12 +23,12 @@ Whether a region inserted together with its text is announced depends on
 the browser and screen reader pair. So a message that arrives that way may
 be shown and never spoken.
 
-A survey of every `role="status"` in `apps/web/src` on 2026-10-17 found 21
-regions. Seven are always rendered and change only their text. Fourteen
+A survey of every `role="status"` in `apps/web/src` on 2026-10-17 found 22
+regions. Seven are always rendered and change only their text. Fifteen
 mount the region with its message. Two of the seven hide their region with
 `display: none` while empty, which takes it out of the accessibility tree
-the same way (the second, TracksPage, was found while building; see the
-amendment below).
+the same way. TracksPage's hiding rule and BackupsSection's computed role
+were found while building; see the amendments below.
 
 Who it hurts: an operator using a screen reader, who saves a brief or loses
 a log stream and hears nothing.
@@ -50,6 +50,7 @@ Mounted with the message (each changes under this spec):
 | `features/tracker/JobActions.tsx` | `job-actions__failure` | `failure !== null` (focus also moves to it) |
 | `features/config/LineListEditor.tsx` | `config-unrouted` | routing has unrouted lines |
 | `features/schedule/ScheduleForm.tsx` | `schedule-form__state` in `Saved` | `savedOnce` |
+| `pages/settings/BackupsSection.tsx` | `settings-result`, as `role={failed ? "alert" : "status"}` | a run has finished and printed a line |
 | `features/runs/RunPanel.tsx` | `run-panel__disconnected` | `disconnected` |
 | `pages/apply/ApplyPage.tsx` | `apply-page__muted` | `disconnected` |
 | `pages/inbox/InboxPage.tsx` | `inbox-page__muted` | `disconnected` |
@@ -74,7 +75,7 @@ Already following the rule (unchanged): `features/config/KindFrame.tsx`,
 
 1. The rule, stated once, for every `role="status"` region in
    `apps/web/src`.
-2. The sixteen regions above brought under it.
+2. The seventeen regions above brought under it.
 3. One test per changed component proving its region is in the document
    before the message, and that the message lands in that same element.
 
@@ -133,6 +134,10 @@ same place, at the same moment. Only the element structure changes.
   `ReportView` renders its content into it.
 - **RunOutput.** With no run, it renders its state region, empty, and
   nothing else visible. With a run, the state line fills that same region.
+- **BackupsSection.** A finished run that failed keeps its `role="alert"`
+  paragraph, mounted with its message as an alert is meant to be. A run
+  that succeeded puts its last line in a `role="status"` paragraph that is
+  always rendered in the section.
 - **ArchiveTrack, TracksPage.** The `:empty { display: none; }` rules are
   removed. Each empty paragraph has no margin, so it takes no height; it
   may add one flex gap. TracksPage still moves focus to its notice.
@@ -196,6 +201,11 @@ fail too.
 - [x] RunOutput: a section with no run renders an empty state region, and
       the run's state fills that same element
       (`OperationsPage.test.tsx::a run's state lands in a status region that was already there`).
+- [x] BackupsSection: the region is present before a backup, and holds the
+      finished run's line after it
+      (`SettingsPage.test.tsx::a finished backup is told in a status region that was already there`);
+      a failed backup is still an alert
+      (`SettingsPage.test.tsx::a failed backup says no archive was written`).
 - [x] ArchiveTrack and TracksPage: no stylesheet rule hides the message
       while empty. Checked in the diff of `features/tracks/tracks.css` and
       `pages/tracks/TracksPage.css`, not by a test: jsdom computes no
@@ -212,8 +222,11 @@ fail too.
       the words, since the region is found at once, empty
       (`message` in `SignInForm.test.tsx`, `eligibilityReport` in
       `OperationsPage.test.tsx`).
-- [x] `grep -rn 'role="status"' apps/web/src` after the change lists no
-      region inside a `&&` or ternary on its own message. Checked in review.
+- [x] `grep -rnE 'role="status"|role=\{' apps/web/src` after the change
+      lists no status region inside a `&&` or ternary on its own message,
+      and no role computed between `alert` and `status`. Checked in review.
+      The second pattern is there because `role="status"` alone missed
+      BackupsSection.
 
 Every file named above exists today. AddJob and JobActions are tested
 through `pages/tracker/TrackerPage.test.tsx`, and the four operations
@@ -225,6 +238,12 @@ sections through `pages/operations/OperationsPage.test.tsx`, as they are now.
   `pages/tracks/TracksPage.tsx` as following the rule. Its stylesheet has
   `.tracks-page__notice:empty { display: none; }`, the same breach as
   ArchiveTrack's. The rule is removed. Its focus move is unchanged.
+- **BackupsSection computed its role.** Its finished-run paragraph was
+  `role={failed ? "alert" : "status"}` and mounted with its line, so a
+  success was a status region inserted with its text. The survey's grep
+  for `role="status"` could not see it; the local fsd-reviewer on PR #401
+  did. The alert and the status are now two elements, and the review
+  criterion greps for a computed role too.
 - **LineListEditor renders its region for the feeds kind only.** The
   editor serves other line-list kinds, which never check their lines and
   so never have a message. The region's condition is the kind, fixed for
