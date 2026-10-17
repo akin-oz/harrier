@@ -19,6 +19,7 @@ that need Postgres skip locally without a test server and fail in CI (spec
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import subprocess
 import sys
@@ -41,6 +42,7 @@ from harrier.container import ContainerState
 from harrier.db import connect, data_dir, default_db_path
 from harrier.filestore import CONTENT_TYPES, SIZE_LIMIT
 from harrier.hostlease import LEASE_DIRNAME
+from harrier.screening.descriptions import description_cache_key
 from harrier.tracker import add_job
 from harrier.tracker.importlocal import IMPORT_URL_VARIABLE
 from harrier.tracks import default_scope
@@ -277,6 +279,8 @@ def test_import_artifacts_copies_the_three_families(
         "resumes: 3 copied, 0 already there",
         "cover-letters: 2 copied, 0 already there",
         "answers: 1 copied, 0 already there",
+        "descriptions: 0 copied, 0 already there, 0 kept, newer on hosted",
+        "not copied, no hosted job: 0",
         "not copied, over the size limit: 0",
         "not copied, other type or name: 0",
         "not copied, differs from the hosted object: 0",
@@ -374,6 +378,8 @@ def test_import_artifacts_is_idempotent(
         "resumes: 0 copied, 3 already there",
         "cover-letters: 0 copied, 2 already there",
         "answers: 0 copied, 1 already there",
+        "descriptions: 0 copied, 0 already there, 0 kept, newer on hosted",
+        "not copied, no hosted job: 0",
         "not copied, over the size limit: 0",
         "not copied, other type or name: 0",
         "not copied, differs from the hosted object: 0",
@@ -401,6 +407,8 @@ def test_import_artifacts_never_overwrites_a_different_object(
         "resumes: 2 copied, 0 already there",
         "cover-letters: 2 copied, 0 already there",
         "answers: 1 copied, 0 already there",
+        "descriptions: 0 copied, 0 already there, 0 kept, newer on hosted",
+        "not copied, no hosted job: 0",
         "not copied, over the size limit: 0",
         "not copied, other type or name: 0",
         "not copied, differs from the hosted object: 1",
@@ -486,6 +494,8 @@ def test_import_artifacts_skips_what_storage_would_refuse(
         "resumes: 0 copied, 0 already there",
         "cover-letters: 0 copied, 0 already there",
         "answers: 1 copied, 0 already there",
+        "descriptions: 0 copied, 0 already there, 0 kept, newer on hosted",
+        "not copied, no hosted job: 0",
         "not copied, over the size limit: 1",
         "not copied, other type or name: 4",
         "not copied, differs from the hosted object: 0",
@@ -528,9 +538,10 @@ def test_import_artifacts_leaves_other_directories_alone(
     assert "attached: 6" in result.out.splitlines()
     assert "not copied, other type or name: 0" in result.out.splitlines()
     assert len(storage.objects) == 6
-    inside = [root / family for family in ("resumes", "cover-letters", "answers")]
+    # The descriptions directory joined the three (spec 152).
+    inside = [root / family for family in ("resumes", "cover-letters", "answers", "descriptions")]
     for path in reads.under(root):
-        # The three directories, and the files directly in them: no other
+        # The four directories, and the files directly in them: no other
         # directory, no subdirectory's content, no dot file.
         assert path in inside or path.parent in inside, path
         assert not path.name.startswith(".tmp-"), path
@@ -864,3 +875,132 @@ def test_import_artifacts_stops_when_the_rate_limit_outlasts_the_waits(
     assert waits == list(artifactimport.RETRY_WAITS)
     assert result.err == "error: check resumes: Storage answered 429\n"
     assert uploads(storage) == []
+
+
+# --- job descriptions (spec 152) ---
+
+
+def hosted_url(account: Account, title: str) -> str:
+    rows = hosted_query(
+        account.server, "SELECT url FROM jobs WHERE id = %s", (account.jobs[title],)
+    )
+    return str(rows[0]["url"])
+
+
+def put_description(url: str, text: str) -> str:
+    """A local description entry, as discovery writes it; returns its key."""
+    key = description_cache_key(url)
+    payload = json.dumps({"url": url, "description": text}, ensure_ascii=False)
+    put_local("descriptions", key.split("/", 1)[1], payload.encode("utf-8"))
+    return key
+
+
+DESCRIPTION = "An invented posting for a remote frontend role, kept by discovery."
+
+
+def test_a_description_of_a_hosted_job_is_imported(
+    imported: Account,
+    storage: FakeStorage,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    put_good_files()
+    key = put_description(hosted_url(imported, ROLE_TITLE), DESCRIPTION)
+
+    result = run(capsys, imported)
+
+    assert result.code == 0, result.err
+    lines = result.out.splitlines()
+    assert lines[3] == "descriptions: 1 copied, 0 already there, 0 kept, newer on hosted"
+    assert lines[4] == "not copied, no hosted job: 0"
+    assert lines[-1] == "imported"
+    assert object_name(imported.owner, key) in storage.objects
+    # The hosted read route serves it for the job it belongs to.
+    with serving(monkeypatch, imported.server.login_role().url) as hosted:
+        client = hosted.client()
+        token = hosted.headers(imported.owner)
+        holder = imported.jobs[ROLE_TITLE]
+        read = client.get(f"/apply/{holder}/description", headers=token).json()
+        assert read == {"text": DESCRIPTION, "stored": True}
+        other = imported.jobs[OTHER_TITLE]
+        assert client.get(f"/apply/{other}/description", headers=token).json() == {
+            "text": "",
+            "stored": False,
+        }
+
+
+def test_a_description_of_no_hosted_job_is_skipped(
+    imported: Account, storage: FakeStorage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    put_good_files()
+    key = put_description("https://example.test/a-posting-never-tracked", DESCRIPTION)
+    asked = len(storage.requests)
+
+    result = run(capsys, imported)
+
+    assert result.code == 0, result.err
+    assert "not copied, no hosted job: 1" in result.out.splitlines()
+    assert result.out.splitlines()[-1] == "imported"
+    name = object_name(imported.owner, key)
+    assert name not in storage.objects
+    assert not any(name in str(request.url) for request in storage.requests[asked:])
+
+
+def test_a_newer_hosted_description_is_kept(
+    imported: Account, storage: FakeStorage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    put_good_files()
+    key = put_description(hosted_url(imported, ROLE_TITLE), DESCRIPTION)
+    held = object_name(imported.owner, key)
+    newer = json.dumps({"url": "x", "description": "Pasted on the account since."}).encode()
+    storage.put(held, newer, "application/json")
+    before = storage.objects[held]
+
+    result = run(capsys, imported)
+
+    assert result.code == 0, result.err
+    lines = result.out.splitlines()
+    assert lines[3] == "descriptions: 0 copied, 0 already there, 1 kept, newer on hosted"
+    assert "not copied, differs from the hosted object: 0" in lines
+    assert lines[-1] == "imported"
+    assert storage.objects[held] is before
+
+
+def test_descriptions_alone_pass_the_fit_check(
+    imported: Account, storage: FakeStorage, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No artifact directory at all: the descriptions directory is enough
+    for check 5, and check 6 weighs only the artifacts."""
+    key = put_description(hosted_url(imported, ROLE_TITLE), DESCRIPTION)
+
+    result = run(capsys, imported)
+
+    assert result.code == 0, result.err
+    assert "descriptions: 1 copied, 0 already there, 0 kept, newer on hosted" in (
+        result.out.splitlines()
+    )
+    assert object_name(imported.owner, key) in storage.objects
+
+
+def test_the_import_uses_the_cache_key_function(
+    imported: Account,
+    storage: FakeStorage,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The entries are named by the description cache's own key function,
+    not a copy of its rule: a different rule names different entries."""
+    asked: list[str] = []
+
+    def other_rule(url: str) -> str:
+        asked.append(url)
+        return "descriptions/other-rule.json"
+
+    monkeypatch.setattr(artifactimport, "description_cache_key", other_rule)
+    put_local("descriptions", "other-rule.json", b'{"url": "x", "description": "y"}')
+
+    result = run(capsys, imported)
+
+    assert result.code == 0, result.err
+    assert hosted_url(imported, ROLE_TITLE) in asked
+    assert object_name(imported.owner, "descriptions/other-rule.json") in storage.objects

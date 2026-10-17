@@ -1,7 +1,7 @@
 ---
 spec: 152
 title: A local store's job descriptions import into one hosted account
-status: accepted
+status: shipped
 approved: yes
 milestone: M10
 depends: [107, 141, 146, 149]
@@ -104,22 +104,31 @@ counting the three artifact families only.
 
 ## Acceptance criteria
 
-- [ ] A local description whose key matches a hosted job's URL is copied to
+- [x] A local description whose key matches a hosted job's URL is copied to
       `descriptions/<file name>`, and the hosted read route serves it
-      (planned test_a_description_of_a_hosted_job_is_imported).
-- [ ] A local description for a URL no hosted job holds is skipped without
-      a request and counted as `no hosted job` (planned
-      test_a_description_of_no_hosted_job_is_skipped).
-- [ ] A hosted description with different bytes is not overwritten, is
+      (`services/api/tests/test_import_artifacts.py::test_a_description_of_a_hosted_job_is_imported`).
+- [x] A local description for a URL no hosted job holds is skipped without
+      a request and counted as `no hosted job` (`services/api/tests/test_import_artifacts.py::test_a_description_of_no_hosted_job_is_skipped`).
+- [x] A hosted description with different bytes is not overwritten, is
       counted as `kept, newer on hosted`, and leaves the verdict `imported`
-      (planned test_a_newer_hosted_description_is_kept).
-- [ ] The output carries the two new lines, in the place above, and names
+      (`services/api/tests/test_import_artifacts.py::test_a_newer_hosted_description_is_kept`).
+- [x] The output carries the two new lines, in the place above, and names
       no URL, key or company (an added case in spec 146's output test).
-- [ ] An account with rows and descriptions but no artifacts is not
-      refused by check 6 (planned
-      test_descriptions_alone_pass_the_fit_check).
-- [ ] The import uses the description cache's own key function (planned
-      test_the_import_uses_the_cache_key_function).
+- [x] An account with rows and descriptions but no artifacts is not
+      refused by check 6 (`services/api/tests/test_import_artifacts.py::test_descriptions_alone_pass_the_fit_check`).
+- [x] The import uses the description cache's own key function (`services/api/tests/test_import_artifacts.py::test_the_import_uses_the_cache_key_function`).
+
+## Amendments found while implementing (2026-10-17)
+
+- **A public name beside the private one.** The key function gains a
+  public name, `description_cache_key`, that calls `_description_cache_key`
+  (`services/api/src/harrier/screening/descriptions.py`), rather than the
+  private one being renamed. Every existing caller keeps working, and a
+  change to the rule in one place reaches the import.
+- **The command now reads four directories.** Spec 146's test that the
+  command reads nothing outside its directories lists `descriptions` as
+  the fourth
+  (`services/api/tests/test_import_artifacts.py::test_import_artifacts_leaves_other_directories_alone`).
 
 ## Proof / origin
 
