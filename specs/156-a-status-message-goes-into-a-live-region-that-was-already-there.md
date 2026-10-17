@@ -1,8 +1,8 @@
 ---
 spec: 156
 title: A status message goes into a live region that was already there
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M6
 depends: []
 ---
