@@ -1,8 +1,8 @@
 ---
 spec: 150
 title: Discovery stages the Apify job poster as a contact candidate
-status: shipped
-approved: yes
+status: in-progress
+approved: no
 milestone: M6
 depends: [009, 011, 016]
 ---
@@ -91,6 +91,32 @@ subdomain. Before, it compared the URL as the guest page gave it. A
 contact's stored link is read leniently for this comparison only: one
 typed with http or with no scheme still names the person.
 
+**Amendment (post-merge review, 2026-10-16).** The lenient read missed
+three forms of a stored link, so a known person's poster was staged again
+as a duplicate pending candidate. No contact was written. The forms were a
+path in upper case (`https://uk.linkedin.com/IN/<slug>`), a link with no
+scheme part before `//` (`//www.linkedin.com/in/<slug>`), and a link with
+no scheme whose query holds `://` (`linkedin.com/in/<slug>?u=http://x`).
+
+A contact's stored link names the same person as a poster when, read as
+follows, it gives the poster's canonical URL:
+
+1. The link has a scheme only when it starts with one: a letter, then
+   letters, digits, `+`, `-` or `.`, then `://`. A `://` anywhere later,
+   such as in a query, is not a scheme.
+2. `http` or `https`, in any case, is read as `https`. A link with no
+   scheme, or one that starts with `//`, is read as `https`. Any other
+   scheme names no one.
+3. The first path segment `in` matches in any case (`/IN/`, `/In/`).
+4. The rest is `profile_url`'s test: a `linkedin.com` host or a subdomain
+   of it, no userinfo, and a slug after `/in/`. The host and the slug
+   already compare in any case.
+
+This read is for comparison only, in `contact_url_keys`
+(`services/api/src/harrier/outreach/posters.py`). `profile_url`, which
+decides what is stageable, does not change: none of these forms is a link
+to stage.
+
 ### What the run reports
 
 The run logs one line per run: `apify posters staged: <n>`. The line
@@ -111,6 +137,8 @@ carries no name, title or URL. The per-source summary does not change.
 | A dataset-file replay (`--dataset-file`) | Stages as a live run does. It is not a dry run. |
 | A focused-track placement (spec 139) | Staged against the job on the track it was placed in. |
 | Hosted run | The artifact goes through `files()`, the owner's Storage (spec 107). |
+| A contact's stored link has an upper case `/IN/`, starts with `//`, or has no scheme and a `://` in its query | Matches its poster, so the poster is not staged again. |
+| A contact's stored link has a scheme other than http or https | Matches no poster. |
 
 ## Acceptance criteria
 
@@ -144,6 +172,16 @@ carries no name, title or URL. The per-source summary does not change.
       profile URLs in canonical form
       (`services/api/tests/test_outreach.py::test_backfill_stages_posters_without_writing_contacts`,
       `services/api/tests/test_outreach.py::test_backfill_skips_a_poster_already_a_contact_under_another_subdomain`).
+- [ ] A contact stored as `https://uk.linkedin.com/IN/<slug>`,
+      `//www.linkedin.com/in/<slug>` or `linkedin.com/in/<slug>?u=http://x`
+      matches its poster, and `profile_url` still refuses each form
+      (planned test_a_contact_link_in_another_written_form_still_matches_its_poster
+      in services/api/tests/test_outreach.py). Each case fails before the
+      fix.
+- [ ] A contact stored with a scheme other than http or https, such as
+      `ftp://www.linkedin.com/in/<slug>`, matches no poster
+      (planned test_a_contact_link_with_another_scheme_matches_no_poster
+      in services/api/tests/test_outreach.py).
 
 ## Proof / origin
 
@@ -171,6 +209,11 @@ posters for rows added before this change, run `backfill-posters` as
 today.
 
 ## Least confident
+
+- Matching `/IN/` to `/in/` assumes LinkedIn treats the path segment
+  without regard to case. Observed, not documented. It is applied to the
+  comparison only, so a wrong guess hides a duplicate candidate rather
+  than staging a bad link.
 
 - The country-subdomain rewrite assumes `xx.linkedin.com/in/<slug>` and
   `www.linkedin.com/in/<slug>` name the same profile. That is LinkedIn's
