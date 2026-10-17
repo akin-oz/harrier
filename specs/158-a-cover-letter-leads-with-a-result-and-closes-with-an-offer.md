@@ -63,6 +63,8 @@ Three gaps sit underneath.
   letter's claims are checked against, the shape checks, and the markdown
   draft's two new sections.
 - `services/api/src/harrier/apply/letterlint.py` (new): the letter linter.
+- `services/api/src/harrier/apply/profile.py` and
+  `services/api/src/harrier_cli/main.py` (amendment 6).
 - `services/api/src/harrier/tracks.py`: the letter shape fields of
   `KindRules` only. No track, track kind, slug or tracker behavior changes.
 - Tests: `services/api/tests/test_letter_lint.py` (new) and
@@ -269,41 +271,46 @@ kind's range and cap.
 
 ## Acceptance criteria
 
-- [ ] A letter with each of L1 to L11 broken is refused with that rule's
+- [x] A letter with each of L1 to L11 broken is refused with that rule's
   message, and the same letter with only that defect fixed passes the
-  linter (planned test_letter_lint.py::test_each_rule_refuses_and_its_fix_passes).
-- [ ] "12%" in a letter passes L8 when the evidence states "~12%", and
-  "14%" is refused (planned test_letter_lint.py::test_a_number_must_be_in_the_evidence).
-- [ ] A hyphen in "well-known" passes L1; " - " and "--" between words
-  are refused (planned test_letter_lint.py::test_compound_hyphens_are_not_punctuation).
-- [ ] "May 2024" passes L2 (planned test_letter_lint.py::test_may_the_month_is_not_a_hedge).
-- [ ] "6+ years" is refused by L9 when the record holds 5, and "5+ years"
-  passes (planned test_letter_lint.py::test_year_count_is_capped_by_the_record).
-- [ ] "my GmbH" is refused when no evidence line states one is registered,
-  and "a GmbH" passes (planned test_letter_lint.py::test_an_unregistered_entity_is_not_mine).
-- [ ] An industry letter with a role line, three body paragraphs and a
+  linter (`services/api/tests/test_letter_lint.py::test_each_rule_refuses_and_its_fix_passes`,
+  `services/api/tests/test_letter_lint.py::test_the_base_letter_passes_every_rule`).
+- [x] "12%" in a letter passes L8 when the evidence states "~12%", and
+  "14%" is refused (`services/api/tests/test_letter_lint.py::test_a_number_must_be_in_the_evidence`).
+- [x] A hyphen in "well-known" passes L1; " - " and "--" between words
+  are refused (`services/api/tests/test_letter_lint.py::test_compound_hyphens_are_not_punctuation`).
+- [x] "May 2024" passes L2 (`services/api/tests/test_letter_lint.py::test_may_the_month_is_not_a_hedge`).
+- [x] "6+ years" is refused by L9 when the record holds 5, and "5+ years"
+  passes (`services/api/tests/test_letter_lint.py::test_year_count_is_capped_by_the_record`).
+- [x] "my GmbH" is refused when no evidence line states one is registered,
+  and "a GmbH" passes (`services/api/tests/test_letter_lint.py::test_an_unregistered_entity_is_not_mine`).
+- [x] A run of eight words the evidence also has is not a restatement
+  (amendment 1) (`services/api/tests/test_letter_lint.py::test_a_run_the_evidence_also_has_is_not_a_restatement`).
+- [x] An industry letter with a role line, three body paragraphs and a
   close passes the shape check; a three-block letter is refused naming the
-  range (planned test_letter_structure.py::test_the_industry_letter_has_five_to_eight_blocks).
-- [ ] A focused letter without a logistics block is refused (planned
-  test_letter_structure.py::test_the_focused_letter_has_a_logistics_block).
-- [ ] A candidate claim citing a story bank `result` string passes; one
-  citing its `opening_line` is refused as unverified (planned
-  test_letter_structure.py::test_story_bank_results_are_evidence_and_openers_are_not).
-- [ ] A candidate claim citing a candidate document value passes (planned
-  test_letter_structure.py::test_candidate_document_values_are_evidence).
-- [ ] The markdown draft lists each gap with its posting line and each
+  range (`services/api/tests/test_letter_structure.py::test_the_industry_letter_has_five_to_eight_blocks`).
+- [x] A focused letter without a logistics block is refused
+  (`services/api/tests/test_letter_structure.py::test_the_focused_letter_has_a_logistics_block`).
+- [x] A candidate claim citing a story bank `result` string passes; one
+  citing its `opening_line` is refused as unverified
+  (`services/api/tests/test_letter_structure.py::test_story_bank_results_are_evidence_and_openers_are_not`).
+- [x] A candidate claim citing a candidate document value passes
+  (`services/api/tests/test_letter_structure.py::test_candidate_document_values_are_evidence`).
+- [x] The markdown draft lists each gap with its posting line and each
   fact with its source document; the HTML contains neither section
-  (planned test_letter_structure.py::test_gaps_and_facts_used_are_in_the_draft_only).
-- [ ] A gap whose posting evidence is not in the posting refuses the
-  letter (planned test_letter_structure.py::test_a_gap_must_quote_the_posting).
-- [ ] An academic letter with no `gaps` key parses and is not linted
-  (planned test_letter_structure.py::test_the_academic_letter_is_unchanged).
-- [ ] The answers prompt and every answers check are byte for byte what
+  (`services/api/tests/test_letter_structure.py::test_gaps_and_facts_used_are_in_the_draft_only`,
+  `services/api/tests/test_letter_structure.py::test_a_draft_with_no_gaps_says_none`).
+- [x] A gap whose posting evidence is not in the posting refuses the
+  letter (`services/api/tests/test_letter_structure.py::test_a_gap_must_quote_the_posting`).
+- [x] An academic letter with no `gaps` key parses and is not linted
+  (`services/api/tests/test_letter_structure.py::test_the_academic_letter_is_unchanged`).
+- [x] The answers prompt and every answers check are byte for byte what
   they were: the answers hash in `SHARED_BLOCK_SHA256` and the answers
-  prompt pins in `services/api/tests/test_academic_documents.py` do not
-  change.
-- [ ] No personal fact appears in `voices.py` or `letters.py`: the prompt
-  and the linter name rules and synthetic examples only.
+  prompt pin are unchanged
+  (`services/api/tests/test_academic_documents.py::test_both_kinds_share_every_truth_rule`).
+- [x] No personal fact appears in `voices.py` or `letters.py`: the prompt
+  and the linter name rules and synthetic examples only. Checked by
+  reading the diff; no test can prove an absence of personal data.
 
 ## Proof / origin
 
@@ -347,6 +354,60 @@ kind's range and cap.
 5. **The focused kind's cap falls from 320 to 220 words.** Spec 140's six
    parts now fit in 220 with the scope reason and the logistics block.
    That is tight; the operator may prefer 260 on the focused kind.
+
+## Decisions taken (2026-10-17)
+
+Akin approved the spec as written, which settled the five open decisions
+above as the spec states them.
+
+## Amendment (2026-10-17, implementation)
+
+The build found these places where the Behavior was wrong or silent.
+
+1. **L7 exempts the candidate's own words.** A posting can name a
+   requirement in the same eight words as a truth line, and L7 then
+   refused a true sentence (`services/api/tests/test_apply_claims.py::test_evidence_in_the_truth_and_the_posting_passes`
+   failed). A run the evidence also has is no longer a restatement.
+2. **L3 and L8 are not repeated in the pipeline.** The kind's cap in
+   `cover_letter_violations` already refuses a long letter, and a brief's
+   `max_words` must be able to replace it, so the linter's L3 message is
+   dropped there. A number C5 (spec 065) passes is in a claim's verified
+   evidence, so L8 could only restate C5's refusal. Both rules stay in
+   `lint_letter` for any caller that has no claims.
+3. **L11's block count lives in `cover_letter_violations`.** It is the
+   kind's or the brief's, which the linter does not read. The linter checks
+   the role line. `lint_letter` takes the short version as a third
+   argument, for L1.
+4. **The focused logistics block is enforced by the count only.** A
+   focused letter of five blocks is refused. A six-block focused letter
+   with four body paragraphs and no logistics passes: code cannot tell a
+   logistics paragraph from another one.
+5. **L9 needs the record.** When the resume facts cannot be read, the year
+   count is skipped and only "decade" is refused.
+6. **Files the Scope did not name.** `services/api/src/harrier/apply/profile.py`
+   reads the story bank (`load_story_bank`).
+   `services/api/src/harrier_cli/main.py` passes the gaps and facts to the
+   draft. The shared letter fixtures in
+   `services/api/tests/test_apply_claims.py` and
+   `services/api/tests/test_apply.py` take the new shape (a role line, a
+   hook with a number, a one-sentence close), and
+   `services/api/tests/test_apply_brief.py` and
+   `services/api/tests/test_academic_applications.py` follow them.
+7. **Cited test names kept.** Specs 065, 066 and 140 cite
+   `test_a_fourth_paragraph_refuses_instead_of_being_dropped`,
+   `test_a_letter_over_240_words_is_refused_not_trimmed`,
+   `test_a_two_paragraph_brief_accepts_two_paragraphs` and
+   `test_the_focused_letter_has_six_paragraphs`. Their names stay so the
+   citations hold. Their bodies now check the new range, and each says so
+   in its docstring.
+8. **Spec 140's dash check now exists.** Spec 140 listed it among the
+   letter's rules, but no letter code called `dash_marks`. L1 is that
+   check.
+9. **The prompt names L7's limit.** On real postings the model wrote
+   the "why this company" sentence by copying the posting, and L7 refused
+   two letters out of three after their retry. The industry and focused
+   voices now say never to copy more than five words in a row from the
+   posting. With that line all three regenerated letters passed.
 
 ## Out of scope
 

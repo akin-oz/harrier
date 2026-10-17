@@ -1,8 +1,10 @@
 """Cover letters (spec 014 port of openai_cover_letters.py).
 
-Three short paragraphs, banned phrasing stripped and validated, PDF or
-failure. The HTML and PDF contain only the full letter: no internal
-section labels ever reach the recruiter-facing artifact.
+The kind's shape, banned phrasing validated, PDF or failure. The HTML and
+PDF contain only the full letter: no internal section labels ever reach the
+recruiter-facing artifact. On the industry and focused kinds the letter
+leads with a result and closes with an offer, and the linter holds it
+(spec 158).
 """
 
 from __future__ import annotations
@@ -38,10 +40,14 @@ from harrier.apply.claims import (
     parse_claims,
     retry_payload,
 )
+from harrier.apply.letterlint import LintContext, lint_letter
 from harrier.apply.profile import (
+    STORY_EVIDENCE_FIELDS,
+    ApplicationProfileError,
     load_candidate_document,
     load_profile_json,
     load_profile_markdown,
+    load_story_bank,
     profile_text,
 )
 from harrier.apply.review import Review, render_review
@@ -51,12 +57,15 @@ from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
 from harrier.paths import repo_root
 from harrier.resume.content import (
+    ResumeBundleError,
+    TruthSources,
     forbidden_hits,
     load_forbidden_phrases,
     load_skill_vocabulary,
     load_truth_sources,
     names_unsafe_scheme,
 )
+from harrier.resume.facts import ResumeContentError, professional_experience_years
 from harrier.resume.markdown import normalize_visible_role_title, normalize_visible_url_text
 from harrier.resume.pdf import render_pdf, render_validated_pdf, validate_rendered_pdf
 from harrier.tracks import Scope, rules_for
@@ -115,8 +124,8 @@ LETTER_SHARED: tuple[str, ...] = (
 - No corporate filler
 - No invented experience
 - Use the application profile for positioning and safe framing only. Every
-  fact about the candidate must come from resume_truth_source_md or
-  latest_project_achievements_md.
+  fact about the candidate must come from resume_truth_source_md,
+  latest_project_achievements_md, story_bank or candidate_json.
 """,
     """Banned phrasing:
 """
@@ -128,8 +137,9 @@ Claims and evidence:
   as it appears in your letter, whether it is about the candidate or the
   employer, and one or more evidence fragments.
 - Evidence is quoted verbatim. Candidate evidence comes only from
-  resume_truth_source_md or latest_project_achievements_md. Employer evidence
-  comes only from job_description_text.
+  resume_truth_source_md, latest_project_achievements_md, the situation,
+  task, action and result of a story_bank entry, or a value in
+  candidate_json. Employer evidence comes only from job_description_text.
 - Never cite job_description_text or the application profile as candidate
   evidence. A requirement the posting lists is something the employer wants,
   not something the candidate did. If a sentence about the candidate has no
@@ -152,10 +162,17 @@ Return strict JSON only with this shape:
   "full_version": "string",
   "claims": [
     {"sentence": "string", "about": "candidate or employer", "evidence": ["string"]}
+  ],
+  "gaps": [
+    {"requirement": "string", "posting_evidence": "string"}
   ]
 }
 
-FORMATTING: Never use em dashes anywhere in the output. Use commas, semicolons, colons, or hyphens instead.
+List in gaps each thing the posting asks for that the candidate evidence
+cannot back, with posting_evidence quoted verbatim from job_description_text.
+Leave gaps empty when there is none. A gap never appears in the letter.
+
+FORMATTING: Never use an em dash, an en dash, a double hyphen, or a hyphen with a space on both sides as punctuation. Use a comma, a colon, or a new sentence instead. A hyphen inside a compound word is fine.
 """,
 )
 
@@ -263,6 +280,9 @@ def build_cover_letter_payload(
             "resume_truth_source_md": sources.truth_text,
             "latest_project_achievements_md": sources.achievements_text,
             "candidate_json": candidate,
+            # The four STAR strings of each story, which a letter may cite
+            # (spec 158). The story's opening line and hook are left out.
+            "story_bank": load_story_bank(conn),
             "application_profile_md": load_profile_markdown(conn, scope),
             "application_profile_json": load_profile_json(conn, scope),
         },
@@ -292,6 +312,43 @@ def parse_cover_letter_response(text: str) -> dict[str, str]:
     return {"short_version": short_version, "full_version": full_version}
 
 
+@dataclass(frozen=True)
+class Gap:
+    """Something the posting asks for that the evidence cannot back (spec 158)."""
+
+    requirement: str
+    posting_evidence: str
+
+
+@dataclass(frozen=True)
+class FactUsed:
+    """One evidence fragment a candidate claim rests on, and the document code
+    found it in (spec 158)."""
+
+    sentence: str
+    evidence: str
+    source: str
+
+
+def parse_cover_letter_gaps(text: str) -> list[Gap]:
+    """The gaps the model listed. An absent key is an empty list."""
+    payload_raw: object = loads_tolerant(extract_json_object(text))
+    payload = cast("dict[str, object]", payload_raw) if isinstance(payload_raw, dict) else {}
+    raw = payload.get("gaps")
+    if not isinstance(raw, list):
+        return []
+    gaps: list[Gap] = []
+    for item in cast("list[object]", raw):
+        if not isinstance(item, dict):
+            continue
+        entry = cast("dict[str, object]", item)
+        requirement = str(entry.get("requirement", "")).strip()
+        evidence = str(entry.get("posting_evidence", "")).strip()
+        if requirement:
+            gaps.append(Gap(requirement=requirement, posting_evidence=evidence))
+    return gaps
+
+
 def parse_cover_letter_claims(text: str) -> list[Claim]:
     """The claims the model declared alongside the letter (spec 065)."""
     payload_raw: object = loads_tolerant(extract_json_object(text))
@@ -306,9 +363,13 @@ def strip_banned_phrases(text: str) -> str:
     return value
 
 
-# The paragraph count and word cap are the kind's (`KindRules`); the floor on
-# a paragraph holds for every kind.
+# The block range and word cap are the kind's (`KindRules`); the floor on a
+# paragraph holds for every kind, except a linted kind's role line.
 MIN_PARAGRAPH_WORDS = 8
+
+# The kinds whose letter leads with a result and closes with an offer, and
+# which the linter holds (spec 158).
+LINTED_KINDS = frozenset({"industry", "focused"})
 
 
 def normalize_cover_letter_text(text: str, *, is_full: bool) -> str:
@@ -336,17 +397,24 @@ def normalize_cover_letter_text(text: str, *, is_full: bool) -> str:
 
 
 def cover_letter_violations(
-    letter: dict[str, str], limits: Limits | None = None, *, kind: str
+    letter: dict[str, str],
+    limits: Limits | None = None,
+    *,
+    kind: str,
+    lint: LintContext | None = None,
 ) -> list[str]:
     """Every shape and phrasing rule the letter breaks (spec 065, rule N1).
 
     A brief's stated limits replace the kind's defaults and apply to the
     full letter, the version that is sent (spec 066, B2). The industry kind
-    holds three paragraphs and 240 words; the academic kind has neither, and
-    its length is the page gate's (spec 101).
+    holds five to eight blocks and the focused six to eight, each at most
+    220 words (spec 158); the academic kind has neither, and its length is
+    the page gate's (spec 101). With `lint`, the linter's rules join them on
+    the industry and focused kinds.
     """
     rules = rules_for(kind)
     stated = limits or Limits()
+    linted = kind in LINTED_KINDS
     violations = [
         f"banned phrase: {phrase}"
         for phrase in banned_hits(
@@ -358,15 +426,13 @@ def cover_letter_violations(
         violations.append("cover letter should not use bullet-list voice")
     paragraphs = [block for block in re.split(r"\n\s*\n", full) if block.strip()]
     if stated.paragraphs is None:
-        expected = rules.letter_paragraphs
-        if expected is not None and len(paragraphs) < expected:
+        expected = rules.letter_blocks
+        if expected is not None and not expected[0] <= len(paragraphs) <= expected[1]:
+            low, high = expected
             violations.append(
-                "cover letter should contain three short paragraphs"
-                if expected == 3
-                else f"cover letter should contain {expected} paragraphs"
+                f"cover letter should contain {low} to {high} blocks, role line and close"
+                f" included: it has {len(paragraphs)}"
             )
-        if expected is not None and len(paragraphs) > expected:
-            violations.append(f"too many paragraphs: {len(paragraphs)}, at most {expected}")
     else:
         if len(paragraphs) < stated.paragraphs:
             violations.append(
@@ -377,7 +443,9 @@ def cover_letter_violations(
                 f"over the stated limit: letter.paragraphs {stated.paragraphs},"
                 f" full_version has {len(paragraphs)}"
             )
-    for paragraph in paragraphs:
+    # A linted kind's first block is its role line, short by design.
+    floor_from = 1 if linted else 0
+    for paragraph in paragraphs[floor_from:]:
         if len(paragraph.split()) < MIN_PARAGRAPH_WORDS:
             violations.append(f"stub paragraph: {paragraph}")
     words = len(full.split())
@@ -385,7 +453,16 @@ def cover_letter_violations(
     if stated.max_words is None and cap is not None and words > cap:
         violations.append(f"over the word limit: {words} words, at most {cap}")
     violations.extend(limit_violations(full, stated, "letter", "full_version"))
-    return violations
+    if linted and lint is not None:
+        # L3 is the kind's cap above, which a brief's max_words replaces.
+        # L8 is C5 (spec 065) repeated: a number C5 passes is in a claim's
+        # verified evidence, so L8 could only restate C5's refusal.
+        violations.extend(
+            violation
+            for violation in lint_letter(full, lint, letter["short_version"])
+            if not violation.startswith(("over the word limit", "number not in the evidence"))
+        )
+    return list(dict.fromkeys(violations))
 
 
 @dataclass(frozen=True)
@@ -396,6 +473,10 @@ class LetterDraft:
     short_version: str
     full_version: str
     claims: tuple[Claim, ...] = ()
+    # What the posting asks for that the evidence cannot back, and the
+    # document each candidate fact came from (spec 158).
+    gaps: tuple[Gap, ...] = ()
+    facts_used: tuple[FactUsed, ...] = ()
 
 
 def validate_cover_letter(letter: dict[str, str], *, kind: str) -> None:
@@ -470,6 +551,7 @@ def _checked_letter(
     try:
         parsed = parse_cover_letter_response(output_text)
         claims = parse_cover_letter_claims(output_text)
+        gaps = parse_cover_letter_gaps(output_text)
     except (ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"failed to parse AI response: {exc}") from exc
     letter = {
@@ -477,7 +559,22 @@ def _checked_letter(
         "full_version": normalize_cover_letter_text(parsed["full_version"], is_full=True),
     }
     texts = [letter["short_version"], letter["full_version"]]
-    violations = cover_letter_violations(letter, brief.letter, kind=scope.track.kind)
+    documents = letter_evidence(conn, brief)
+    sources = _combined(documents)
+    posting = "\n".join(part for part in (jd_text or "", brief.employer_guidance) if part)
+    lint = LintContext(
+        evidence="\n".join((sources.truth_text, sources.achievements_text)),
+        posting=jd_text or "",
+        company=company,
+        role=role,
+        professional_years=_professional_years(conn, scope),
+    )
+    violations = cover_letter_violations(letter, brief.letter, kind=scope.track.kind, lint=lint)
+    violations.extend(
+        f"gap evidence not in posting: {gap.posting_evidence or gap.requirement}"
+        for gap in gaps
+        if not gap.posting_evidence or _norm(gap.posting_evidence) not in _norm(posting)
+    )
     violations.extend(
         f"named a redacted name: {name}"
         for name in never_name_hits(brief.never_name, "\n".join(texts))
@@ -489,8 +586,8 @@ def _checked_letter(
         for phrase in forbidden_hits(load_forbidden_phrases(conn), "\n".join(texts))
     )
     context = ClaimContext(
-        sources=with_operator_evidence(load_truth_sources(conn), *brief.evidence),
-        posting="\n".join(part for part in (jd_text or "", brief.employer_guidance) if part),
+        sources=sources,
+        posting=posting,
         company=company,
         role=role,
         vocabulary=load_skill_vocabulary(conn),
@@ -503,7 +600,91 @@ def _checked_letter(
         short_version=letter["short_version"],
         full_version=letter["full_version"],
         claims=tuple(claims),
+        gaps=tuple(gaps),
+        facts_used=tuple(facts_used(claims, documents)),
     )
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.lower().split())
+
+
+def _string_values(value: object) -> list[str]:
+    """Every string in a JSON value, depth first."""
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, dict):
+        return [s for v in cast("dict[str, object]", value).values() for s in _string_values(v)]
+    if isinstance(value, list):
+        return [s for v in cast("list[object]", value) for s in _string_values(v)]
+    return []
+
+
+def letter_evidence(conn: Connection, brief: Brief = EMPTY_BRIEF) -> dict[str, TruthSources]:
+    """Each document a letter's candidate claim may cite, by the name the
+    draft's "Facts used" gives it (spec 158). The truth and achievements
+    documents as today; the four STAR strings of each story; every string
+    value of the candidate document; and the brief's evidence (spec 066)."""
+    truth = load_truth_sources(conn)
+    stories = "\n".join(
+        story[key]
+        for story in load_story_bank(conn)
+        for key in STORY_EVIDENCE_FIELDS
+        if key in story
+    )
+    try:
+        candidate = "\n".join(_string_values(load_candidate_document(conn)))
+    except ApplicationProfileError:
+        candidate = ""
+    operator = with_operator_evidence(TruthSources("", ""), *brief.evidence).achievements_text
+    return {
+        "resume_truth": TruthSources(truth_text=truth.truth_text, achievements_text=""),
+        "achievements": TruthSources(truth_text="", achievements_text=truth.achievements_text),
+        "story_bank": TruthSources(truth_text="", achievements_text=stories),
+        "candidate": TruthSources(truth_text="", achievements_text=candidate),
+        "operator_evidence": TruthSources(truth_text="", achievements_text=operator),
+    }
+
+
+def _combined(documents: dict[str, TruthSources]) -> TruthSources:
+    """One `TruthSources` over every letter document, each under its own
+    heading so one document's closing section cannot swallow the next."""
+    extra = "".join(
+        f"\n\n## Letter evidence: {name}\n\n{sources.achievements_text}\n"
+        for name, sources in documents.items()
+        if name not in ("resume_truth", "achievements") and sources.achievements_text.strip()
+    )
+    return TruthSources(
+        truth_text=documents["resume_truth"].truth_text,
+        achievements_text=documents["achievements"].achievements_text + extra,
+    )
+
+
+def facts_used(claims: list[Claim], documents: dict[str, TruthSources]) -> list[FactUsed]:
+    """Each candidate claim's evidence, with the first document that asserts
+    it. Code finds the document; the model does not name it."""
+    used: list[FactUsed] = []
+    for claim in claims:
+        if claim.about != "candidate":
+            continue
+        for fragment in claim.evidence:
+            source = next(
+                (name for name, sources in documents.items() if sources.contains(fragment)),
+                "not found",
+            )
+            used.append(FactUsed(sentence=claim.sentence, evidence=fragment, source=source))
+    return used
+
+
+def _professional_years(conn: Connection, scope: Scope) -> int | None:
+    """The record's completed professional years, or None when the record
+    cannot be read (L9 then checks only for decades)."""
+    from harrier.resume.content import load_bundle
+
+    try:
+        return professional_experience_years(load_bundle(conn, scope))
+    except (ResumeBundleError, ResumeContentError, ValueError):
+        return None
 
 
 def render_cover_letter_markdown(
@@ -513,7 +694,11 @@ def render_cover_letter_markdown(
     short_version: str,
     full_version: str,
     review_section: str = "",
+    gaps: tuple[Gap, ...] | None = None,
+    facts: tuple[FactUsed, ...] | None = None,
 ) -> str:
+    """The draft. With `gaps` and `facts` (spec 158), a "Gaps" and a "Facts
+    used" section follow the letter; neither reaches the HTML or the PDF."""
     lines = [
         "# Cover Letter",
         "",
@@ -523,6 +708,19 @@ def render_cover_letter_markdown(
     if job_url:
         lines.append(f"- Job URL: {job_url}")
     lines.extend(["", "## Short Version", short_version, "", "## Full Version", full_version, ""])
+    if gaps is not None:
+        lines.extend(["## Gaps", ""])
+        lines.extend(
+            [f'- {gap.requirement}: "{gap.posting_evidence}"' for gap in gaps] or ["None."]
+        )
+        lines.append("")
+    if facts is not None:
+        lines.extend(["## Facts used", ""])
+        lines.extend(
+            [f'- "{fact.sentence}" rests on "{fact.evidence}" ({fact.source})' for fact in facts]
+            or ["None."]
+        )
+        lines.append("")
     markdown = "\n".join(lines).rstrip() + "\n"
     return markdown + ("\n" + review_section if review_section else "")
 
@@ -596,6 +794,8 @@ def write_cover_letter_artifacts(
     review: Review | None = None,
     *,
     kind: str,
+    gaps: tuple[Gap, ...] | None = None,
+    facts: tuple[FactUsed, ...] | None = None,
 ) -> dict[str, Path]:
     with files_in(output_dir, COVER_LETTERS) as prefix:
         keys = cover_letter_keys_for(company, role, prefix)
@@ -609,7 +809,7 @@ def write_cover_letter_artifacts(
             [short_version, full_version], review or Review(), markdown_path
         )
         markdown = render_cover_letter_markdown(
-            company, role, job_url, short_version, full_version, review_section
+            company, role, job_url, short_version, full_version, review_section, gaps, facts
         )
         save_text(keys["markdown"], markdown, atomic=False)
         # The keys are per company and role, and the artifact endpoint serves

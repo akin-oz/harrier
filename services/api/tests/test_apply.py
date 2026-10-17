@@ -42,12 +42,16 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 PROFILE_JSON_PATH = REPO_ROOT / "config" / "application-profile.example.json"
 PROFILE_MD_PATH = REPO_ROOT / "config" / "application-profile.example.md"
 
+# The industry shape (spec 158): role line, hook, body, close.
+HOOK = "I cut checkout errors by 17% after the redesign."
+HOOK_EVIDENCE = "Cut checkout errors by 17% after the redesign"
 FULL_LETTER = (
-    "I'm interested in Examplesoft because the work looks product-facing and close "
-    "to the product.\n\n"
+    "Senior Product Engineer, Examplesoft\n\n"
+    f"{HOOK}\n\n"
     "My strongest fit is TypeScript-first frontend and product engineering with concrete "
     "delivery in production.\n\n"
-    "If that match holds in the process, I'd be glad to discuss the role further."
+    "The work at Examplesoft looks product-facing and close to the product.\n\n"
+    "I can walk the team through the checkout redesign on a call."
 )
 SHORT_LETTER = "I'm interested in this role because it fits my background well."
 
@@ -94,7 +98,8 @@ def db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Connection:
         "resume_truth",
         "truth.md",
         "markdown",
-        "- Email: deniz@example.com\n- LinkedIn: https://linkedin.com/in/deniz-ornek\n",
+        "- Email: deniz@example.com\n- LinkedIn: https://linkedin.com/in/deniz-ornek\n"
+        f"- {HOOK_EVIDENCE}.\n",
     )
     return conn
 
@@ -631,7 +636,7 @@ def test_generate_cover_letter_validates_three_paragraphs(
         )
 
     monkeypatch.setattr(letters_module, "generate_text", two_paragraph_response)
-    with pytest.raises(ValueError, match="three short paragraphs"):
+    with pytest.raises(ValueError, match="should contain 5 to 8 blocks"):
         generate_cover_letter(db, "examplesoft", "Senior Product Engineer", scope=DEFAULT_SCOPE)
 
 
@@ -650,7 +655,10 @@ def _store_forbidden(conn: Connection, *phrases: str) -> None:
 
 
 def _letter_response(system_prompt: str, user_input: str) -> str:
-    return json.dumps({"short_version": SHORT_LETTER, "full_version": FULL_LETTER, "claims": []})
+    claims = [{"sentence": HOOK, "about": "candidate", "evidence": [HOOK_EVIDENCE]}]
+    return json.dumps(
+        {"short_version": SHORT_LETTER, "full_version": FULL_LETTER, "claims": claims}
+    )
 
 
 def _answers_stub(note: str = "Keep it short.") -> Callable[[str, str], str]:

@@ -111,6 +111,46 @@ def load_profile_json(conn: Connection, scope: Scope) -> dict[str, object]:
     return cast("dict[str, object]", parsed)
 
 
+STORY_BANK_KIND = "story_bank"
+# The parts of a story a letter may cite (spec 158). `jd_hook` and
+# `opening_line` are prose a model once wrote, never evidence.
+STORY_EVIDENCE_FIELDS = ("situation", "task", "action", "result")
+
+
+def load_story_bank(conn: Connection) -> list[dict[str, str]]:
+    """Each story's theme, company and role, and its four STAR strings.
+    Empty when there is no story bank or it is not a JSON list."""
+    content = _document(conn, STORY_BANK_KIND, "json")
+    try:
+        parsed: object = json.loads(content) if content else []
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    stories: list[dict[str, str]] = []
+    for raw in cast("list[object]", parsed):
+        if not isinstance(raw, dict):
+            continue
+        entry = cast("dict[str, object]", raw)
+        star_raw = entry.get("star_r")
+        star = cast("dict[str, object]", star_raw) if isinstance(star_raw, dict) else {}
+        story = {
+            key: value
+            for key in ("theme", "company", "role")
+            if isinstance(value := entry.get(key), str) and value.strip()
+        }
+        story.update(
+            {
+                key: value
+                for key in STORY_EVIDENCE_FIELDS
+                if isinstance(value := star.get(key), str) and value.strip()
+            }
+        )
+        if any(key in story for key in STORY_EVIDENCE_FIELDS):
+            stories.append(story)
+    return stories
+
+
 def load_candidate_document(conn: Connection) -> dict[str, object]:
     content = _document(conn, CANDIDATE_KIND, "json")
     if content is None:

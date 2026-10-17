@@ -205,7 +205,8 @@ def test_academic_documents_read_only_their_track(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scope = lab(db, truth=TRUTH)
-    letters = _sent(monkeypatch, letters_module, letter_json())
+    # No role line: the academic letter has none (spec 158).
+    letters = _sent(monkeypatch, letters_module, letter_json(role_line=""))
     letters_module.generate_cover_letter(db, COMPANY, ROLE, jd_text=POSTING, scope=scope)
     claims = [candidate(CHECKOUT, CHECKOUT_EVIDENCE)]
     answers = _sent(
@@ -244,7 +245,11 @@ def test_academic_letters_pass_the_same_claims_checks(
     scope = lab(db, truth=TRUTH)
     sentence = "I ran the research group's data platform."
     claims = [candidate(sentence, "Ran the research group's data platform")]
-    _sent(monkeypatch, letters_module, letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims))
+    _sent(
+        monkeypatch,
+        letters_module,
+        letter_json(f"{CHECKOUT} {INVOICES} {sentence}", claims, role_line=""),
+    )
     with pytest.raises(ClaimCheckError) as refused:
         letters_module.generate_cover_letter(db, COMPANY, ROLE, jd_text=POSTING, scope=scope)
     assert any("unverified evidence" in violation for violation in refused.value.violations)

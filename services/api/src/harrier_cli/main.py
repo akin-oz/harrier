@@ -856,6 +856,9 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
                     flags=tuple(requirement_flags(jd_text or "", brief.employer_guidance)),
                 ),
                 kind=scope.track.kind,
+                # The draft's "Gaps" and "Facts used" sections (spec 158).
+                gaps=letter.gaps,
+                facts=letter.facts_used,
             )
         except NeedsInputError as needs:
             # The draft is written and only the operator can finish it. Its own
