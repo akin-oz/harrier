@@ -151,17 +151,20 @@ class Manifest:
 
 
 def pg_tool(name: str, environ: Mapping[str, str]) -> str:
-    """The path of a PostgreSQL client program: `HARRIER_PG_BIN` first, then
-    the packages' directories for the server's major version, then PATH."""
+    """The path of a PostgreSQL client program. `HARRIER_PG_BIN`, when set,
+    is the only place looked: a directory that lacks the program is refused,
+    never quietly replaced by another client. Unset, the packages'
+    directories for the server's major version come first, then PATH."""
     override = environ.get(BIN_VARIABLE, "").strip()
-    directories = [override] if override else []
-    directories += list(CLIENT_DIRECTORIES)
-    for directory in directories:
+    if override:
+        candidate = Path(override) / name
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+        raise HostedBackupRefused(f"{BIN_VARIABLE} names a directory with no {name}")
+    for directory in CLIENT_DIRECTORIES:
         candidate = Path(directory) / name
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return str(candidate)
-    if override:
-        raise HostedBackupRefused(f"{BIN_VARIABLE} names a directory with no {name}")
     found = shutil.which(name)
     if found is None:
         raise HostedBackupRefused(f"{name} was not found; install the PostgreSQL {PG_MAJOR} client")

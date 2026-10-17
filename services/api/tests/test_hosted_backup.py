@@ -522,7 +522,17 @@ def test_the_dump_command_prints_table_names_and_counts_only(
 # --- the tools ---
 
 
-def test_pg_tool_prefers_the_named_directory_and_names_a_missing_tool(tmp_path: Path) -> None:
+def test_pg_tool_prefers_the_named_directory_and_names_a_missing_tool(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`HARRIER_PG_BIN` is the only place looked when set. The packages'
+    directory below holds every program, as CI's runner does once the
+    PostgreSQL 17 client is installed, and still a named directory without
+    the program is refused rather than quietly replaced."""
+    elsewhere = stub_tools(tmp_path / "packages")
+    (elsewhere / "pg_basebackup").write_text("#!/bin/sh\n", encoding="utf-8")
+    (elsewhere / "pg_basebackup").chmod(0o755)
+    monkeypatch.setattr(hostedbackup, "CLIENT_DIRECTORIES", (str(elsewhere),))
     tools = stub_tools(tmp_path / "bin")
     assert pg_tool("pg_dump", {BIN_VARIABLE: str(tools)}) == str(tools / "pg_dump")
     with pytest.raises(HostedBackupRefused) as refused:
