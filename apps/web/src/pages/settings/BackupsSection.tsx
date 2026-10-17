@@ -40,6 +40,7 @@ export function BackupsSection() {
   const backups = useQuery({ queryKey: BACKUPS_KEY, queryFn: fetchBackups });
   const stream = useRunStream();
   const { run, lastLogLine, failed, active } = stream;
+  const finished = run !== null && TERMINAL_STATES.has(run.state) && lastLogLine !== null;
 
   useEffect(() => {
     if (run !== null && TERMINAL_STATES.has(run.state)) {
@@ -113,18 +114,20 @@ export function BackupsSection() {
           {startError.message}
         </p>
       )}
-      {run !== null && TERMINAL_STATES.has(run.state) && lastLogLine !== null && (
-        <p
-          role={failed ? "alert" : "status"}
-          className={failed ? "settings-refusal" : "settings-result"}
-        >
+      {finished && failed && (
+        <p role="alert" className="settings-refusal">
           {/* A backup that fails verification leaves no archive behind
               (spec 030), and the page says so rather than leaving the
               operator to infer it (spec 050). */}
-          {failed && run.kind === "backup" && "The backup failed and no archive was written. "}
+          {run.kind === "backup" && "The backup failed and no archive was written. "}
           {lastLogLine}
         </p>
       )}
+      {/* A success is told in a region that was already there, so a reader
+          hears it; an alert is announced as it mounts (spec 156). */}
+      <p role="status" className="settings-result">
+        {finished && !failed && lastLogLine}
+      </p>
       {backups.isPending && <p className="settings-muted">Listing the backups…</p>}
       {backups.isError && (
         <p role="alert" className="settings-error">

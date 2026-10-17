@@ -197,6 +197,28 @@ test("each listed archive can be verified by its name, and a failure is marked",
   expect((await screen.findByRole("alert")).textContent).toContain("is not a readable archive");
 });
 
+test("a finished backup is told in a status region that was already there", async () => {
+  stubApi(handler({ directory: "absent" }));
+  renderPage();
+  const user = userEvent.setup();
+
+  // The page's regions before the backup. A region inserted with its text
+  // may never be spoken (spec 156).
+  const take = await screen.findByRole("button", { name: "Take a backup" });
+  const before = screen.getAllByRole("status");
+  await user.click(take);
+  await waitFor(() => {
+    expect(streams.connections.length).toBeGreaterThan(0);
+  });
+  act(() => {
+    streams.last.emit({ type: "log_line", line: `${ARCHIVE} (0.1 MiB, verified)` });
+    streams.last.emit({ type: "state_change", state: "succeeded", exit_code: 0 });
+  });
+
+  const result = await screen.findByText(`${ARCHIVE} (0.1 MiB, verified)`);
+  expect(before.some((region) => region.contains(result))).toBe(true);
+});
+
 test("restore has no button", async () => {
   stubApi(handler({}));
   renderPage();
