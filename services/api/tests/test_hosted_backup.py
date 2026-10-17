@@ -424,7 +424,7 @@ def test_a_store_without_auth_identities_is_refused_before_any_dump(
 ) -> None:
     """The shim holds `auth.users` alone: a store that is not a Supabase
     project is refused by name, and pg_dump is never run."""
-    tools = fake_pg_tools(tmp_path / "bin", "#!/bin/sh\necho ran > ran.txt\nexit 0\n")
+    tools = fake_pg_tools(tmp_path / "bin", f"#!/bin/sh\necho ran > {tmp_path}/ran.txt\nexit 0\n")
     with (
         seeded_store(postgres_template, identities=False) as source,
         pytest.raises(HostedBackupRefused) as refused,
