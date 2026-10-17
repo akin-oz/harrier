@@ -41,7 +41,8 @@ entries of jobs the hosted account holds.
 
 Everything not stated here is spec 146's, unchanged: the input variables,
 the checks before writing, the key grammar, the size limit, `stat` before
-`put`, the size check after it, the never-overwrite rule, interruption and
+the upload (`create`, create-only, since spec 154; `put` before it), the
+size check after it, the never-overwrite rule, interruption and
 re-running.
 
 ### What it copies

@@ -308,7 +308,11 @@ def _copy_one(
     attached: frozenset[str],
     report: Callable[[str], None],
 ) -> None:
-    """Send one file that passed the skip rules, or leave it as it is."""
+    """Send one file that passed the skip rules, or leave it as it is.
+
+    The upload is create-only (spec 154): a hosted write that lands between
+    the `stat` and the upload answers "exists", and the object is then read
+    and compared as one found present is, never replaced."""
     family = file.family
     count = result.families[family]
     key = file.key
@@ -318,6 +322,27 @@ def _copy_one(
         hosted_bytes = patiently(lambda: hosted.read(key), report) if found is not None else None
     except FileStoreError as error:
         raise _stopped("check", family, error) from None
+    if hosted_bytes is None:
+        after = None
+        try:
+            created = patiently(lambda: hosted.create(key, data), report)
+            if created:
+                after = patiently(lambda: hosted.stat(key), report)
+            else:
+                hosted_bytes = patiently(lambda: hosted.read(key), report)
+        except FileStoreError as error:
+            raise _stopped("upload", family, error) from None
+        if created:
+            if after is None or after.size != len(data):
+                raise ArtifactImportStopped(
+                    f"upload {family}: the size read back differs from the local file; "
+                    "the object is left as Storage holds it"
+                )
+            count.copied += 1
+        elif hosted_bytes is None:
+            raise ArtifactImportStopped(
+                f"upload {family}: the hosted object changed during the run; run the command again"
+            )
     if hosted_bytes is not None:
         if hosted_bytes != data:
             if family == DESCRIPTIONS:
@@ -328,18 +353,6 @@ def _copy_one(
                 result.differs += 1
             return
         count.present += 1
-    else:
-        try:
-            patiently(lambda: hosted.put(key, data, atomic=True), report)
-            after = patiently(lambda: hosted.stat(key), report)
-        except FileStoreError as error:
-            raise _stopped("upload", family, error) from None
-        if after is None or after.size != len(data):
-            raise ArtifactImportStopped(
-                f"upload {family}: the size read back differs from the local file; "
-                "the object is left as Storage holds it"
-            )
-        count.copied += 1
     if family == DESCRIPTIONS:
         # Matched by URL before the copy; attachment counts the artifacts.
         return

@@ -420,7 +420,7 @@ def load_mapping(key: str) -> dict[str, Any] | None:
 # The private bucket of ADR-013 decision 6, created by the storage migration.
 BUCKET = "harrier-files"
 
-# The largest object a `put` or an `append` sends, in bytes. Supabase's
+# The largest object a `put`, an `append` or a `create` sends, in bytes. Supabase's
 # guidance for standard uploads, not a measurement of harrier's files; the
 # bucket carries the same limit (spec 107, "Size"). Spec 146's import reads
 # it from here.
@@ -443,6 +443,10 @@ REQUEST_TIMEOUT_SECONDS = 30.0
 # What an upload asks of caches: nothing kept, so a read right after an
 # overwrite is fresh (spec 107, Honest limitations, assumption 6).
 UPLOAD_CACHE_CONTROL = "no-cache"
+
+# What Storage means when a create-only upload finds an object there: HTTP
+# 409, or HTTP 400 with "409" in the body's `statusCode` (spec 154).
+CONFLICT = 409
 
 # How many entries one listing request asks for, and how many names one
 # delete request carries.
@@ -709,13 +713,34 @@ class SupabaseFileStore:
         # complete or not at all.
         self._upload("put", key, data)
 
+    def create(self, key: str, data: bytes) -> bool:
+        """Upload `data` to `key` only when no object is there (spec 154).
+        True when stored; False when Storage answered that the object
+        exists, which leaves it unchanged. Not on the `FileStore` protocol:
+        only the artifact import must never replace a hosted object."""
+        response = self._send_upload("create", key, data, upsert=False)
+        if response.status_code == 200:
+            return True
+        status = answered_status(response)
+        if status == CONFLICT:
+            return False
+        raise storage_error("create", family_of(key), status)
+
     def _upload(self, operation: str, key: str, data: bytes) -> None:
+        response = self._send_upload(operation, key, data, upsert=True)
+        if response.status_code == 200:
+            return
+        raise storage_error(operation, family_of(key), answered_status(response))
+
+    def _send_upload(
+        self, operation: str, key: str, data: bytes, *, upsert: bool
+    ) -> httpx.Response:
         name = self.object_name(key)
         family = family_of(key)
         content_type = content_type_for(operation, key)
         if len(data) > SIZE_LIMIT:
             raise FileTooLarge(f"{operation} {family}: the object is over {SIZE_LIMIT} bytes")
-        response = self._send(
+        return self._send(
             operation,
             family,
             "POST",
@@ -723,13 +748,10 @@ class SupabaseFileStore:
             content=data,
             headers={
                 "Content-Type": content_type,
-                "x-upsert": "true",
+                "x-upsert": "true" if upsert else "false",
                 "Cache-Control": UPLOAD_CACHE_CONTROL,
             },
         )
-        if response.status_code == 200:
-            return
-        raise storage_error(operation, family, answered_status(response))
 
     def append(self, key: str, text: str) -> None:
         """Read, add, upload the whole. Two appenders at once can lose one

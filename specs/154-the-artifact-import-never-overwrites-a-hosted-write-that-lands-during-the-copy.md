@@ -1,7 +1,7 @@
 ---
 spec: 154
 title: The artifact import never overwrites a hosted write that lands during the copy
-status: accepted
+status: shipped
 approved: yes
 milestone: M10
 depends: [107, 146, 152]
@@ -49,10 +49,10 @@ every such error as HTTP 400 with the real status in the body's
 routes send the status itself). The seam's `answered_status` already reads
 that body field, so it maps this answer to 409.
 
-`FakeStorage` in `services/api/tests/storage_support.py` models a
-non-upsert upload over an existing object, but as HTTP 409. Nothing sends
-one today, so the shape hosted Storage actually sends has never been
-exercised.
+Before this spec, `FakeStorage` in `services/api/tests/storage_support.py`
+modelled a non-upsert upload over an existing object, but as HTTP 409.
+Nothing sent one, so the shape hosted Storage actually sends had never
+been exercised.
 
 ## Scope
 
@@ -97,7 +97,7 @@ are unchanged.
 
 1. `stat(key)`. Present: `read(key)` and compare, as today.
 2. Absent: `create(key, data)`, under the same 429 waits as today
-   (`_patiently`, `RETRY_WAITS`).
+   (`patiently`, `RETRY_WAITS`).
    - `True`: `stat(key)` must report the local size, as today. Counted
      "copied".
    - `False`: something wrote the key since the `stat`. `read(key)` and
@@ -146,36 +146,38 @@ either way. Its docstring names the source and the date read.
 All run against `FakeStorage` and the CI Postgres service, with synthetic
 names and bytes only, like spec 146's.
 
-- [ ] `create` on an absent key stores the bytes with the content type
+- [x] `create` on an absent key stores the bytes with the content type
       `put` would send, returns `True`, and its request carries
-      `x-upsert: false` (planned test_create_stores_a_new_object_without_upsert).
-- [ ] `create` on a key the fake holds returns `False` and leaves the
-      object's bytes, in both the HTTP 400 and the HTTP 409 shape (planned
-      test_create_leaves_an_existing_object_in_both_answer_shapes).
-- [ ] `create` raises what `put` raises for 403, 413, 503, another 400, an
+      `x-upsert: false` (`services/api/tests/test_hosted_files.py::test_create_stores_a_new_object_without_upsert`).
+- [x] `create` on a key the fake holds returns `False` and leaves the
+      object's bytes, in both the HTTP 400 and the HTTP 409 shape (`services/api/tests/test_hosted_files.py::test_create_leaves_an_existing_object_in_both_answer_shapes`).
+- [x] `create` raises what `put` raises for 403, 413, 503, another 400, an
       oversized body and an extension outside the five, naming `create` and
-      the family and never the key (planned test_create_fails_as_put_fails).
-- [ ] With the fake's upload hook placing other bytes under the key just
+      the family and never the key (`services/api/tests/test_hosted_files.py::test_create_fails_as_put_fails`).
+- [x] With the fake's upload hook placing other bytes under the key just
       before the import's upload, an artifact keeps the hosted bytes, is
       counted "differs from the hosted object", and the verdict is
-      `incomplete` (planned test_a_hosted_write_during_the_copy_is_never_overwritten).
-- [ ] The same hook placing the local bytes counts the file "already
-      there" and the verdict is `imported` (planned
-      test_a_hosted_write_of_the_same_bytes_during_the_copy_is_already_there).
-- [ ] The same hook on a description keeps the hosted bytes and counts it
-      `kept, newer on hosted`, and the verdict is `imported` (planned
-      test_a_hosted_description_written_during_the_copy_is_kept).
-- [ ] An object that answers "exists" to the create and is absent at the
+      `incomplete` (`services/api/tests/test_import_artifacts.py::test_a_hosted_write_during_the_copy_is_never_overwritten`).
+- [x] The same hook placing the local bytes counts the file "already
+      there" and the verdict is `imported` (`services/api/tests/test_import_artifacts.py::test_a_hosted_write_of_the_same_bytes_during_the_copy_is_already_there`).
+- [x] The same hook on a description keeps the hosted bytes and counts it
+      `kept, newer on hosted`, and the verdict is `imported` (`services/api/tests/test_import_artifacts.py::test_a_hosted_description_written_during_the_copy_is_kept`).
+- [x] An object that answers "exists" to the create and is absent at the
       read stops the run with exit 1 and the line in Failure modes, naming
-      no key (planned test_an_object_gone_after_a_conflict_stops_the_run).
-- [ ] No request a full import sends carries `x-upsert: true` (planned
-      test_import_artifacts_never_upserts).
-- [ ] A 429 to the create waits and asks again, and the file is then copied
+      no key (`services/api/tests/test_import_artifacts.py::test_an_object_gone_after_a_conflict_stops_the_run`).
+- [x] No request a full import sends carries `x-upsert: true` (`services/api/tests/test_import_artifacts.py::test_import_artifacts_never_upserts`).
+- [x] A 429 to the create waits and asks again, and the file is then copied
       (an added case in
       `services/api/tests/test_import_artifacts.py::test_import_artifacts_waits_out_a_rate_limit`).
-- [ ] `put` still sends `x-upsert: true` and replaces an existing object
-      (planned test_put_still_replaces_an_existing_object).
-- [ ] Spec 146's existing import tests pass unchanged, among them
+- [x] A hosted write of another size that lands between the create and
+      the size check stops the run with spec 146's size message, and the
+      hosted object is left as Storage holds it. Added from the local review
+      of PR #395: the Failure modes row rests on that check, which had no
+      test
+      (`services/api/tests/test_import_artifacts.py::test_a_hosted_write_after_the_create_stops_the_run_at_the_size_check`).
+- [x] `put` still sends `x-upsert: true` and replaces an existing object
+      (`services/api/tests/test_hosted_files.py::test_put_still_replaces_an_existing_object`).
+- [x] Spec 146's existing import tests pass unchanged, among them
       `services/api/tests/test_import_artifacts.py::test_import_artifacts_never_overwrites_a_different_object`
       and `services/api/tests/test_import_artifacts.py::test_import_artifacts_is_idempotent`.
 
@@ -183,7 +185,7 @@ names and bytes only, like spec 146's.
 
 - The finding: CodeRabbit on PR #391 (spec 152), confirmed and deferred
   there as a seam level gap.
-- The rule it breaks: spec 146, "The copy" step 3 and Open decision 7.
+- The rule it breaks: spec 146, "What it copies" step 3 and Open decision 7.
 - The limitation it closes: spec 146, Honest limitations, "No conditional
   write".
 - The code: `_copy_one` in `services/api/src/harrier/artifactimport.py`;
@@ -195,7 +197,7 @@ names and bytes only, like spec 146's.
   `src/storage/uploader.ts` (the non-upsert check),
   `src/internal/errors/storage-error.ts` and `src/http/error-handler.ts`
   (HTTP 400 with the status in the body), read 2026-10-17.
-- The fake as it stands: `FakeStorage.handler` in
+- The fake before this spec: `FakeStorage.handler` in
   `services/api/tests/storage_support.py`.
 
 ### Who else calls `put`
@@ -272,14 +274,21 @@ the protocol, and an object gone after an "exists" answer stops the run.
 
 ## Changes to approved specs
 
-None is written into those specs here. Each is an amendment Akin approves
-with this spec, written into the spec in the implementation change.
+Each is an amendment Akin approved with this spec. Both are written into
+their specs by the implementation change: spec 107's "Amendment
+(2026-10-17): spec 154's create-only upload" and spec 146's "Amendment
+(2026-10-17): the upload is create-only, by spec 154".
+
+- **Spec 152, "Behavior" (found during implementation):** its list of what
+  stays spec 146's named "`stat` before `put`". The import uploads with
+  `create` now, so that line names `create` and this spec. Spec 154
+  depends on 152 but did not list it here.
 
 - **Spec 107, "The seam", operation table and "Uploads":** `SupabaseFileStore`
   gains `create`, a create-only upload outside the protocol. Uploads set
   upsert except `create`'s, which sets `x-upsert: false`. Its fake's
   description gains the conflict answer.
-- **Spec 146, "The copy" step 3:** the absent branch uploads with `create`;
+- **Spec 146, "What it copies" step 3:** the absent branch uploads with `create`;
   an "exists" answer is read and compared as a present object is. Its
   "Two copies of the command at once" failure row is replaced by this
   spec's. Its honest limitation "No conditional write" is removed.

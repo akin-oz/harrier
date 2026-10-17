@@ -19,7 +19,15 @@ calls the seam makes, in the shapes Storage's published API gives them, read
 
 An absent object is answered 404 with Storage's `not_found` body, or, with
 `legacy_not_found`, 400 with `statusCode` "404", as older Storage versions
-answered. Every request is recorded. Every name is synthetic.
+answered.
+
+An upload without `x-upsert: true` to a name already held is answered 400
+with `statusCode` "409", `error` "Duplicate" and the message "The resource
+already exists", or, with `conflict_as_409`, the same body under HTTP 409
+(spec 154). That is the shape read 2026-10-17 from `supabase/storage`:
+`KeyAlreadyExists` in `src/internal/errors/codes.ts`, sent as HTTP 400 with
+the status in the body by `src/http/error-handler.ts`. The object is left
+unchanged. Every request is recorded. Every name is synthetic.
 """
 
 from __future__ import annotations
@@ -58,6 +66,7 @@ class FakeStorage:
     failures: dict[str, list[int]] = field(default_factory=dict[str, list[int]])
     raising: dict[str, Exception] = field(default_factory=dict[str, Exception])
     legacy_not_found: bool = False
+    conflict_as_409: bool = False
     before: dict[str, Callable[[httpx.Request], None]] = field(
         default_factory=dict[str, Callable[[httpx.Request], None]]
     )
@@ -106,6 +115,14 @@ class FakeStorage:
         body = {"statusCode": "404", "error": "not_found", "message": "Object not found"}
         return httpx.Response(400 if self.legacy_not_found else 404, json=body)
 
+    def _conflict(self) -> httpx.Response:
+        body = {
+            "statusCode": "409",
+            "error": "Duplicate",
+            "message": "The resource already exists",
+        }
+        return httpx.Response(409 if self.conflict_as_409 else 400, json=body)
+
     def _now(self) -> str:
         self._tick += 1
         moment = datetime(2026, 10, 16, 9, 0, tzinfo=UTC) + timedelta(seconds=self._tick)
@@ -127,7 +144,7 @@ class FakeStorage:
             return httpx.Response(pending.pop(0), json={"statusCode": "500", "error": "failed"})
         if operation == "upload":
             if request.headers.get("x-upsert") != "true" and name in self.objects:
-                return httpx.Response(409, json={"statusCode": "409", "error": "Duplicate"})
+                return self._conflict()
             self._store(
                 name,
                 request.content,
