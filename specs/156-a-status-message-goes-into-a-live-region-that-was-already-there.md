@@ -157,7 +157,8 @@ same place, at the same moment. Only the element structure changes.
 Each test renders the owner, finds the region before the action, takes the
 action, and checks that the message is in that same element (`toBe` on the
 node), or, where a view holds several regions, in one of the regions that
-were there before the action. Each one fails with the components as they
+were there before the action, with no region holding the message mounted
+since (a nested region kept inside the new one would be that insertion). Each one fails with the components as they
 were before this change; the other five tests named in the last criterion
 fail too.
 
