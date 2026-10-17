@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
@@ -176,10 +176,29 @@ test("settings schedule section saves the chosen jobs and zone", async () => {
       body: { value: { timezone: "Europe/Berlin", jobs: ["discovery"] } },
     },
   ]);
-  const status = await within(section).findByRole("status");
-  expect(status.textContent).toContain("Saved. Changes take effect from the next slot.");
+  const status = within(section).getByRole("status");
+  await waitFor(() => {
+    expect(status.textContent).toContain("Saved. Changes take effect from the next slot.");
+  });
   // Read again after the save: 18:00 UTC is 20:00 in Berlin in October.
   expect(await within(status).findByText("discovery: next slot 16 Oct, 20:00")).toBeDefined();
+});
+
+test("the saved note lands in a status region that was already there", async () => {
+  renderPage();
+  const section = await form();
+  const user = userEvent.setup();
+
+  // A region inserted with its text may never be spoken (spec 156).
+  const region = within(section).getByRole("status");
+  expect(region.textContent).toBe("");
+  await user.click(within(section).getByRole("checkbox", { name: "discovery" }));
+  await user.click(within(section).getByRole("button", { name: "Save schedule" }));
+
+  await waitFor(() => {
+    expect(region.textContent).toContain("Saved. Changes take effect from the next slot.");
+  });
+  expect(within(section).getByRole("status")).toBe(region);
 });
 
 test("settings schedule section names an unscheduled and a paused owner", async () => {
@@ -216,7 +235,7 @@ test("settings schedule section shows the store's refusal", async () => {
   expect(
     within(section).getByRole<HTMLInputElement>("checkbox", { name: "academic-discovery" }).checked,
   ).toBe(true);
-  expect(within(section).queryByRole("status")).toBeNull();
+  expect(within(section).getByRole("status").textContent).toBe("");
 });
 
 test("settings schedule section notes a job's missing credential", async () => {

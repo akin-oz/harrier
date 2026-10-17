@@ -133,12 +133,14 @@ export function InboxPage() {
         </p>
       )}
 
-      {disconnected && (
-        <p role="status" className="inbox-page__muted">
-          Lost the log stream. The watch may still be going; its state above is refreshed from the
-          server.
-        </p>
-      )}
+      <p role="status" className="inbox-page__muted">
+        {disconnected && (
+          <>
+            Lost the log stream. The watch may still be going; its state above is refreshed from the
+            server.
+          </>
+        )}
+      </p>
 
       {lines.length > 0 && (
         <div className="inbox-page__log">

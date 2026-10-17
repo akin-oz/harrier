@@ -106,11 +106,9 @@ export function DigestSection() {
           )}
         </div>
       )}
-      {outcome !== null && (
-        <p role="status" className="ops-outcome">
-          {outcome}
-        </p>
-      )}
+      <p role="status" className="ops-outcome">
+        {outcome}
+      </p>
       <RunOutput stream={stream} label="Digest" failureLine={false} />
     </section>
   );

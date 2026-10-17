@@ -169,6 +169,38 @@ test("a line no importer handles is named in the server's words and does not blo
   });
 });
 
+test("unrouted lines land in a status region that was already there", async () => {
+  stub((call) => {
+    if (call.path === "/api/settings/feeds/routing") {
+      const urls = (call.body as { urls: string[] }).urls;
+      return {
+        status: 200,
+        body: {
+          unrouted: urls
+            .filter((url) => url.includes("careers.example"))
+            .map((url) => ({ url, message: `no importer handles ${url}` })),
+        },
+      };
+    }
+    return undefined;
+  });
+  renderEditor(entry());
+  const user = userEvent.setup();
+
+  // The editor's regions, before any line is unrouted. A region inserted with
+  // its text may never be spoken (spec 156).
+  const before = screen.getAllByRole("status");
+  await user.click(screen.getByLabelText(/One URL per line/));
+  await user.type(
+    screen.getByLabelText(/One URL per line/),
+    "{Enter}https://careers.example.com/jobs",
+  );
+  await user.tab();
+
+  const line = await screen.findByText("no importer handles https://careers.example.com/jobs");
+  expect(before.some((region) => region.contains(line))).toBe(true);
+});
+
 test("the searches editor asks nothing about importers", async () => {
   const calls = stub(() => undefined);
   renderEditor(entry({ kind: "linkedin_searches", value: ["https://example.org/search"] }));

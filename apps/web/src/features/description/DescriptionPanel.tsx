@@ -125,49 +125,50 @@ export function DescriptionPanel({ jobId }: { jobId: number }) {
       )}
 
       {stored.data.stored && draft === null && (
-        <>
-          <div
-            role="group"
-            className={
-              showAll
-                ? "description-panel__text"
-                : "description-panel__text description-panel__text--collapsed"
-            }
-            aria-label="Stored description"
+        <div
+          role="group"
+          className={
+            showAll
+              ? "description-panel__text"
+              : "description-panel__text description-panel__text--collapsed"
+          }
+          aria-label="Stored description"
+        >
+          {stored.data.text}
+        </div>
+      )}
+      {/* Outside the stored-text branch, which mounts with the save that sets
+          the note: the region has to be here first to be heard (spec 156). */}
+      <p role="status" className="description-panel__note">
+        {notice}
+      </p>
+
+      {stored.data.stored && draft === null && (
+        <div className="description-panel__actions">
+          <button
+            type="button"
+            aria-expanded={showAll}
+            onClick={() => {
+              setShowAll(!showAll);
+            }}
           >
-            {stored.data.text}
-          </div>
-          {notice !== null && (
-            <p role="status" className="description-panel__note">
-              {notice}
-            </p>
-          )}
-          <div className="description-panel__actions">
-            <button
-              type="button"
-              aria-expanded={showAll}
-              onClick={() => {
-                setShowAll(!showAll);
-              }}
-            >
-              {showAll ? "Show less" : "Show all"}
-            </button>
-            <button
-              ref={replace}
-              type="button"
-              onClick={() => {
-                setDraft(stored.data.text);
-                setNotice(null);
-                // A refusal from an earlier fetch is not about this edit.
-                save.reset();
-                fetchFromPosting.reset();
-                setFocusTarget("box");
-              }}
-            >
-              Replace
-            </button>
-          </div>
-        </>
+            {showAll ? "Show less" : "Show all"}
+          </button>
+          <button
+            ref={replace}
+            type="button"
+            onClick={() => {
+              setDraft(stored.data.text);
+              setNotice(null);
+              // A refusal from an earlier fetch is not about this edit.
+              save.reset();
+              fetchFromPosting.reset();
+              setFocusTarget("box");
+            }}
+          >
+            Replace
+          </button>
+        </div>
       )}
 
       {editing && (

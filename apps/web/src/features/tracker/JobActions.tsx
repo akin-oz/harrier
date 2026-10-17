@@ -624,11 +624,15 @@ export function JobActions({ job, track, onApply }: Props) {
         </div>
       )}
 
-      {failure !== null && (
-        <p className="job-actions__failure" role="status" ref={failureRef} tabIndex={-1}>
-          {failure}
-        </p>
-      )}
+      {/* The region is always here, so a reader hears the failure when it
+          arrives (spec 156). */}
+      <div role="status">
+        {failure !== null && (
+          <p className="job-actions__failure" ref={failureRef} tabIndex={-1}>
+            {failure}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

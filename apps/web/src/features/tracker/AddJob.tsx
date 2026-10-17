@@ -151,11 +151,9 @@ export function AddJob({ track }: { track: Track }) {
               Close
             </button>
           </div>
-          {outcome !== null && (
-            <p className="add-job__outcome" role="status">
-              {outcome}
-            </p>
-          )}
+          <p className="add-job__outcome" role="status">
+            {outcome}
+          </p>
         </form>
       )}
     </div>

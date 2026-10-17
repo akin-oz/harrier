@@ -60,6 +60,30 @@ async function askForCode(user: ReturnType<typeof userEvent.setup>): Promise<voi
   await user.click(screen.getByRole("button", { name: "Send a sign-in code" }));
 }
 
+// The form's status region is always there (spec 156), so a finder returns
+// it at once, empty. This waits for the words.
+async function message(): Promise<string | null> {
+  await waitFor(() => {
+    expect(screen.getByRole("status").textContent).not.toBe("");
+  });
+  return screen.getByRole("status").textContent;
+}
+
+test("the sign-in message lands in a status region that was already there", async () => {
+  const user = userEvent.setup();
+  render(<SignInForm />);
+
+  // A region inserted with its text may never be spoken (spec 156).
+  const region = screen.getByRole("status");
+  expect(region.textContent).toBe("");
+  await askForCode(user);
+
+  await waitFor(() => {
+    expect(region.textContent).toBe(CODE_SENT);
+  });
+  expect(screen.getByRole("status")).toBe(region);
+});
+
 test("the code request never says whether an account exists", async () => {
   const user = userEvent.setup();
 
@@ -72,14 +96,14 @@ test("the code request never says whether an account exists", async () => {
   };
   const unknown = render(<SignInForm />);
   await askForCode(user);
-  const forUnknown = (await screen.findByRole("status")).textContent;
+  const forUnknown = await message();
   unknown.unmount();
 
   // A known address.
   fake.otpError = null;
   render(<SignInForm />);
   await askForCode(user);
-  const forKnown = (await screen.findByRole("status")).textContent;
+  const forKnown = await message();
 
   expect(forUnknown).toBe(CODE_SENT);
   expect(forKnown).toBe(CODE_SENT);
@@ -98,7 +122,7 @@ test("a rate limit and a network failure each say so", async () => {
   };
   const limited = render(<SignInForm />);
   await askForCode(user);
-  expect((await screen.findByRole("status")).textContent).toBe(RATE_LIMITED);
+  expect(await message()).toBe(RATE_LIMITED);
   // Still on the address step: the person can ask again later.
   expect(screen.getByLabelText("Email address")).toBeDefined();
   limited.unmount();
@@ -107,7 +131,7 @@ test("a rate limit and a network failure each say so", async () => {
   fake.otpError = UNREACHABLE_ERROR;
   render(<SignInForm />);
   await askForCode(user);
-  expect((await screen.findByRole("status")).textContent).toBe(UNREACHABLE);
+  expect(await message()).toBe(UNREACHABLE);
 });
 
 test("a code check that gets no answer says so", async () => {

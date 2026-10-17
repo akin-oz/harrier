@@ -137,7 +137,9 @@ export function ScheduleForm({
           {problem}
         </p>
       )}
-      {savedOnce && <Saved schedule={schedule} />}
+      {/* The region is here before the first save, so the answer is announced
+          when it arrives (spec 156). */}
+      <div role="status">{savedOnce && <Saved schedule={schedule} />}</div>
     </form>
   );
 }
@@ -164,11 +166,11 @@ function ScheduleState({ schedule }: { schedule: Schedule }) {
 }
 
 /** The save's answer, and each chosen job's next slot once the page has
- * read the schedule again. */
+ * read the schedule again. It renders into the form's status region. */
 function Saved({ schedule }: { schedule: Schedule }) {
   const zone = schedule.timezone;
   return (
-    <div role="status" className="schedule-form__state">
+    <div className="schedule-form__state">
       <p>Saved. Changes take effect from the next slot.</p>
       {zone !== null && schedule.jobs.length > 0 && (
         <ul className="schedule-form__next">

@@ -290,6 +290,26 @@ test("a gate's refusal on a failed run is shown, not swallowed", async () => {
   expect(alerts.some((node) => node.textContent.includes("unverified achievement"))).toBe(true);
 });
 
+test("a lost stream is told in a status region that was already there", async () => {
+  stubApi({});
+  const user = userEvent.setup();
+  renderPage();
+
+  // The page's regions before the run starts. A region inserted with its
+  // text may never be spoken (spec 156).
+  const before = screen.getAllByRole("status");
+  await user.click(screen.getByRole("button", { name: "Run tailoring" }));
+  await waitFor(() => {
+    expect(streams.connections.length).toBeGreaterThan(0);
+  });
+  act(() => {
+    streams.last.fail();
+  });
+
+  const notice = await screen.findByText(/^Lost the log stream/);
+  expect(before.some((region) => region.contains(notice))).toBe(true);
+});
+
 // --- artifacts ---------------------------------------------------------------
 
 test("an absent artifact is listed with the operation that would produce it", async () => {

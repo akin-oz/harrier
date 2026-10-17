@@ -115,6 +115,23 @@ test("saving sends the whole brief in one request, keeping what it does not edit
   expect(await screen.findByText("Brief saved.")).toBeTruthy();
 });
 
+test("the saved note lands in a status region that was already there", async () => {
+  stubApi({ stored: STORED });
+  const user = userEvent.setup();
+  renderPanel();
+
+  await screen.findByLabelText("Letter words");
+  // A region inserted with its text may never be spoken (spec 156).
+  const region = screen.getByRole("status");
+  expect(region.textContent).toBe("");
+  await user.click(screen.getByRole("button", { name: "Save the brief" }));
+
+  await waitFor(() => {
+    expect(region.textContent).toBe("Brief saved.");
+  });
+  expect(screen.getByRole("status")).toBe(region);
+});
+
 test("a refusal is shown in the store's words and the input is kept", async () => {
   stubApi({
     put: { status: 400, body: { detail: "letter.max_words must be a positive integer" } },

@@ -20,9 +20,6 @@
   font-size: 13px;
   color: var(--color-text);
 }
-.tracks-page__notice:empty {
-  display: none;
-}
 .tracks-page__notice:focus-visible {
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;

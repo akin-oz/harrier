@@ -233,6 +233,27 @@ test("a failed watch shows the reason the process printed", async () => {
   expect(alerts.some((node) => node.textContent.includes("harrier gmail-oauth"))).toBe(true);
 });
 
+test("a lost stream is told in a status region that was already there", async () => {
+  stubApi({ events: [] });
+  const user = userEvent.setup();
+  renderPage();
+
+  // The page's regions before the watch starts. A region inserted with its
+  // text may never be spoken (spec 156).
+  const run = await screen.findByRole("button", { name: "Run the watch" });
+  const before = screen.getAllByRole("status");
+  await user.click(run);
+  await waitFor(() => {
+    expect(streams.connections.length).toBeGreaterThan(0);
+  });
+  act(() => {
+    streams.last.fail();
+  });
+
+  const notice = await screen.findByText(/^Lost the log stream/);
+  expect(before.some((region) => region.contains(notice))).toBe(true);
+});
+
 // --- the token boundary ------------------------------------------------------
 
 test("reading the archive carries no token, unlike the artifact and contact reads", async () => {
