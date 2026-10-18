@@ -145,33 +145,35 @@ letter block does not change, so the academic prompt does not change.
 
 ## Acceptance criteria
 
-- [ ] With no entity in the evidence, each of "my own GmbH", "my
+- [x] With no entity in the evidence, each of "my own GmbH", "my
   Exampleland GmbH", "my" and "GmbH" split by a line break, "my  GmbH"
   with two spaces, "our GmbH", "my sp. z o. o." and "my B.V." is refused
   by L10 in the full version, and "our GmbH" in the short version
-  (planned test_an_owner_word_before_an_entity_type_is_refused).
-- [ ] "my GmbH" is refused with each of these evidence lines: "My partner
+  (`services/api/tests/test_letter_lint.py::test_an_owner_word_before_an_entity_type_is_refused`).
+- [x] "my GmbH" is refused with each of these evidence lines: "My partner
   owns a GmbH registered in Exampleland.", "My boss's GmbH is registered
   in Exampleland.", "The founder of Acme GmbH, registered in Germany,
   hired me.", "My GmbH will be registered in Exampleland.", "My GmbH was
   registered and deregistered.", "Owner of Example GmbH, registered in
   Exampleland." and "My GmbH is registered in Exampleland."
-  (planned test_the_evidence_never_permits_my_entity).
-- [ ] "an Estonian OÜ", "a GmbH", "Example GmbH", "my work at Example
+  (`services/api/tests/test_letter_lint.py::test_the_evidence_never_permits_my_entity`).
+- [x] "an Estonian OÜ", "a GmbH", "Example GmbH", "my work at Example
   GmbH", "my Ltda" and "That was my job. GmbH registration took a week."
-  pass L10 (planned test_an_article_or_a_name_passes).
-- [ ] The message for "my\nown  GmbH" is `calls a legal entity 'my own
+  pass L10 (`services/api/tests/test_letter_lint.py::test_an_article_or_a_name_passes`).
+- [x] The message for "my\nown  GmbH" is `calls a legal entity 'my own
   GmbH': write "a" or "an" before the entity type`
-  (planned test_an_owner_word_before_an_entity_type_is_refused).
-- [ ] `test_an_unregistered_entity_is_not_mine`, which spec 158 cites,
+  (`services/api/tests/test_letter_lint.py::test_an_owner_word_before_an_entity_type_is_refused`).
+- [x] `test_an_unregistered_entity_is_not_mine`, which spec 158 cites,
   keeps its name and checks that "my GmbH" is refused whether or not the
-  evidence states a registered GmbH, and that "a GmbH" passes.
-- [ ] Each test above fails against `letterlint.py` at `b1250ad`.
-- [ ] The industry and focused letter prompts carry the new entity line;
+  evidence states a registered GmbH, and that "a GmbH" passes
+  (`services/api/tests/test_letter_lint.py::test_an_unregistered_entity_is_not_mine`).
+- [x] Each test above that refuses fails against `letterlint.py` at
+  `b1250ad` (amendment 2).
+- [x] The industry and focused letter prompts carry the new entity line;
   the industry letter pin in `INDUSTRY_PROMPT_SHA256` changes and the
   shared letter block's pin does not
   (`services/api/tests/test_academic_documents.py::test_both_kinds_share_every_truth_rule`).
-- [ ] `letterlint.py` no longer defines `_owned`, `_registered`,
+- [x] `letterlint.py` no longer defines `_owned`, `_registered`,
   `_OWNERSHIP_CUE`, `_SOMEONE_ELSES` or `_NEGATED`. Checked by reading the
   diff.
 
@@ -197,6 +199,39 @@ letter block does not change, so the academic prompt does not change.
 3. **"SAS" is also a software product.** "my SAS models" is refused. The
    spec keeps SAS, since it is in spec 158's list. Dropping it would let
    "my SAS" through for the French company form.
+
+## Decisions taken (2026-10-18)
+
+Akin approved the spec as written, which settled the three open decisions
+above as the spec states them: two words between, no "OU" spelling, and
+SAS kept.
+
+## Amendment (2026-10-18, implementation)
+
+The build found these places where the spec was wrong or silent.
+
+1. **A dot after the last letter group is not part of the match.** It may
+   be the sentence's full stop: "through my GmbH." would otherwise report
+   `'my GmbH.'`. So "my B.V." reports `'my B.V'` and "my sp. z o. o."
+   reports `'my sp. z o. o'`. A dot between two groups is still matched
+   (`ENTITY_TYPES` and `_OWNED_ENTITY` in
+   `services/api/src/harrier/apply/letterlint.py`).
+2. **A test of what passes cannot fail against the old rule.** The old L10
+   was more lenient, so
+   `services/api/tests/test_letter_lint.py::test_an_article_or_a_name_passes`
+   passed at `b1250ad` too. It guards the new rule against refusing too
+   much. The three refusal tests and the short version test failed at
+   `b1250ad`.
+3. **A file the Scope did not name.**
+   `services/api/tests/test_letter_structure.py::test_a_disclaimer_line_does_not_register_an_entity`
+   asserts L10's message, which changed. Its premise holds: a disclaimer
+   line registers nothing, as no line does now.
+4. **Two tests of the removed heuristic are gone.** One checked that a
+   negated registration line registers nothing, the other that an
+   employer's registered GmbH is not the candidate's. Both tested how the
+   evidence was read, and no spec cited them. Their evidence lines that could
+   let "my GmbH" through are in
+   `services/api/tests/test_letter_lint.py::test_the_evidence_never_permits_my_entity`.
 
 ## Out of scope
 

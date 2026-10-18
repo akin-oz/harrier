@@ -135,77 +135,75 @@ def test_year_count_is_capped_by_the_record() -> None:
     assert lint(letter(proof=f"{PROOF} That is 5+ years of frontend work."), with_years) == []
 
 
+def entity_message(match: str) -> str:
+    return f'calls a legal entity \'{match}\': write "a" or "an" before the entity type'
+
+
 def test_an_unregistered_entity_is_not_mine() -> None:
+    """Spec 159: "my GmbH" is refused whether or not the evidence states a
+    registered GmbH, and "a GmbH" passes."""
     mine = letter(proof=f"{PROOF} I contract through my GmbH.")
-    assert lint(mine) == ["calls an entity the evidence does not show registered 'my GmbH'"]
+    assert lint(mine) == [entity_message("my GmbH")]
     assert lint(letter(proof=f"{PROOF} I can contract through a GmbH.")) == []
-    pending = LintContext(
-        evidence=f"{EVIDENCE}A GmbH is not registered yet.\n",
-        posting=POSTING,
-        company=COMPANY,
-        role=ROLE,
-    )
-    assert lint(mine, pending) != []
-    # A whole word: "unregistered" is not registration (review of PR #405).
-    unregistered = LintContext(
-        evidence=f"{EVIDENCE}GmbH unregistered, filing pending.\n",
-        posting=POSTING,
-        company=COMPANY,
-        role=ROLE,
-    )
-    assert lint(mine, unregistered) == [
-        "calls an entity the evidence does not show registered 'my GmbH'"
-    ]
     registered = LintContext(
         evidence=f"{EVIDENCE}Contracts through a GmbH registered in Exampleland.\n",
         posting=POSTING,
         company=COMPANY,
         role=ROLE,
     )
-    assert lint(mine, registered) == []
+    assert lint(mine, registered) == [entity_message("my GmbH")]
 
 
-def test_a_negated_registration_is_not_registration() -> None:
-    """ "never registered", "isn't registered" and "not yet" say the
-    opposite (review of #405)."""
+def test_an_owner_word_before_an_entity_type_is_refused() -> None:
+    """Spec 159: "my" or "our", up to two words, any whitespace, then a type
+    in any dotted or spaced spelling."""
+    for phrase, match in (
+        ("my own GmbH", "my own GmbH"),
+        ("my Exampleland GmbH", "my Exampleland GmbH"),
+        ("my\nGmbH", "my GmbH"),
+        ("my  GmbH", "my GmbH"),
+        ("our GmbH", "our GmbH"),
+        ("my sp. z o. o.", "my sp. z o. o"),
+        ("my B.V.", "my B.V"),
+        ("my\nown  GmbH", "my own GmbH"),
+    ):
+        assert lint(letter(proof=f"{PROOF} I contract through {phrase} now.")) == [
+            entity_message(match)
+        ], phrase
+    assert lint(letter(), short="I contract through our GmbH.") == [entity_message("our GmbH")]
+
+
+def test_the_evidence_never_permits_my_entity() -> None:
+    """Spec 159: L10 does not read the evidence, so no line lets "my GmbH"
+    through, not even one that states the candidate's own is registered."""
     mine = letter(proof=f"{PROOF} I contract through my GmbH.")
     for line in (
-        "A GmbH is planned, never registered.",
-        "The GmbH isn't registered.",
-        "No GmbH is registered yet.",
+        "My partner owns a GmbH registered in Exampleland.",
+        "My boss's GmbH is registered in Exampleland.",
+        "The founder of Acme GmbH, registered in Germany, hired me.",
+        "My GmbH will be registered in Exampleland.",
+        "My GmbH was registered and deregistered.",
+        "Owner of Example GmbH, registered in Exampleland.",
+        "My GmbH is registered in Exampleland.",
     ):
         context = LintContext(
             evidence=f"{EVIDENCE}{line}\n", posting=POSTING, company=COMPANY, role=ROLE
         )
-        assert lint(mine, context) == [
-            "calls an entity the evidence does not show registered 'my GmbH'"
-        ], line
+        assert lint(mine, context) == [entity_message("my GmbH")], line
 
 
-def test_an_employers_registered_entity_is_not_mine() -> None:
-    """A registered GmbH the candidate worked at is not the candidate's own
-    (review of #405)."""
-    mine = letter(proof=f"{PROOF} I contract through my GmbH.")
-    for line in (
-        "Worked at Acme GmbH, registered in Germany.",
-        "My employer Acme GmbH, registered in Germany.",
-        "My client owns a GmbH registered in Germany.",
+def test_an_article_or_a_name_passes() -> None:
+    """Spec 159: an article, a company name, three words between, a longer
+    word and a sentence end are not an owner word before a type."""
+    for sentence in (
+        "I can contract through an Estonian OÜ.",
+        "I can contract through a GmbH.",
+        "Example GmbH ships payment tools.",
+        "I led my work at Example GmbH alone.",
+        "I set up my Ltda contract.",
+        "That was my job. GmbH registration took a week.",
     ):
-        employer = LintContext(
-            evidence=f"{EVIDENCE}{line}\n", posting=POSTING, company=COMPANY, role=ROLE
-        )
-        assert lint(mine, employer) == [
-            "calls an entity the evidence does not show registered 'my GmbH'"
-        ], line
-    for line in (
-        "Contracts through a GmbH registered in Exampleland.",
-        "Director of Example GmbH, registered in Exampleland.",
-        "My GmbH is registered in Exampleland.",
-    ):
-        own = LintContext(
-            evidence=f"{EVIDENCE}{line}\n", posting=POSTING, company=COMPANY, role=ROLE
-        )
-        assert lint(mine, own) == [], line
+        assert lint(letter(proof=f"{PROOF} {sentence}")) == [], sentence
 
 
 def test_the_short_version_is_linted_too() -> None:
@@ -214,9 +212,7 @@ def test_the_short_version_is_linted_too() -> None:
         "counts experience in decades"
     ]
     assert lint(letter(), short="I think it fits.") == ["hedging: I think"]
-    assert lint(letter(), short="I contract through my GmbH.") == [
-        "calls an entity the evidence does not show registered 'my GmbH'"
-    ]
+    assert lint(letter(), short="I contract through my GmbH.") == [entity_message("my GmbH")]
 
 
 def test_a_run_the_evidence_also_has_is_not_a_restatement() -> None:
