@@ -1,8 +1,8 @@
 ---
 spec: 159
 title: A cover letter never calls a legal entity "my" or "our"
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [158]
 ---
