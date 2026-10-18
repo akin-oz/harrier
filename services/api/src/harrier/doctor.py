@@ -24,6 +24,7 @@ from harrier.db import (
     EXIT_DATABASE_OWNED,
     DatabaseOwnedByContainer,
     DatabaseOwnershipUnknown,
+    data_dir_is_live,
     default_db_path,
     lease_directory,
     live_data_root,
@@ -147,12 +148,9 @@ def _lease_lines(result: DoctorResult) -> bool:
     Liveness is judged on the host only; the container cannot see host pids
     and says so rather than guessing (spec 075).
     """
+    files = hostlease.lease_files(lease_directory()) if data_dir_is_live() else []
     leases = [
-        lease
-        for lease in (
-            hostlease.read_lease(path) for path in hostlease.lease_files(lease_directory())
-        )
-        if lease is not None
+        lease for lease in (hostlease.read_lease(path) for path in files) if lease is not None
     ]
     result.lines.append(f"host leases: {len(leases)}")
     on_host = container.running_in() == "host"

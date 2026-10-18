@@ -407,6 +407,27 @@ def test_a_process_on_another_data_directory_never_reads_the_live_leases(
     assert "host leases: 0" in doctor_lines
 
 
+def test_an_explicit_live_target_leases_where_the_container_looks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`restore --into` can name the mounted directory while HARRIER_DATA_DIR
+    points elsewhere. Its lease must still be the one the container sees."""
+    mounted = tmp_path / "mounted-data"
+    mounted.mkdir()
+    monkeypatch.setattr(db, "live_data_root", lambda: mounted)
+    monkeypatch.setattr(container, "detect", lambda timeout=0.0: UNREACHABLE)
+    monkeypatch.setattr(container, "running_in", lambda: "host")
+    try:
+        db.check_database_ownership(mounted / "tracker.db")
+        held = [path.name for path in leases(mounted)]
+        as_container(monkeypatch)
+        with pytest.raises(DatabaseOwnedByHost):
+            db.probe_database_ownership(mounted / "tracker.db")
+    finally:
+        db.release_host_lease()
+    assert held == [f"{os.getpid()}.json"]
+
+
 # --- liveness ---------------------------------------------------------------------
 
 

@@ -101,14 +101,23 @@ _release_registered = False
 
 
 def lease_directory() -> Path:
-    """`host-db-owners/` in the data directory this process uses (spec 075).
+    """`host-db-owners/` in the directory the container mounts (spec 075).
 
-    For the live database that is the directory the container mounts, so both
-    sides see the same leases. Anchored to `data_dir()` rather than to
-    `live_data_root()`, so a process pointed at another data directory (every
-    test, spec 060) never reads or clears the operator's leases.
+    Only an open of the live file takes a lease, and the container looks
+    here alone, so a lease always goes here: also for an explicit live
+    target such as `restore --into`, whatever HARRIER_DATA_DIR says.
     """
-    return data_dir() / hostlease.LEASE_DIRNAME
+    return live_data_root() / hostlease.LEASE_DIRNAME
+
+
+def data_dir_is_live() -> bool:
+    """Whether this process's own data directory is the one the container mounts.
+
+    The leases describe the live database only. A process working on another
+    data directory (every test, spec 060) has no reason to read them, and
+    reading them would reach the operator's files.
+    """
+    return _is_live(data_dir())
 
 
 def set_lease_subcommand(subcommand: str) -> None:

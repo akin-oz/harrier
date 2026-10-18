@@ -35,6 +35,7 @@ from harrier.db import (
     DatabaseOwnershipError,
     check_database_ownership,
     connect,
+    data_dir_is_live,
     default_db_path,
     lease_directory,
     probe_database_ownership,
@@ -4403,7 +4404,7 @@ def main(argv: list[str] | None = None) -> int:
         # Before the lease, the hand-over and any store (spec 108).
         print(f"error: {operator_refusal(subcommand_name(args))}", file=sys.stderr)
         return 1
-    if running_in() == "host":
+    if running_in() == "host" and data_dir_is_live():
         # Before anything is decided, so a lease left by a crashed host
         # process stops refusing the container at the next host invocation
         # (spec 075).
