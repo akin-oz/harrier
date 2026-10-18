@@ -101,7 +101,14 @@ _release_registered = False
 
 
 def lease_directory() -> Path:
-    return live_data_root() / hostlease.LEASE_DIRNAME
+    """`host-db-owners/` in the data directory this process uses (spec 075).
+
+    For the live database that is the directory the container mounts, so both
+    sides see the same leases. Anchored to `data_dir()` rather than to
+    `live_data_root()`, so a process pointed at another data directory (every
+    test, spec 060) never reads or clears the operator's leases.
+    """
+    return data_dir() / hostlease.LEASE_DIRNAME
 
 
 def set_lease_subcommand(subcommand: str) -> None:
