@@ -232,10 +232,15 @@ def letter(paragraphs: list[str]) -> dict[str, str]:
 
 
 def test_the_focused_letter_has_six_paragraphs() -> None:
-    six = letter([PARAGRAPH] * 6)
+    """The name is spec 140's. Since spec 158 the focused letter holds six to
+    eight blocks: the role line, three to five body paragraphs, the
+    logistics block and the close."""
+    six = letter(["Frontend Developer, Example Studio", *[PARAGRAPH] * 5])
     assert letters_module.cover_letter_violations(six, kind="focused") == []
     three = letters_module.cover_letter_violations(letter([PARAGRAPH] * 3), kind="focused")
-    assert "cover letter should contain 6 paragraphs" in three
+    assert (
+        "cover letter should contain 6 to 8 blocks, role line and close included: it has 3" in three
+    )
     long_words = letter([" ".join([PARAGRAPH] * 5)] * 6)
     assert any(
         v.startswith("over the word limit")

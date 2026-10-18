@@ -148,10 +148,11 @@ class KindRules:
     cv_template: str = "resume-template.html"
     # The page counts the PDF gate accepts, for the CV and the letter alike.
     pages: tuple[int, ...] = (1,)
-    # The letter's paragraph count and word cap when no brief states them.
-    # None means the kind has none, and its length is the page gate's.
-    letter_paragraphs: int | None = 3
-    letter_max_words: int | None = 240
+    # The letter's block range (role line and close included) and word cap
+    # when no brief states them (spec 158). None means the kind has none,
+    # and its length is the page gate's.
+    letter_blocks: tuple[int, int] | None = (5, 8)
+    letter_max_words: int | None = 220
     # Spec 140: the letter's template; the most sentences the CV's profile
     # may have (None: no limit); and whether tailoring writes the
     # missing-keywords sidecar.
@@ -226,7 +227,7 @@ KIND_RULES: dict[str, KindRules] = {
         ),
         cv_template="resume-template-academic.html",
         pages=(1, 2),
-        letter_paragraphs=None,
+        letter_blocks=None,
         letter_max_words=None,
     ),
 }
@@ -239,8 +240,8 @@ KIND_RULES["focused"] = replace(
     KIND_RULES["industry"],
     # A senior engineer choosing a smaller scope on purpose (spec 140): its own
     # voices, a header with links and an entity line, an AI-assisted section,
-    # a six-paragraph letter with a salutation, and a sidecar naming the
-    # posting's skills the truth does not hold.
+    # a letter with a salutation and a logistics block (spec 158), and a
+    # sidecar naming the posting's skills the truth does not hold.
     tailor_voice=voices.FOCUSED_TAILOR_VOICE,
     letter_voice=voices.FOCUSED_LETTER_VOICE,
     answers_voice=voices.FOCUSED_ANSWERS_VOICE,
@@ -255,8 +256,8 @@ KIND_RULES["focused"] = replace(
     ),
     cv_template="resume-template-focused.html",
     pages=(1,),
-    letter_paragraphs=6,
-    letter_max_words=320,
+    letter_blocks=(6, 8),
+    letter_max_words=220,
     letter_template="cover-letter-template-focused.html",
     profile_max_sentences=3,
     missing_keywords=True,

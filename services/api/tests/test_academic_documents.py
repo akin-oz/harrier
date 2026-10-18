@@ -48,7 +48,7 @@ from harrier.resume.content import TruthSources, load_bundle, load_truth_sources
 from harrier.resume.plan import build_content_plan
 from harrier.tracker import add_job, get_job
 from harrier.tracker.actions import add_manually
-from harrier.tracks import TRACK_KINDS, Scope, add_track, default_scope, resolve_scope, rules_for
+from harrier.tracks import TRACK_KINDS, Scope, add_track, default_scope, resolve_scope
 from harrier_cli.main import main
 
 # --- the prompts ---------------------------------------------------------------
@@ -56,9 +56,10 @@ from harrier_cli.main import main
 # sha256 of each prompt as main held it before spec 101 split it into a shared
 # block and an industry voice (SYSTEM_PROMPT_TAILOR in resume/ai.py, and
 # SYSTEM_PROMPT_BASE in apply/letters.py and apply/answers.py at 807f6cb).
+# The letter's changed on purpose with spec 158's structure.
 INDUSTRY_PROMPT_SHA256 = {
     "tailor": "e4d6e724cbb0bca98688928bfe01dcac3f4eaa77b5d14c94f52a8bc530ec8525",
-    "letter": "e12345003dc70d13af48d960dc80fbf575c78e1bb1513794dcc2c1f924a632fe",
+    "letter": "692e402e40a8e7a0628e3d2672c2fcad2c9ff4ad68c42a8abc092befe8b9badb",
     "answers": "5f4c2ce48f22338680ed62668bf294116c01931a608407710d7377791acb1a00",
 }
 
@@ -67,8 +68,9 @@ INDUSTRY_PROMPT_SHA256 = {
 NAMED_TRUTH_RULES = {
     "tailor": ["Return only IDs from the supplied bullet_pool"],
     "letter": [
-        "Every fact about the candidate must come from resume_truth_source_md or "
-        "latest_project_achievements_md",
+        "Every fact about the candidate must come from resume_truth_source_md, "
+        "latest_project_achievements_md, or candidate_json's candidate.location "
+        "and candidate.eu_entity_status",
         "No invented experience",
         "Never cite job_description_text or the application profile as candidate evidence",
     ],
@@ -88,7 +90,7 @@ NAMED_TRUTH_RULES = {
 # purpose: the reviewer sees it.
 SHARED_BLOCK_SHA256 = {
     "tailor": "a329a5bab049cb38abdc5d41866f7df4b922a4ba1eb1db5511797988d1afb30e",
-    "letter": "8eeef861c807b7784883572f21d3e09cb147eadeedb10a939a9ac96bc0254405",
+    "letter": "a817e3ecad4970037e4c509ecb593160e1ae19a9e2c09e44628a795090e7cf1a",
     "answers": "4ecacc81eec0b311f60307d946db6da1f62a8602c214c59a767f38047850bbad",
 }
 
@@ -135,7 +137,7 @@ def test_the_academic_letter_prompt_is_written_for_a_committee() -> None:
     for topic in ("Research fit", "group or department", "Why this institution"):
         assert topic in academic
     assert "no word count" in academic
-    assert "at most 240 words" in letters_module.letter_prompt("industry")
+    assert "at most 220 words" in letters_module.letter_prompt("industry")
 
 
 # --- the generators send their kind's prompt ----------------------------------
@@ -182,11 +184,10 @@ def test_each_generator_sends_its_kinds_prompt(
     kind: str, db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     scope = _scope_of_kind(db, kind)
-    # As many paragraphs as the kind's letter holds (spec 140: six on focused).
-    extra = (rules_for(kind).letter_paragraphs or 3) - 3
-    letters = _capture(
-        monkeypatch, letters_module, letter_json(extra_paragraphs=(PARAGRAPH_THREE,) * extra)
-    )
+    # The fixture's six blocks fit every kind's range (spec 158). An academic
+    # letter has no role line, which would read there as a stub paragraph.
+    response = letter_json(role_line="") if kind == "academic" else letter_json()
+    letters = _capture(monkeypatch, letters_module, response)
     letters_module.generate_cover_letter(db, COMPANY, ROLE, jd_text=POSTING, scope=scope)
     assert letters == [letters_module.letter_prompt(kind)]
 
@@ -218,8 +219,8 @@ LONG_PARAGRAPH = (
 
 def test_the_academic_letter_has_no_word_count_or_paragraph_count() -> None:
     """One to two pages with no word count (spec 101, decision 2): the page
-    gate holds the length. The industry letter keeps its three paragraphs and
-    240 words; the floor on a paragraph holds for both."""
+    gate holds the length. The industry letter keeps its block range and
+    word cap (spec 158); the floor on a paragraph holds for both."""
     full = "\n\n".join(
         [PARAGRAPH_ONE, f"{CHECKOUT} {INVOICES}", *[LONG_PARAGRAPH] * 3, PARAGRAPH_THREE]
     )
@@ -227,7 +228,6 @@ def test_the_academic_letter_has_no_word_count_or_paragraph_count() -> None:
     assert len(full.split()) > 240
     assert letters_module.cover_letter_violations(letter, kind="academic") == []
     industry = letters_module.cover_letter_violations(letter, kind="industry")
-    assert "too many paragraphs: 6, at most 3" in industry
     assert any(item.startswith("over the word limit") for item in industry)
 
     stub = {

@@ -914,6 +914,12 @@ class TruthSources:
             lines.extend(_SupportingLine.read(line) for line in asserting_lines(document))
         return lines
 
+    def asserted_lines(self) -> list[str]:
+        """Every supporting line as a check may read it: denied text cut,
+        disclaimer sections skipped (specs 100 and 158). The letter linter
+        reads these, not the raw documents."""
+        return [line.asserted_text() for line in self._supporting()]
+
     def lines_containing(self, fragment: str) -> list[str]:
         """The supporting lines that verify this fragment, so a check can
         read the context a quoted fragment was cut from (spec 065). A line

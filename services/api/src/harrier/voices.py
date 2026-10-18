@@ -50,54 +50,65 @@ FOCUSED_TAILOR_VOICE: tuple[str, ...] = (
 INDUSTRY_LETTER_VOICE: tuple[str, ...] = (
     """You generate recruiter-facing cover letters for the candidate.
 
-Write like a thoughtful senior engineer writing quickly but carefully.
+Write like a senior engineer who is sure of the work: plain, direct, short.
 
 Core voice:
+- short, punchy sentences
 - direct
-- practical
-- low-fluff
-- understated
+- no hedging
 - evidence-first
-- slightly compressed
 - recruiter-facing, not theatrical
 - human, not polished marketing copy
 
-You are writing a real cover letter, not an internal qualification summary.
-The reader is usually a recruiter or hiring manager skimming quickly.
+The reader is a recruiter or hiring manager skimming quickly.
 
-Required structure for full_version:
-1. Short opening paragraph: why this company and this role specifically.
-2. Short middle paragraph: strongest relevant fit with 2 to 3 concrete points.
-3. Short closing paragraph: practical interest and next step.
+Required structure for full_version, as blocks separated by blank lines (spec 158):
+1. Role line: the role, the team when the posting names one, and the company,
+   on one line, for example "Staff Engineer, Payments team, Example GmbH".
+   No full stop.
+2. Hook: open with the candidate's strongest quantified result that matches
+   the posting's top responsibility. The first sentence carries the number.
+   Never open with the posting, the company or the role.
+3. Proof: one short paragraph per cluster the posting asks for, such as the
+   stack, the tooling or AI practice, and the domain. At most three clusters.
+   Every claim in them is a fact the evidence states.
+4. Why this company: one specific, true sentence with a basis in the posting.
+   Leave it out when there is none. No flattery.
+5. Logistics, only when the posting or the notes raise location, time zone,
+   eligibility or contracting: its own paragraph, each fact only as the
+   evidence states it.
+6. Close: one sentence alone in its block, a concrete offer, for example a
+   walkthrough of a named piece of work. Never a question.
+
+The hook, the proof and the why sentence make three to five paragraphs.
 
 """,
-    """- Usually 170 to 240 words max unless the user explicitly asks for longer
-- Prefer 3 short paragraphs of 2 to 3 sentences each
-- Pick 1 or 2 proof points, not a full career summary
-- Do not stack long lists of tools, processes, or metrics in one sentence
-- Do not sound like a generated qualification brief
-- Do not restate the entire resume
-- Do not include relocation, visa, or geography logistics unless the user or supplied notes explicitly make that relevant
-- Do not say "Most relevant to this role", "Practically", "That aligns with", or similar scaffolding
-- If role context is strong, be specific; if not, stay simple
+    """- 150 to 220 words in full_version, role line included
+- Never restate the posting's text; say what the candidate did instead
+- Never copy more than five words in a row from the posting, the why sentence
+  included: name what is specific about the company in your own words
+- Never write "I am writing to apply", "excited", "happy to", "would love to",
+  "let me know" or "looking forward"
+- No hedging words: hopefully, perhaps, possibly, might, I believe, I think,
+  I feel, I hope
+- State the candidate's experience only in the wording the truth sources give
+  for it, and never in decades
+- Copy every number exactly as the evidence states it, including any "~" and
+  any "in total"
+- Call a legal entity "a" or "an" entity of its type, never "my", unless the
+  evidence states it is registered
+- When the posting asks for something the evidence cannot back, leave it out
+  of the letter and list it in gaps
+- End with the sharpest true sentence
 
 Short version:
 - suitable for an application textbox or intro email
 - 2 to 4 sentences
 - direct, not salesy
 
-Full version:
-- 3 short paragraphs
-- plain text paragraphs separated by blank lines
-- mention the company and role in the opening
-- make the company-specific tailoring concrete if the product or role context supports it
-- if context is weak, stay honest and simple rather than generic
-- do not force a company compliment
-- do not mention more than 2 named tools or systems in the whole letter unless the role clearly requires it
-- at most 1 sentence with numbers/metrics
-
 """,
-    "- Write exactly 3 paragraphs of at least 8 words each and at most 240 words.\n",
+    "- Write a role line, three to five body paragraphs, an optional logistics paragraph and a"
+    " one-sentence close, at most 220 words.\n",
     "",
 )
 
@@ -157,46 +168,62 @@ The candidate is a senior engineer choosing a smaller scope on purpose. Write li
 person: plain, direct, and sure of the work.
 
 Core voice:
-- short sentences
+- short, punchy sentences
 - direct
 - no hedging
 - evidence-first
 - human, not polished marketing copy
 
-Required structure for full_version, six paragraphs in this order:
-1. Designs taken to production: what the candidate builds, with the experience wording
-   exactly as the truth sources state it.
-2. Two or three proof points, each a sentence whose facts the truth sources state.
-3. One short paragraph of AI-assisted engineering, from the truth sources only.
-4. Why the candidate chose a smaller scope. Draw it only from the application profile's
-   scope_reason, written as the candidate's stated preference. It is never a claim about
-   the employer and never a fact without evidence.
-5. How the candidate contracts and invoices: the entity, the time zone and any tax or VAT
-   identifier, each only as the truth sources state it. For a value the material lacks,
-   write [[TODO: what is needed]], for example [[TODO: tax or VAT ID]]. Never invent one.
-6. The closing: the demo and the repository, from candidate_links.
+Required structure for full_version, as blocks separated by blank lines (spec 158):
+1. Role line: the role, the team when the posting names one, and the company,
+   on one line. No full stop.
+2. Hook: open with the candidate's strongest quantified result that matches
+   the posting's top responsibility. The first sentence carries the number.
+   Never open with the posting, the company or the role.
+3. Proof: one short paragraph per cluster the posting asks for, at most three.
+   One of them may be AI-assisted engineering, from the truth sources only.
+4. Why the candidate chose a smaller scope. Draw it only from the application
+   profile's scope_reason, written as the candidate's stated preference. It is
+   never a claim about the employer and never a fact without evidence.
+5. Why this company: one specific, true sentence with a basis in the posting.
+   Leave it out when there is none. No flattery.
+6. Logistics: how the candidate contracts and invoices, the entity, the time
+   zone and any tax or VAT identifier, each only as the evidence states it.
+   For a value the material lacks, write [[TODO: what is needed]], for example
+   [[TODO: tax or VAT ID]]. Never invent one. Its own paragraph.
+7. Close: one sentence alone in its block, a concrete offer that names the demo
+   or the repository from candidate_links. Never a question.
 
-Do not write a salutation or a signature; the template adds both.
+The hook, the proof, the scope reason and the why sentence make three to five
+paragraphs. Do not write a salutation or a signature; the template adds both.
 
 """,
-    """- Six paragraphs, one per part of the structure above
-- At most 320 words
-- Short sentences
-- No hedging words
-- No question in the closing paragraph
-- Do not restate the entire resume
+    """- 150 to 220 words in full_version, role line included
+- Never restate the posting's text; say what the candidate did instead
+- Never copy more than five words in a row from the posting, the why sentence
+  included: name what is specific about the company in your own words
+- Never write "I am writing to apply", "excited", "happy to", "would love to",
+  "let me know" or "looking forward"
+- No hedging words: hopefully, perhaps, possibly, might, I believe, I think,
+  I feel, I hope
+- State the candidate's experience only in the wording the truth sources give
+  for it, and never in decades
+- Copy every number exactly as the evidence states it, including any "~" and
+  any "in total"
+- Call a legal entity "a" or "an" entity of its type, never "my", unless the
+  evidence states it is registered
+- When the posting asks for something the evidence cannot back, leave it out
+  of the letter and list it in gaps
+- End with the sharpest true sentence
 
 Short version:
 - suitable for an application textbox or intro email
 - 2 to 4 sentences
 - direct, not salesy
 
-Full version:
-- plain text paragraphs separated by blank lines
-- name the company and the role in the first paragraph
-
 """,
-    "- Write exactly 6 paragraphs of at least 8 words each and at most 320 words.\n",
+    "- Write a role line, three to five body paragraphs, a logistics paragraph and a"
+    " one-sentence close, at most 220 words.\n",
     "",
 )
 

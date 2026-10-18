@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,7 @@ TRUTH = """# Truth
 Built the checkout flow in TypeScript and React.
 Processed 1,200 invoices over 2025 with the billing service.
 Cut page load time by 40% on the product pages.
+Cut checkout errors by 17% after the redesign.
 Handled 300 support tickets a week during the launch.
 Built a demo of the reporting dashboard on synthetic data.
 Demonstrated the reporting dashboard to the finance team.
@@ -75,6 +77,13 @@ PARAGRAPH_THREE = (
     "If the role is still open, I would be glad to talk about the billing work in more detail."
 )
 
+# The blocks every synthetic letter carries around its body (spec 158): a
+# role line, a hook that opens with a number, and a one-sentence close.
+ROLE_LINE = "Senior Product Engineer, Billing team, Examplesoft"
+HOOK = "I cut checkout errors by 17% after the redesign."
+HOOK_EVIDENCE = "Cut checkout errors by 17% after the redesign"
+CLOSE = "I can walk your team through the checkout flow on a call."
+
 CHECKOUT = "I built the checkout flow in TypeScript and React."
 CHECKOUT_EVIDENCE = "Built the checkout flow in TypeScript and React"
 INVOICES = "I processed 1,200 invoices over 2025 with the billing service."
@@ -88,6 +97,8 @@ def candidate(sentence: str, *evidence: str) -> dict[str, object]:
 def employer(sentence: str, *evidence: str) -> dict[str, object]:
     return {"sentence": sentence, "about": "employer", "evidence": list(evidence)}
 
+
+HOOK_CLAIM = candidate(HOOK, HOOK_EVIDENCE)
 
 GROUNDED_CLAIMS = [
     candidate(CHECKOUT, CHECKOUT_EVIDENCE),
@@ -103,15 +114,26 @@ def letter_json(
     last: str = PARAGRAPH_THREE,
     short: str = "I build product features and would like to do that at Examplesoft.",
     extra_paragraphs: tuple[str, ...] = (),
+    hook: str = HOOK,
+    close: str = CLOSE,
+    role_line: str = ROLE_LINE,
+    gaps: Sequence[Mapping[str, str | None]] | None = None,
 ) -> str:
-    paragraphs = [first, middle, last, *extra_paragraphs]
-    return json.dumps(
-        {
-            "short_version": short,
-            "full_version": "\n\n".join(paragraphs),
-            "claims": GROUNDED_CLAIMS if claims is None else claims,
-        }
-    )
+    """A letter of the industry shape (spec 158): the role line, the hook,
+    `first`, `middle` and `last` as the body, any extra blocks, and the
+    close. The hook's claim joins whatever claims a test declares."""
+    paragraphs = [role_line, hook, first, middle, last, *extra_paragraphs, close]
+    declared = list(GROUNDED_CLAIMS if claims is None else claims)
+    if hook == HOOK and HOOK_CLAIM not in declared:
+        declared.append(HOOK_CLAIM)
+    payload: dict[str, object] = {
+        "short_version": short,
+        "full_version": "\n\n".join(block for block in paragraphs if block),
+        "claims": declared,
+    }
+    if gaps is not None:
+        payload["gaps"] = [dict(gap) for gap in gaps]
+    return json.dumps(payload)
 
 
 def stub_letter(monkeypatch: pytest.MonkeyPatch, response: str) -> None:
@@ -285,11 +307,11 @@ def test_a_stub_paragraph_refuses_instead_of_being_dropped(
 def test_a_fourth_paragraph_refuses_instead_of_being_dropped(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    stub_letter(
-        monkeypatch,
-        letter_json(extra_paragraphs=("I would also like to mention my interest in the team.",)),
-    )
-    assert "too many paragraphs" in refusal(db)
+    """The name is spec 065's. Since spec 158 the industry letter holds five
+    to eight blocks, so the block past the range is the ninth."""
+    extra = "I would also like to mention my interest in the team."
+    stub_letter(monkeypatch, letter_json(extra_paragraphs=(extra,) * 3))
+    assert "should contain 5 to 8 blocks" in refusal(db)
 
 
 # --- C1 to C4: the citations ---------------------------------------------------
@@ -556,7 +578,7 @@ def test_numbers_in_the_company_and_role_are_exempt(
 def test_mixed_tokens_and_slash_pairs_are_not_numbers(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    last = "I am happy to talk about storage on S3, OAuth2 and running a service 24/7 any time."
+    last = "I can talk about storage on S3, OAuth2 and running a service 24/7 any time."
     stub_letter(monkeypatch, letter_json(last=last))
     assert generate(db).full_version
 
@@ -948,7 +970,7 @@ def test_a_refused_letter_is_retried_once_and_the_second_draft_is_kept(
     calls = stub_sequence(monkeypatch, letters_module, [refused_letter(), letter_json()])
     letter = generate(db)
     assert len(calls) == 2
-    assert [claim.sentence for claim in letter.claims] == [CHECKOUT, INVOICES]
+    assert [claim.sentence for claim in letter.claims] == [CHECKOUT, INVOICES, HOOK]
 
 
 def test_a_refused_answer_set_is_retried_once_and_the_second_set_is_written(
