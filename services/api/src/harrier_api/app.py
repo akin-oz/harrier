@@ -34,7 +34,14 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from harrier.apply.brief import Brief
 from harrier.connection import Connection, store_target
-from harrier.db import DatabaseOwnedByHost, connect, data_dir, default_db_path, lease_directory
+from harrier.db import (
+    DatabaseOwnedByHost,
+    connect,
+    data_dir,
+    data_dir_is_live,
+    default_db_path,
+    lease_directory,
+)
 from harrier.demo import repo_root
 from harrier.filestore import FileStoreError, FileStoreUnavailable, FileStoreUnbound
 from harrier.hostlease import oldest_hold
@@ -344,7 +351,11 @@ def health(request: Request) -> HealthOut:
             revision=build_revision(),
             built_at=build_timestamp(),
         )
-    hold = None if is_demo_mode() else oldest_hold(lease_directory(), ignore_pid=os.getpid())
+    hold = (
+        None
+        if is_demo_mode() or not data_dir_is_live()
+        else oldest_hold(lease_directory(), ignore_pid=os.getpid())
+    )
     job_count: int | None = None
     if hold is None:
         conn = connect(demo_db_path() if is_demo_mode() else None, same_thread=False)

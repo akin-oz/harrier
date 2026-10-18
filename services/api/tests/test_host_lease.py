@@ -368,6 +368,66 @@ def test_a_web_run_refused_by_a_lease_ends_75_with_the_refusal_logged(
     assert any("a host process (digest" in line for line in lines), lines
 
 
+# --- the lease directory follows the data directory --------------------------------
+
+
+def test_a_process_on_another_data_directory_never_reads_the_live_leases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lease in the mounted `data/` is invisible to a process whose
+    HARRIER_DATA_DIR is elsewhere: its CLI sweep, `/health` and `harrier
+    doctor` all look in its own data directory. The scheduled run's lease
+    once failed most of the suite this way."""
+    from harrier.doctor import run_doctor
+
+    mounted = tmp_path / "mounted-data"
+    directory = mounted / hostlease.LEASE_DIRNAME
+    directory.mkdir(parents=True)
+    monkeypatch.setattr(db, "live_data_root", lambda: mounted)
+    monkeypatch.setattr(container, "detect", lambda timeout=0.0: UNREACHABLE)
+    monkeypatch.setattr(container, "running_in", lambda: "host")
+    # Dead, so a host sweep that reached this directory would remove it.
+    held = directory / "999999.json"
+    held.write_text(
+        json.dumps(
+            {"pid": 999999, "started": "2026-01-01T00:00:00+00:00", "subcommand": "discover"}
+        ),
+        encoding="utf-8",
+    )
+    try:
+        assert main(["next"]) == 0
+        body = TestClient(create_app()).get("/health").json()
+        doctor_lines = run_doctor().lines
+    finally:
+        db.release_host_lease()
+
+    assert held.exists()
+    assert body["database_hold"] is None
+    assert isinstance(body["job_count"], int)
+    assert "host leases: 0" in doctor_lines
+
+
+def test_an_explicit_live_target_leases_where_the_container_looks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`restore --into` can name the mounted directory while HARRIER_DATA_DIR
+    points elsewhere. Its lease must still be the one the container sees."""
+    mounted = tmp_path / "mounted-data"
+    mounted.mkdir()
+    monkeypatch.setattr(db, "live_data_root", lambda: mounted)
+    monkeypatch.setattr(container, "detect", lambda timeout=0.0: UNREACHABLE)
+    monkeypatch.setattr(container, "running_in", lambda: "host")
+    try:
+        db.check_database_ownership(mounted / "tracker.db")
+        held = [path.name for path in leases(mounted)]
+        as_container(monkeypatch)
+        with pytest.raises(DatabaseOwnedByHost):
+            db.probe_database_ownership(mounted / "tracker.db")
+    finally:
+        db.release_host_lease()
+    assert held == [f"{os.getpid()}.json"]
+
+
 # --- liveness ---------------------------------------------------------------------
 
 
