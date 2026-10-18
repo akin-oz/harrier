@@ -580,6 +580,10 @@ class AskPlan:
     # The casing L14 holds the letter to: the posting's form of the name,
     # "" when the posting never writes it (amendment 2).
     company_form: str = ""
+    # Whether the letter has a logistics block before its close: when the
+    # posting raised location or terms, and always on the focused kind
+    # (spec 140), so the link line goes before it (review of #410).
+    logistics_block: bool = False
 
 
 def _bundle_or_none(conn: Connection, scope: Scope) -> ResumeBundle | None:
@@ -623,6 +627,8 @@ def plan_letter(
         link=link,
         experience=experience,
         company_form=form,
+        logistics_block=scope.track.kind == "focused"
+        or bool(analysis.logistics_quote or analysis.logistics_fact_ids),
     )
 
 
@@ -710,7 +716,7 @@ def _with_added_lines(full: str, plan: AskPlan) -> str:
     if plan.experience and plan.experience not in blocks:
         blocks.insert(min(2, len(blocks)), plan.experience)
     if plan.link and plan.link not in blocks:
-        before = 2 if plan.analysis.logistics_quote or plan.analysis.logistics_fact_ids else 1
+        before = 2 if plan.logistics_block else 1
         blocks.insert(max(len(blocks) - before, 1), plan.link)
     return "\n\n".join(blocks)
 

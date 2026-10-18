@@ -241,7 +241,9 @@ def parse_analysis(text: str) -> Analysis:
 
 
 def _comparable(text: str) -> str:
-    return " ".join(text.replace("\u2019", "'").lower().split())
+    """Whitespace runs collapsed and curly apostrophes made straight. Case is
+    kept: a quote must be verbatim (review of #410)."""
+    return " ".join(text.replace("\u2019", "'").split())
 
 
 def analysis_violations(analysis: Analysis, text: str, facts: Mapping[str, str]) -> list[str]:
@@ -250,17 +252,20 @@ def analysis_violations(analysis: Analysis, text: str, facts: Mapping[str, str])
     if len(analysis.asks) > MAX_ASKS:
         violations.append(f"more than {MAX_ASKS} asks: {len(analysis.asks)}")
     haystack = _comparable(text)
-    last = -1
+    last = 0
     for ask in analysis.asks:
         if not ask.ask:
             violations.append(f"ask {ask.rank} has no name")
-        position = haystack.find(_comparable(ask.quote)) if ask.quote else -1
-        if position < 0:
-            violations.append(f"ask {ask.rank} quote not in the posting: {ask.quote}")
-        elif position < last:
+        quote = _comparable(ask.quote)
+        # From the previous ask on, so a phrase the posting repeats is read at
+        # the occurrence that keeps the order (review of #410).
+        position = haystack.find(quote, last) if quote else -1
+        if position >= 0:
+            last = position
+        elif quote and quote in haystack:
             violations.append(f"ask {ask.rank} is out of posting order: {ask.quote}")
         else:
-            last = position
+            violations.append(f"ask {ask.rank} quote not in the posting: {ask.quote}")
         violations.extend(
             f"ask {ask.rank} names an unknown fact id: {fact_id}"
             for fact_id in ask.fact_ids

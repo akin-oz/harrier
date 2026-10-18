@@ -229,3 +229,36 @@ def test_the_company_name_takes_the_postings_casing() -> None:
     posting = "Restream is hiring. At Restream you ship weekly. restream.io"
     assert posting_company("restream", posting) == "Restream"
     assert posting_company("Examplesoft", "no name here") == "Examplesoft"
+
+
+def test_a_repeated_phrase_is_read_where_it_keeps_the_order() -> None:
+    """A quote the posting repeats is found from the previous ask on, and a
+    quote with altered case is not verbatim (review of #410)."""
+    text = "Ship features weekly\nReview code with the team\nShip features with care"
+    facts = {"t1": "Built the checkout flow."}
+    repeated = Analysis(
+        asks=(
+            Ask(1, "review", "Review code", ("t1",)),
+            Ask(2, "ship", "Ship features", ("t1",)),
+        )
+    )
+    assert analysis_violations(repeated, text, facts) == []
+    recased = Analysis(asks=(Ask(1, "review", "review code", ("t1",)),))
+    assert analysis_violations(recased, text, facts) == [
+        "ask 1 quote not in the posting: review code"
+    ]
+
+
+def test_a_focused_letter_puts_the_link_before_its_logistics() -> None:
+    """The focused letter always ends logistics then close, so the link goes
+    before the logistics block even when the posting raised no terms."""
+    plan = letters_module.AskPlan(
+        analysis=Analysis(),
+        facts={},
+        company="Example Studio",
+        link="Portfolio: portfolio.example.dev",
+        logistics_block=True,
+    )
+    full = "\n\n".join(["Role line", "Hook.", "Proof.", "Logistics.", "Close."])
+    blocks = letters_module._with_added_lines(full, plan).split("\n\n")  # pyright: ignore[reportPrivateUsage]
+    assert blocks[-3:] == ["Portfolio: portfolio.example.dev", "Logistics.", "Close."]
