@@ -1,8 +1,8 @@
 ---
 spec: 160
 title: A cover letter answers the posting's top asks, in its order, with matched facts only
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M9
 depends: [065, 071, 085, 140, 158, 159]
 ---
