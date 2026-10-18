@@ -68,13 +68,16 @@ ROLE_LINE_MAX_WORDS = 15
 
 # Words that make a "registered" line say the opposite or not yet.
 _NEGATED = re.compile(r"\b(?:not|never|no|pending|planned|yet)\b|n['\u2019]t\b")
-# Words that make a registered entity the candidate's own, not an
-# employer's: "Worked at Acme GmbH, registered in Germany" names a GmbH that
-# is someone else's (review of #405).
-_OWNED = re.compile(
-    r"\b(?:my|own|owns|owned|founded|founder|director|contracts?\s+through"
-    r"|invoices?\s+through|trades?\s+as|sole\s+proprietor)\b"
+# A cue that makes the entity the candidate's own. It must govern the entity
+# itself, at most two words before its type: "my GmbH", "contracts through a
+# GmbH", "director of Example GmbH" (review of #405).
+_OWNERSHIP_CUE = (
+    r"(?:my|own(?:s|ed)?|founded|founder\s+of|director\s+of|contracts?\s+through"
+    r"|invoices?\s+through|trades?\s+as)"
 )
+# A line about someone else's company never shows ownership: "My employer
+# Acme GmbH, registered in Germany" (review of #405).
+_SOMEONE_ELSES = re.compile(r"\b(?:employer|employed|worked|works\s+at|client|customer)\b")
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _APOSTROPHE = "\u2019"
@@ -141,6 +144,12 @@ def _starts_with(text: str, prefix: str) -> bool:
     return bool(prefix.strip()) and text.lower().startswith(prefix.strip().lower())
 
 
+def _owned(entity: str, line: str) -> bool:
+    """Whether an ownership cue governs this entity type on the line."""
+    pattern = rf"\b{_OWNERSHIP_CUE}\s+(?:[^\W_][\w.'-]*\s+){{0,2}}{re.escape(entity)}(?!\w)"
+    return re.search(pattern, line, re.IGNORECASE) is not None
+
+
 def _registered(entity: str, evidence: str) -> bool:
     """Whether an evidence line names the entity type as registered and as
     the candidate's own. A whole word: "unregistered" and "deregistered" are
@@ -151,7 +160,8 @@ def _registered(entity: str, evidence: str) -> bool:
         if (
             _phrase(entity).search(line)
             and re.search(r"\bregistered\b", lowered)
-            and _OWNED.search(lowered)
+            and _owned(entity, line)
+            and not _SOMEONE_ELSES.search(lowered)
             and not _NEGATED.search(lowered)
         ):
             return True

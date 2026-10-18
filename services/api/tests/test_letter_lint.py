@@ -186,15 +186,26 @@ def test_an_employers_registered_entity_is_not_mine() -> None:
     """A registered GmbH the candidate worked at is not the candidate's own
     (review of #405)."""
     mine = letter(proof=f"{PROOF} I contract through my GmbH.")
-    employer = LintContext(
-        evidence=f"{EVIDENCE}Worked at Acme GmbH, registered in Germany.\n",
-        posting=POSTING,
-        company=COMPANY,
-        role=ROLE,
-    )
-    assert lint(mine, employer) == [
-        "calls an entity the evidence does not show registered 'my GmbH'"
-    ]
+    for line in (
+        "Worked at Acme GmbH, registered in Germany.",
+        "My employer Acme GmbH, registered in Germany.",
+        "My client owns a GmbH registered in Germany.",
+    ):
+        employer = LintContext(
+            evidence=f"{EVIDENCE}{line}\n", posting=POSTING, company=COMPANY, role=ROLE
+        )
+        assert lint(mine, employer) == [
+            "calls an entity the evidence does not show registered 'my GmbH'"
+        ], line
+    for line in (
+        "Contracts through a GmbH registered in Exampleland.",
+        "Director of Example GmbH, registered in Exampleland.",
+        "My GmbH is registered in Exampleland.",
+    ):
+        own = LintContext(
+            evidence=f"{EVIDENCE}{line}\n", posting=POSTING, company=COMPANY, role=ROLE
+        )
+        assert lint(mine, own) == [], line
 
 
 def test_the_short_version_is_linted_too() -> None:

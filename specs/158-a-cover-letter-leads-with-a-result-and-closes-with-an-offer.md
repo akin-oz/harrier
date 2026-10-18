@@ -455,9 +455,10 @@ The build found these places where the Behavior was wrong or silent.
 16. **A registered entity must be the candidate's own.** L10 accepted any
     line naming the entity type as registered, so an employer's "Acme GmbH,
     registered in Germany" let "my GmbH" through. The line must also carry
-    an ownership cue ("my", "owns", "founded", "director", "contracts
-    through", "invoices through", "trades as", "sole proprietor") (review
-    of #405).
+    an ownership cue that governs the entity, at most two words before its
+    type ("my GmbH", "contracts through a GmbH", "director of Example
+    GmbH"), and must not name an employer, a client or "worked at" (two
+    rounds of review of #405).
 
 ## Out of scope
 
