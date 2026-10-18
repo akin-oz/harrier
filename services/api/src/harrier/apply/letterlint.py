@@ -1,4 +1,4 @@
-"""The cover letter linter (spec 158, rules L1 to L11).
+"""The cover letter linter (spec 158, rules L1 to L11; spec 160, L12 to L17).
 
 Deterministic: no model call and no network. It reads the letter, the
 evidence the letter may cite, the posting, and the record's professional
@@ -57,8 +57,31 @@ BANNED_ANYWHERE: tuple[str, ...] = (
     "looking forward",
 )
 
-# L7: a shared run of this many words is a restatement.
-RESTATEMENT_WORDS = 8
+# L7: a shared run of this many words is a restatement (spec 160: was 8).
+RESTATEMENT_WORDS = 6
+
+# L3: the word range (spec 160: 120 to 220).
+MIN_WORDS = 120
+MAX_WORDS = 220
+
+# L13: words that qualify a number.
+QUALIFIERS: tuple[str, ...] = ("~", "approximately", "about", "around", "roughly", "in total")
+
+# L15: what a sentence that opens on the company may not go on to say.
+COMPANY_SAYS = (
+    "describes",
+    "described",
+    "says",
+    "said",
+    "offers",
+    "offered",
+    "believes",
+    "believed",
+    "claims",
+    "claimed",
+    "promises",
+    "promised",
+)
 
 # L10: legal entity types a letter never calls "my" or "our" (spec 159).
 # Spelled as letter groups: a dot and whitespace may sit between two groups,
@@ -95,6 +118,16 @@ _WORD = re.compile(rf"[^\W_]+(?:['{_APOSTROPHE}][^\W_]+)*", re.UNICODE)
 
 
 @dataclass(frozen=True)
+class AskCoverage:
+    """One of the posting's top asks and the facts that meet it (spec 160)."""
+
+    rank: int
+    ask: str
+    fact_texts: tuple[str, ...]
+    listed_as_gap: bool
+
+
+@dataclass(frozen=True)
 class LintContext:
     """What the linter reads besides the letter."""
 
@@ -106,6 +139,13 @@ class LintContext:
     # The record's completed professional years; None when the record
     # cannot be read, and then L9 checks only for "decade".
     professional_years: int | None = None
+    # Spec 160: the company as the posting writes it (L14, L15), the top
+    # asks (L16), the evidence the letter's claims cite (L16) and the link
+    # line code added (L17). Empty values switch those rules off.
+    company_form: str = ""
+    asks: tuple[AskCoverage, ...] = ()
+    cited: tuple[str, ...] = ()
+    link_line: str | None = None
 
 
 def _phrase(phrase: str) -> re.Pattern[str]:
@@ -179,8 +219,10 @@ def lint_letter(full_version: str, context: LintContext, short_version: str = ""
 
     # L3: length.
     words = len(full_version.split())
-    if words > 220:
-        violations.append(f"over the word limit: {words} words, at most 220")
+    if words > MAX_WORDS:
+        violations.append(f"over the word limit: {words} words, at most {MAX_WORDS}")
+    if words < MIN_WORDS:
+        violations.append(f"under the word floor: {words} words, at least {MIN_WORDS}")
 
     # L11 (role line), then L4 on the block after it.
     role_line = blocks[0] if blocks else ""
@@ -198,14 +240,9 @@ def lint_letter(full_version: str, context: LintContext, short_version: str = ""
     opener = next((prefix for prefix in openers if _starts_with(hook, prefix)), None)
     if opener is not None:
         violations.append(f"banned opener: the hook begins with {opener!r}")
-    first_sentence = _sentences(hook)[0] if hook else ""
+    # Spec 160: the hook answers the posting's first ask, which may have no
+    # metric, so its first sentence no longer needs a number.
     known = {token.value for token in number_tokens(context.evidence)}
-    if not number_tokens(first_sentence):
-        violations.append("the hook's first sentence has no number: open with a quantified result")
-    elif not any(token.value in known for token in number_tokens(first_sentence)):
-        # The hook is the candidate's result, so its number is candidate
-        # evidence, not a number from the posting (review of #405).
-        violations.append("the hook's first sentence has no number from the evidence")
 
     # L5: banned anywhere.
     banned = [phrase for phrase in BANNED_ANYWHERE if _phrase(phrase).search(both)]
@@ -258,4 +295,101 @@ def lint_letter(full_version: str, context: LintContext, short_version: str = ""
             f'calls a legal entity \'{found}\': write "a" or "an" before the entity type'
         )
 
+    violations.extend(_asks_rules(full_version, blocks, context))
+    return violations
+
+
+_PERCENT = re.compile(r"(~\s*)?(\d[\d,.]*)\s*%")
+
+
+def _plain_percentages(evidence: str) -> set[str]:
+    """Each percentage value an evidence line states without a "~"."""
+    return {
+        match.group(2)
+        for match in _PERCENT.finditer(evidence)
+        if not match.group(1) and evidence[max(match.start() - 1, 0) : match.start()] != "~"
+    }
+
+
+_NUMBER_AT = re.compile(r"(~\s*)?(\d[\d,]*(?:\.\d+)?)\s*([kKmMxX%])?(?!\w)")
+_BEFORE_WORDS = 3
+_AFTER_WORDS = 5
+
+
+def _qualified_values(text: str) -> dict[str, bool]:
+    """Each number value in `text`, and whether any of its occurrences
+    carries a qualifier next to it: "~" attached, "approximately", "about",
+    "around" or "roughly" in the three words before, or "in total" in the
+    five words after. A qualifier elsewhere on the line qualifies nothing."""
+    found: dict[str, bool] = {}
+    lowered = text.lower()
+    words_before = [q for q in QUALIFIERS if q not in ("~", "in total")]
+    for match in _NUMBER_AT.finditer(text):
+        suffix = (match.group(3) or "").lower()
+        value = match.group(2).replace(",", "") + (suffix if suffix in ("k", "m", "x") else "")
+        before = " ".join(lowered[: match.start()].split()[-_BEFORE_WORDS:])
+        after = " ".join(lowered[match.end() :].split()[:_AFTER_WORDS])
+        qualified = (
+            bool(match.group(1))
+            or any(re.search(rf"(?<!\w){re.escape(q)}(?!\w)", before) for q in words_before)
+            or re.search(r"(?<!\w)in total(?!\w)", after) is not None
+        )
+        found[value] = found.get(value, False) or qualified
+    return found
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.replace("\u2019", "'").lower().split()).strip(" .")
+
+
+def _asks_rules(full_version: str, blocks: list[str], context: LintContext) -> list[str]:
+    """L12 to L17 (spec 160)."""
+    violations: list[str] = []
+
+    # L12: no "~" on a percentage the evidence also states exactly.
+    exact = _plain_percentages(context.evidence)
+    for match in _PERCENT.finditer(full_version):
+        if match.group(1) and match.group(2) in exact:
+            violations.append(f"a tilde on an exact percentage: ~{match.group(2)}%")
+
+    # L13: a number keeps the qualifier every evidence line gives it, read
+    # next to the number itself.
+    lines = [_qualified_values(line) for line in context.evidence.splitlines() if line.strip()]
+    for block in blocks:
+        for sentence in _sentences(block):
+            for value, qualified in _qualified_values(sentence).items():
+                holding = [line[value] for line in lines if value in line]
+                if holding and all(holding) and not qualified:
+                    violations.append(f"a number lost its qualifier: {value} (in: {sentence})")
+
+    form = context.company_form.strip()
+    if form:
+        # L14: the company in the posting's casing.
+        for match in re.finditer(rf"(?<!\w){re.escape(form)}(?!\w)", full_version, re.IGNORECASE):
+            if match.group(0) != form:
+                violations.append(
+                    f"company name casing: {match.group(0)!r}, the posting writes {form!r}"
+                )
+        # L15: never "<Company> describes".
+        says = "|".join(COMPANY_SAYS)
+        opener = re.compile(rf"^{re.escape(form)}(?:['\u2019]s)?\s+(?:{says})\b", re.IGNORECASE)
+        for block in blocks:
+            for sentence in _sentences(block):
+                if opener.search(sentence.strip()):
+                    violations.append(f"a sentence reports what the company says: {sentence}")
+
+    # L16: each top ask with facts is answered by one of them.
+    cited = [_norm(fragment) for fragment in context.cited if fragment.strip()]
+    for ask in context.asks:
+        if not ask.fact_texts:
+            if not ask.listed_as_gap:
+                violations.append(f"ask {ask.rank} has no facts and is not a gap: {ask.ask}")
+            continue
+        facts = [_norm(text) for text in ask.fact_texts]
+        if not any(c and (c in f or f in c) for c in cited for f in facts):
+            violations.append(f"ask {ask.rank} not addressed by its facts: {ask.ask}")
+
+    # L17: the link line code added is still there.
+    if context.link_line and context.link_line not in blocks:
+        violations.append(f"the link line is missing: {context.link_line}")
     return violations

@@ -1,0 +1,85 @@
+{
+  "description": "Synthetic copy of the target Restream letter (spec 160). It must pass the linter.",
+  "full_version": "Design Engineer, Studio Team, Restream\n\nI researched where users dropped off in the signup funnel and redesigned the plan-selection step in Figma before building it in React. Completion grew from 41% to 58% across ~120K signups.\n\nI took that step from the research to a Figma design to working React code, and I kept each screen consistent through review. I built a token-driven component library in React and TypeScript with Storybook documentation, so every new screen reused the same tested parts and reviews stayed short. Every review checked that the design and the code still matched.\n\nPortfolio: portfolio.example.dev\n\nI work from Exampleland, UTC+2, and invoice clients as a registered sole trader.\n\nI can walk you through the plan-selection redesign on a call.",
+  "asks": {
+    "company": "Restream",
+    "asks": [
+      {
+        "rank": 1,
+        "ask": "Craft features from idea to design to implementation",
+        "quote": "Craft every detail of new product features",
+        "fact_ids": [
+          "r1_b2"
+        ],
+        "gap": false
+      },
+      {
+        "rank": 2,
+        "ask": "Design and implement UI and UX",
+        "quote": "Design and implement the UI and UX",
+        "fact_ids": [
+          "r1_b2",
+          "r1_b3"
+        ],
+        "gap": false
+      },
+      {
+        "rank": 3,
+        "ask": "Give and receive code review",
+        "quote": "Give and receive code review feedback",
+        "fact_ids": [
+          "r1_b3"
+        ],
+        "gap": false
+      },
+      {
+        "rank": 4,
+        "ask": "UX design process",
+        "quote": "Deep understanding of the UX design process",
+        "fact_ids": [
+          "r1_b2"
+        ],
+        "gap": false
+      },
+      {
+        "rank": 5,
+        "ask": "Figma",
+        "quote": "Proficient with Figma",
+        "fact_ids": [
+          "r1_b2"
+        ],
+        "gap": false
+      }
+    ],
+    "logistics": null,
+    "dropped_sections": [
+      "What We Offer"
+    ],
+    "gaps": [
+      "first-hand experience of Restream's product"
+    ]
+  },
+  "facts_used": [
+    {
+      "sentence": "I researched where users dropped off in the signup funnel and redesigned the plan-selection step in Figma before building it in React.",
+      "evidence": "Researched where users dropped off in the signup funnel and redesigned the plan-selection step in Figma before building it in React",
+      "source": "bullet_pool"
+    },
+    {
+      "sentence": "Completion grew from 41% to 58% across ~120K signups.",
+      "evidence": "Grew signup funnel completion from 41% to 58% across ~120K signups",
+      "source": "bullet_pool"
+    },
+    {
+      "sentence": "I built a token-driven component library in React and TypeScript with Storybook documentation, so every new screen reused the same tested parts and reviews stayed short.",
+      "evidence": "Built a token-driven component library in React and TypeScript with Storybook documentation",
+      "source": "bullet_pool"
+    },
+    {
+      "sentence": "I work from Exampleland, UTC+2, and invoice clients as a registered sole trader.",
+      "evidence": "Works from Exampleland, UTC+2, and invoices clients as a registered sole trader",
+      "source": "resume_truth"
+    }
+  ],
+  "link_line": "Portfolio: portfolio.example.dev"
+}

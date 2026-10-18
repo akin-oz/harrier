@@ -252,28 +252,31 @@ personal data and are never committed (privacy rule).
 
 ## Acceptance criteria
 
-- [ ] A posting with "What You'll Do", "What We Look For" and "What We
+- [x] A posting with "What You'll Do", "What We Look For" and "What We
   Offer" sections gives the analysis only the first two
-  (planned test_posting_asks.py::test_offer_and_perks_sections_never_reach_the_analysis).
-- [ ] A quote not in the ask text, or out of posting order, refuses the
-  analysis (planned test_posting_asks.py::test_an_ask_quote_must_be_verbatim_and_in_order).
-- [ ] The writer payload holds no posting text and no unmatched fact
-  (planned test_posting_asks.py::test_the_writer_gets_only_asks_and_matched_facts).
-- [ ] The asks file is written beside the letter with ranks, matches and
-  gaps (planned test_posting_asks.py::test_the_asks_file_is_written_beside_the_letter).
-- [ ] A posting that asks for a portfolio gets the link line; one that does
-  not gets none (planned test_posting_asks.py::test_the_link_line_follows_the_posting).
-- [ ] A senior title gets the experience line from the facts
-  (planned test_posting_asks.py::test_a_senior_posting_gets_the_experience_line).
-- [ ] The company name takes the posting's casing
-  (planned test_posting_asks.py::test_the_company_name_takes_the_postings_casing).
-- [ ] The bad fixture fails L12, L14, L15, L16 and L17, and the target
+  (`services/api/tests/test_posting_asks.py::test_offer_and_perks_sections_never_reach_the_analysis`).
+- [x] A quote not in the ask text, or out of posting order, refuses the
+  analysis (`services/api/tests/test_posting_asks.py::test_an_ask_quote_must_be_verbatim_and_in_order`).
+- [x] The writer payload holds no posting text and no unmatched fact
+  (`services/api/tests/test_posting_asks.py::test_the_writer_gets_only_asks_and_matched_facts`).
+- [x] The asks file is written beside the letter with ranks, matches and
+  gaps (`services/api/tests/test_posting_asks.py::test_the_asks_file_is_written_beside_the_letter`).
+- [x] A posting that asks for a portfolio gets the link line; one that does
+  not gets none (`services/api/tests/test_posting_asks.py::test_the_link_line_follows_the_posting`).
+- [x] A senior title gets the experience line from the facts
+  (`services/api/tests/test_posting_asks.py::test_a_senior_posting_gets_the_experience_line`).
+- [x] The company name takes the posting's casing
+  (`services/api/tests/test_posting_asks.py::test_the_company_name_takes_the_postings_casing`).
+- [x] The bad fixture fails L12, L14, L15, L16 and L17, and the target
   fixture passes every rule
-  (planned test_letter_lint.py::test_the_bad_fixture_fails_and_the_target_passes).
-- [ ] L7 refuses a six-word run, and L3 refuses 119 words
-  (planned test_letter_lint.py::test_six_shared_words_and_too_few_words_are_refused).
-- [ ] The academic letter and the answers generator are unchanged: their
-  prompt pins in `services/api/tests/test_academic_documents.py` hold.
+  (`services/api/tests/test_letter_lint.py::test_the_bad_fixture_fails_and_the_target_passes`).
+- [x] L7 refuses a six-word run, and L3 refuses 119 words
+  (`services/api/tests/test_letter_lint.py::test_six_shared_words_and_too_few_words_are_refused`).
+- [x] A "~" on another number in the evidence line qualifies nothing
+  (amendment 3) (`services/api/tests/test_letter_lint.py::test_a_qualifier_counts_only_next_to_its_number`).
+- [x] The academic letter and the answers generator are unchanged: their
+  prompt pins hold
+  (`services/api/tests/test_academic_documents.py::test_both_kinds_share_every_truth_rule`).
 
 ## Proof / origin
 
@@ -305,6 +308,79 @@ personal data and are never committed (privacy rule).
    and target letters as fixtures. They carry the operator's real metrics,
    employers and location, and the repository is public, so the fixtures
    reproduce the same defects with synthetic facts.
+
+## Decisions taken (2026-10-18)
+
+Akin approved the spec as written. Decisions 1 to 3 stay open: they are
+profile data only the operator adds. Until then letters list a portfolio
+link, an experience statement or a metric's action as gaps where a posting
+needs them. Decision 4 stands: the fixtures are synthetic.
+
+## Amendment (2026-10-18, implementation)
+
+Regenerating the Restream and Simple letters, and the existing tests, found
+these.
+
+1. **No posting text.** With no posting there is nothing to rank. The
+   writer gets every fact, unranked, under `facts`, and L16 and L17 do not
+   run. The CLI always has a posting (spec 149); a direct caller may not.
+2. **L14 needs the posting to write the name.** When the posting never
+   writes the company's name, L14 does not run. Holding the letter to the
+   tracker's casing would enforce the very lowercase the Problem names.
+3. **L13 reads the qualifier next to its number.** A "~" attached to the
+   number, "approximately", "about", "around" or "roughly" in the three
+   words before it, or "in total" in the five words after it. As first
+   built, a "~" anywhere on an evidence line qualified every number on it,
+   so a line stating an exact funnel result beside an approximate total
+   refused the exact result. This was fix 2 of 3; the generator and the
+   linter agreed after it.
+4. **The five asks that matter most, in posting order.** "The first five
+   asks" took five duties from the first section of the Restream posting
+   and left out the UX process, Figma and portfolio asks the request named.
+   The analysis now picks the five that matter most for the role, judged by
+   its title and craft, across every ask section, and lists them in the
+   posting's order. The order check is unchanged.
+5. **Code-added lines and writer gaps.** The link and experience lines are
+   exempt from the eight-word paragraph floor (fix 1 of 3: the floor
+   refused the link line). On this path the writer's own `gaps` are
+   ignored: it never sees the posting to quote, and the analysis owns the
+   gaps.
+6. **The brief still reaches the writer.** `never_name`, `employer_guidance`,
+   `guidance_url`, `operator_evidence` and `extra_notes` are the operator's
+   instructions (spec 066), not posting text, so the writer payload keeps
+   them.
+7. **The focused letter's logistics.** When the posting raises no location
+   or terms, the focused writer still gets the two candidate fields as
+   `logistics_facts`, since spec 140 requires its contracting paragraph.
+8. **The no-match refusal lists the asks.** When every ask is a gap, the
+   refusal message names each ask; no asks file is written for a refused
+   letter.
+9. **Spec 158's "~12%" criterion.** Spec 158 accepted "12%" when the
+   evidence says "~12%". L13 now refuses that, as this spec asks, and
+   `test_a_number_must_be_in_the_evidence` checks it.
+10. **Files the Scope did not name.** `services/api/src/harrier_cli/main.py`
+    passes the asks document and the posting's company to the writer of
+    the artifacts. `services/api/tests/conftest.py` stubs the analysis call
+    for every test, so no test reaches a provider. The shared letter
+    fixtures in `services/api/tests/test_apply_claims.py` and
+    `services/api/tests/test_apply.py` gain a body block to clear the new
+    floor, and `services/api/tests/test_apply_brief.py`,
+    `services/api/tests/test_focused_documents.py` and
+    `services/api/tests/test_academic_documents.py` follow the new ranges
+    and pins. Spec 158's citations of two renamed tests are updated.
+
+## Honest limitations
+
+- **The letters are only as good as the matched facts.** The regenerated
+  Restream letter passes every rule. But the profile has no fact for the
+  UX process or a portfolio, so three of five asks carry facts, and the
+  writer pads to reach 120 words. The floor and "drop unmatched facts"
+  pull against each other when a profile is thin for a posting.
+- **"A metric with its action" is a writer rule only.** Code cannot tell
+  an action from a description, so a metric can still appear without the
+  action that produced it.
+- **Ranking is the model's.** Code checks that each quote is verbatim and
+  in order, not that the five chosen are the five that matter most.
 
 ## Out of scope
 

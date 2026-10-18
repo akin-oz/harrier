@@ -50,7 +50,12 @@ FULL_LETTER = (
     f"{HOOK}\n\n"
     "My strongest fit is TypeScript-first frontend and product engineering with concrete "
     "delivery in production.\n\n"
-    "The work at Examplesoft looks product-facing and close to the product.\n\n"
+    "The work at Examplesoft looks product-facing and close to the product, and that is the "
+    "kind of work I want to keep doing: small changes that ship often, with the people who "
+    "use them close enough to say what still gets in their way.\n\n"
+    "Most of that work went out in small steps. A change shipped behind a review, the support "
+    "team told us what still confused the people who used it, and the next change fixed that "
+    "before anything new started on the board.\n\n"
     "I can walk the team through the checkout redesign on a call."
 )
 SHORT_LETTER = "I'm interested in this role because it fits my background well."
@@ -636,7 +641,7 @@ def test_generate_cover_letter_validates_three_paragraphs(
         )
 
     monkeypatch.setattr(letters_module, "generate_text", two_paragraph_response)
-    with pytest.raises(ValueError, match="should contain 5 to 8 blocks"):
+    with pytest.raises(ValueError, match="should contain 4 to 10 blocks"):
         generate_cover_letter(db, "examplesoft", "Senior Product Engineer", scope=DEFAULT_SCOPE)
 
 

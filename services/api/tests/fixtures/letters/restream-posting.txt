@@ -1,0 +1,18 @@
+Design Engineer - Studio Team
+
+Restream is looking for a Design Engineer to build features that are well crafted and easy to use.
+
+What You'll Do
+Craft every detail of new product features, from an idea to design to the implementation
+Design and implement the UI and UX of new and existing features
+Give and receive code review feedback with the team
+
+What We Look For
+Deep understanding of the UX design process
+Proficient with Figma or another design and prototyping tool
+A strong portfolio of previous design projects
+Knowledge of React and TypeScript
+
+What We Offer
+A startup environment and a flat company structure
+Work closely with the founders to grow the product

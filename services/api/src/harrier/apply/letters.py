@@ -14,7 +14,7 @@ import json
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
 from typing import cast
@@ -40,7 +40,17 @@ from harrier.apply.claims import (
     parse_claims,
     retry_payload,
 )
-from harrier.apply.letterlint import LintContext, lint_letter
+from harrier.apply.letterlint import AskCoverage, LintContext, lint_letter
+from harrier.apply.postingasks import (
+    Analysis,
+    analyse_posting,
+    ask_text,
+    asks_document,
+    experience_line,
+    fact_catalogue,
+    link_line,
+    posting_company,
+)
 from harrier.apply.profile import (
     ApplicationProfileError,
     load_candidate_document,
@@ -56,6 +66,7 @@ from harrier.llm import LLMClientError, generate_text
 from harrier.llm.jsonparse import loads_tolerant
 from harrier.paths import repo_root
 from harrier.resume.content import (
+    ResumeBundle,
     ResumeBundleError,
     TruthSources,
     forbidden_hits,
@@ -200,6 +211,12 @@ def cover_letter_keys_for(company: str, role: str, prefix: str = COVER_LETTERS) 
         "html": join_key(prefix, f"{slug}.html"),
         "pdf": join_key(prefix, f"{slug}.pdf"),
     }
+
+
+def cover_letter_asks_key_for(company: str, role: str, prefix: str = COVER_LETTERS) -> str:
+    """The asks file beside the letter (spec 160). Kept out of
+    `cover_letter_keys_for`, whose kinds the artifact endpoint serves."""
+    return join_key(prefix, f"{slugify(f'{company}-{role}')}.asks.json")
 
 
 def cover_letter_paths_for(
@@ -409,6 +426,7 @@ def cover_letter_violations(
     *,
     kind: str,
     lint: LintContext | None = None,
+    added: tuple[str, ...] = (),
 ) -> list[str]:
     """Every shape and phrasing rule the letter breaks (spec 065, rule N1).
 
@@ -450,9 +468,12 @@ def cover_letter_violations(
                 f"over the stated limit: letter.paragraphs {stated.paragraphs},"
                 f" full_version has {len(paragraphs)}"
             )
-    # A linted kind's first block is its role line, short by design.
+    # A linted kind's first block is its role line, short by design, and the
+    # link and experience lines code adds are short too (spec 160).
     floor_from = 1 if linted else 0
     for paragraph in paragraphs[floor_from:]:
+        if paragraph.strip() in added:
+            continue
         if len(paragraph.split()) < MIN_PARAGRAPH_WORDS:
             violations.append(f"stub paragraph: {paragraph}")
     words = len(full.split())
@@ -466,10 +487,15 @@ def cover_letter_violations(
         # comes from the posting, which L8 does not read. A candidate
         # number passes C5 only from verified evidence (spec 065), and the
         # hook's number must be candidate evidence (L4).
+        # A brief that states any letter limit replaces the word range too
+        # (spec 160), so the floor goes with the cap.
+        dropped: tuple[str, ...] = ("over the word limit", "number not in the evidence")
+        if stated.paragraphs is not None or stated.max_words is not None:
+            dropped = (*dropped, "under the word floor")
         violations.extend(
             violation
             for violation in lint_letter(full, lint, letter["short_version"])
-            if not violation.startswith(("over the word limit", "number not in the evidence"))
+            if not violation.startswith(dropped)
         )
     return list(dict.fromkeys(violations))
 
@@ -486,6 +512,11 @@ class LetterDraft:
     # document each candidate fact came from (spec 158).
     gaps: tuple[Gap, ...] = ()
     facts_used: tuple[FactUsed, ...] = ()
+    # The posting analysis behind the letter, written beside it, and the
+    # company as the posting writes it (spec 160). None and "" on the
+    # academic kind.
+    asks: dict[str, object] | None = None
+    company: str = ""
 
 
 def validate_cover_letter(letter: dict[str, str], *, kind: str) -> None:
@@ -507,8 +538,11 @@ def generate_cover_letter(
     scope: Scope,
 ) -> LetterDraft:
     """The letter for a job on the scope's track: its kind's prompt, its own
-    application profile, and every check (specs 065, 101)."""
+    application profile, and every check (specs 065, 101). The industry and
+    focused kinds answer the posting's asks first (spec 160)."""
     kind = scope.track.kind
+    if kind in LINTED_KINDS:
+        return _letter_from_asks(conn, company, role, jd_text, extra_notes, brief, scope=scope)
     payload = build_cover_letter_payload(
         conn,
         company,
@@ -534,6 +568,153 @@ def generate_cover_letter(
     return _checked_letter(conn, output_text, company, role, jd_text, brief, scope)
 
 
+@dataclass(frozen=True)
+class AskPlan:
+    """What the writer is given and what code adds around it (spec 160)."""
+
+    analysis: Analysis
+    facts: dict[str, str]
+    company: str
+    link: str | None = None
+    experience: str | None = None
+    # The casing L14 holds the letter to: the posting's form of the name,
+    # "" when the posting never writes it (amendment 2).
+    company_form: str = ""
+
+
+def _bundle_or_none(conn: Connection, scope: Scope) -> ResumeBundle | None:
+    from harrier.resume.content import load_bundle
+
+    try:
+        return load_bundle(conn, scope)
+    except ResumeBundleError:
+        return None
+
+
+def plan_letter(
+    conn: Connection, company: str, role: str, jd_text: str | None, *, scope: Scope
+) -> AskPlan:
+    """The posting analysis, the facts it matched, and the lines code adds.
+
+    Raises `ClaimCheckError` when the posting has asks but none matches a
+    fact (spec 160, failure modes)."""
+    sources = load_truth_sources(conn)
+    bundle = _bundle_or_none(conn, scope)
+    facts = fact_catalogue(sources, bundle)
+    posting = jd_text or ""
+    display = posting_company(company, posting)
+    form = display if re.search(rf"(?<!\w){re.escape(display)}(?!\w)", posting) else ""
+    if not posting.strip():
+        return AskPlan(analysis=Analysis(), facts=facts, company=display)
+    analysis = analyse_posting(posting, facts, display, role)
+    if analysis.asks and all(ask.gap for ask in analysis.asks):
+        asks = "; ".join(f"{ask.rank}. {ask.ask}" for ask in analysis.asks)
+        raise ClaimCheckError([f"no posting ask matches a profile fact: {asks}"])
+    text, _ = ask_text(posting)
+    link, link_gap = link_line(text, bundle)
+    experience, experience_gap = experience_line(role, text, bundle)
+    gaps = [gap for gap in (link_gap, experience_gap) if gap]
+    if not analysis.product_fact_ids:
+        gaps.append(f"first-hand experience of {display}'s product")
+    return AskPlan(
+        analysis=replace(analysis, extra_gaps=tuple(gaps)),
+        facts=facts,
+        company=display,
+        link=link,
+        experience=experience,
+        company_form=form,
+    )
+
+
+def writer_payload(
+    conn: Connection,
+    plan: AskPlan,
+    role: str,
+    extra_notes: str | None,
+    brief: Brief,
+    *,
+    scope: Scope,
+) -> dict[str, object]:
+    """Only the asks, their matched facts and the company (spec 160, section
+    4), with the brief's instructions (spec 066). No posting text, story
+    bank, application profile or unmatched fact."""
+    analysis = plan.analysis
+    payload: dict[str, object] = {
+        "company": plan.company,
+        "role": role,
+        "asks": [
+            {
+                "rank": ask.rank,
+                "ask": ask.ask,
+                "facts": analysis.facts_for(ask.fact_ids, plan.facts),
+            }
+            for ask in analysis.asks
+        ],
+        "logistics_facts": [
+            fact["text"] for fact in analysis.facts_for(analysis.logistics_fact_ids, plan.facts)
+        ],
+        "product_facts": [
+            fact["text"] for fact in analysis.facts_for(analysis.product_fact_ids, plan.facts)
+        ],
+        # The brief's instructions (spec 066): the operator's, not the posting.
+        "extra_notes": extra_notes or "",
+        "never_name": list(brief.never_name),
+        "employer_guidance": brief.employer_guidance,
+        "guidance_url": brief.guidance_url,
+        "operator_evidence": list(brief.evidence),
+    }
+    if not analysis.asks:
+        # No posting to rank against: every fact, unranked (amendment 1).
+        payload["facts"] = [{"id": key, "text": text} for key, text in plan.facts.items()]
+    if scope.track.kind == "focused":
+        profile = load_profile_json(conn, scope)
+        payload["scope_reason"] = str(profile.get("scope_reason") or "")
+        if not payload["logistics_facts"]:
+            # The focused letter always says how the candidate contracts
+            # (spec 140), from the two candidate fields.
+            try:
+                payload["logistics_facts"] = _candidate_facts(load_candidate_document(conn))
+            except ApplicationProfileError:
+                payload["logistics_facts"] = []
+    return payload
+
+
+def _letter_from_asks(
+    conn: Connection,
+    company: str,
+    role: str,
+    jd_text: str | None,
+    extra_notes: str | None,
+    brief: Brief,
+    *,
+    scope: Scope,
+) -> LetterDraft:
+    plan = plan_letter(conn, company, role, jd_text, scope=scope)
+    payload = writer_payload(conn, plan, role, extra_notes, brief, scope=scope)
+    system_prompt = letter_prompt(scope.track.kind) + brief_instructions(brief, "letter")
+    output_text = _request_letter(system_prompt, payload)
+    try:
+        return _checked_letter(conn, output_text, company, role, jd_text, brief, scope, plan)
+    except ClaimCheckError as refusal:
+        logger.warning(
+            "cover letter refused on attempt 1, retrying once: %s", "; ".join(refusal.violations)
+        )
+        output_text = _request_letter(system_prompt, retry_payload(payload, refusal, output_text))
+    return _checked_letter(conn, output_text, company, role, jd_text, brief, scope, plan)
+
+
+def _with_added_lines(full: str, plan: AskPlan) -> str:
+    """The writer's blocks with the experience line after the hook and the
+    link line after the proof, before logistics or the close (section 5)."""
+    blocks = [block for block in full.split("\n\n") if block.strip()]
+    if plan.experience and plan.experience not in blocks:
+        blocks.insert(min(2, len(blocks)), plan.experience)
+    if plan.link and plan.link not in blocks:
+        before = 2 if plan.analysis.logistics_quote or plan.analysis.logistics_fact_ids else 1
+        blocks.insert(max(len(blocks) - before, 1), plan.link)
+    return "\n\n".join(blocks)
+
+
 def _request_letter(system_prompt: str, payload: dict[str, object]) -> str:
     try:
         output_text = generate_text(
@@ -554,23 +735,49 @@ def _checked_letter(
     jd_text: str | None,
     brief: Brief,
     scope: Scope,
+    plan: AskPlan | None = None,
 ) -> LetterDraft:
     """One response parsed and put through every check. Raises
-    `ClaimCheckError` with every violation when it is refused."""
+    `ClaimCheckError` with every violation when it is refused. With a plan,
+    code adds its lines first and the asks rules run (spec 160)."""
     try:
         parsed = parse_cover_letter_response(output_text)
         claims = parse_cover_letter_claims(output_text)
         gaps = parse_cover_letter_gaps(output_text)
     except (ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"failed to parse AI response: {exc}") from exc
+    full = normalize_cover_letter_text(parsed["full_version"], is_full=True)
+    if plan is not None:
+        full = _with_added_lines(full, plan)
+        if plan.experience:
+            # The facts' own statement, checked by spec 071 when stored.
+            claims = [*claims, Claim(plan.experience, "candidate", (plan.experience,))]
     letter = {
         "short_version": normalize_cover_letter_text(parsed["short_version"], is_full=False),
-        "full_version": normalize_cover_letter_text(parsed["full_version"], is_full=True),
+        "full_version": full,
     }
     texts = [letter["short_version"], letter["full_version"]]
-    documents = letter_evidence(conn, brief)
+    # The pool joins the evidence only where the writer was given it, so the
+    # academic letter's evidence is spec 158's (spec 160).
+    documents = letter_evidence(
+        conn,
+        brief,
+        scope=scope if plan is not None else None,
+        experience=plan.experience if plan is not None else None,
+    )
     sources = _combined(documents)
     posting = "\n".join(part for part in (jd_text or "", brief.employer_guidance) if part)
+    coverage: tuple[AskCoverage, ...] = ()
+    if plan is not None:
+        coverage = tuple(
+            AskCoverage(
+                rank=ask.rank,
+                ask=ask.ask,
+                fact_texts=tuple(plan.facts[f] for f in ask.fact_ids if f in plan.facts),
+                listed_as_gap=ask.gap,
+            )
+            for ask in plan.analysis.asks[:3]
+        )
     lint = LintContext(
         # Asserted lines only: no denied text, no disclaimer section.
         evidence="\n".join(sources.asserted_lines()),
@@ -578,8 +785,24 @@ def _checked_letter(
         company=company,
         role=role,
         professional_years=_professional_years(conn, scope),
+        company_form=plan.company_form if plan is not None else "",
+        asks=coverage,
+        cited=tuple(
+            fragment
+            for claim in claims
+            if claim.about == "candidate"
+            for fragment in claim.evidence
+        ),
+        link_line=plan.link if plan is not None else None,
     )
-    violations = cover_letter_violations(letter, brief.letter, kind=scope.track.kind, lint=lint)
+    added = tuple(line for line in ((plan.link, plan.experience) if plan else ()) if line)
+    if plan is not None:
+        # The analysis owns the gaps; the writer was told to leave them
+        # empty and never saw the posting to quote (spec 160, section 4).
+        gaps = []
+    violations = cover_letter_violations(
+        letter, brief.letter, kind=scope.track.kind, lint=lint, added=added
+    )
     violations.extend(
         f"gap evidence not in posting: {gap.posting_evidence or gap.requirement}"
         for gap in gaps
@@ -606,12 +829,22 @@ def _checked_letter(
     violations.extend(check_claims(texts, claims, context))
     if violations:
         raise ClaimCheckError(violations)
+    asks: dict[str, object] | None = None
+    if plan is not None:
+        asks = asks_document(plan.analysis, plan.company)
+        quotes = {ask.ask: ask.quote for ask in plan.analysis.asks}
+        gaps = [
+            *(Gap(requirement=g, posting_evidence=quotes.get(g, "")) for g in plan.analysis.gaps),
+            *gaps,
+        ]
     return LetterDraft(
         short_version=letter["short_version"],
         full_version=letter["full_version"],
         claims=tuple(claims),
         gaps=tuple(gaps),
         facts_used=tuple(facts_used(claims, documents)),
+        asks=asks,
+        company=plan.company if plan is not None else "",
     )
 
 
@@ -642,7 +875,13 @@ def _candidate_facts(document: dict[str, object]) -> list[str]:
     return facts
 
 
-def letter_evidence(conn: Connection, brief: Brief = EMPTY_BRIEF) -> dict[str, TruthSources]:
+def letter_evidence(
+    conn: Connection,
+    brief: Brief = EMPTY_BRIEF,
+    *,
+    scope: Scope | None = None,
+    experience: str | None = None,
+) -> dict[str, TruthSources]:
     """Each document a letter's candidate claim may cite, by the name the
     draft's "Facts used" gives it (spec 158). The truth and achievements
     documents as today; the candidate document's allowlisted fields; and
@@ -655,12 +894,23 @@ def letter_evidence(conn: Connection, brief: Brief = EMPTY_BRIEF) -> dict[str, T
     except ApplicationProfileError:
         candidate = ""
     operator = with_operator_evidence(TruthSources("", ""), *brief.evidence).achievements_text
-    return {
+    documents = {
         "resume_truth": TruthSources(truth_text=truth.truth_text, achievements_text=""),
         "achievements": TruthSources(truth_text="", achievements_text=truth.achievements_text),
         "candidate": TruthSources(truth_text="", achievements_text=candidate),
         "operator_evidence": TruthSources(truth_text="", achievements_text=operator),
     }
+    if scope is not None:
+        # The track's bullet pool: the verified lines the CV is built from,
+        # which the writer is given by id (spec 160, section 4).
+        bundle = _bundle_or_none(conn, scope)
+        pool = "\n".join(bundle.bullet_pool.values()) if bundle is not None else ""
+        documents["bullet_pool"] = TruthSources(truth_text="", achievements_text=pool)
+    if experience:
+        documents["experience_statement"] = TruthSources(
+            truth_text="", achievements_text=experience
+        )
+    return documents
 
 
 def _combined(documents: dict[str, TruthSources]) -> TruthSources:
@@ -728,7 +978,13 @@ def render_cover_letter_markdown(
     if gaps is not None:
         lines.extend(["## Gaps", ""])
         lines.extend(
-            [f'- {gap.requirement}: "{gap.posting_evidence}"' for gap in gaps] or ["None."]
+            [
+                f'- {gap.requirement}: "{gap.posting_evidence}"'
+                if gap.posting_evidence
+                else f"- {gap.requirement}"
+                for gap in gaps
+            ]
+            or ["None."]
         )
         lines.append("")
     if facts is not None:
@@ -813,6 +1069,8 @@ def write_cover_letter_artifacts(
     kind: str,
     gaps: tuple[Gap, ...] | None = None,
     facts: tuple[FactUsed, ...] | None = None,
+    asks: dict[str, object] | None = None,
+    display_company: str = "",
 ) -> dict[str, Path]:
     with files_in(output_dir, COVER_LETTERS) as prefix:
         keys = cover_letter_keys_for(company, role, prefix)
@@ -829,6 +1087,13 @@ def write_cover_letter_artifacts(
             company, role, job_url, short_version, full_version, review_section, gaps, facts
         )
         save_text(keys["markdown"], markdown, atomic=False)
+        if asks is not None:
+            # Beside the letter, in the never-in-git store (spec 160).
+            save_text(
+                cover_letter_asks_key_for(company, role, prefix),
+                json.dumps(asks, ensure_ascii=False, indent=2) + "\n",
+                atomic=False,
+            )
         # The keys are per company and role, and the artifact endpoint serves
         # whatever PDF is there, so from here an earlier run's PDF and HTML
         # would sit beside this new draft as if they were current (review of
@@ -843,7 +1108,7 @@ def write_cover_letter_artifacts(
             raise NeedsInputError(markdown_path, placeholders)
         try:
             html_text = render_cover_letter_html(
-                conn, company, role, full_version, template_dir, kind=kind
+                conn, display_company or company, role, full_version, template_dir, kind=kind
             )
             save_text(keys["html"], html_text, atomic=False)
             # The resume path validated its PDF; this one only checked the

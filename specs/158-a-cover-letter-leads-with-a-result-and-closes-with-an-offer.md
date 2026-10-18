@@ -291,13 +291,13 @@ kind's range and cap.
   (amendment 1) (`services/api/tests/test_letter_lint.py::test_a_run_the_evidence_also_has_is_not_a_restatement`).
 - [x] An industry letter with a role line, three body paragraphs and a
   close passes the shape check; a three-block letter is refused naming the
-  range (`services/api/tests/test_letter_structure.py::test_the_industry_letter_has_five_to_eight_blocks`).
+  range (`services/api/tests/test_letter_structure.py::test_the_industry_letter_has_four_to_ten_blocks`).
 - [x] A focused letter without a logistics block is refused
   (`services/api/tests/test_letter_structure.py::test_the_focused_letter_has_a_logistics_block`).
 - [x] A candidate claim citing any story bank string is refused as
   unverified, and the payload still carries the STAR strings as context
   (amendment 15)
-  (`services/api/tests/test_letter_structure.py::test_story_bank_text_is_context_not_evidence`).
+  (`services/api/tests/test_letter_structure.py::test_story_bank_text_never_reaches_the_writer_or_the_evidence`).
 - [x] A candidate claim citing the candidate document's location or entity
   status passes; one citing a value under any other key is refused
   (amendment 10) (`services/api/tests/test_letter_structure.py::test_candidate_document_values_are_evidence`).

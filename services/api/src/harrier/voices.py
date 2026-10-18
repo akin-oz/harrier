@@ -60,46 +60,53 @@ Core voice:
 - recruiter-facing, not theatrical
 - human, not polished marketing copy
 
-The reader is a recruiter or hiring manager skimming quickly.
+Your input (spec 160) is not the posting. It is:
+- company: the company as the posting writes it. Use exactly this casing.
+- role: the role.
+- asks: the posting's first asks in rank order, each with the candidate facts
+  that meet it, by id and text. These facts are lines of
+  resume_truth_source_md or latest_project_achievements_md or the CV's
+  verified bullet pool. Quote them verbatim as claim evidence.
+- logistics_facts: facts about where the candidate works from and how they
+  can work, when the posting raised location or terms.
+- product_facts: first-hand experience of the company's product, usually
+  empty.
+- facts: present only when there is no posting to rank against.
+Use no fact that is not in this input. Leave gaps empty: code lists them.
+Do not write a link, a URL or an experience statement: code adds those lines.
 
-Required structure for full_version, as blocks separated by blank lines (spec 158):
-1. Role line: the role, the team when the posting names one, and the company,
-   on one line, for example "Staff Engineer, Payments team, Example GmbH".
-   No full stop.
-2. Hook: open with the candidate's strongest quantified result that matches
-   the posting's top responsibility. The first sentence carries the number.
-   Never open with the posting, the company or the role.
-3. Proof: one short paragraph per cluster the posting asks for, such as the
-   stack, the tooling or AI practice, and the domain. At most three clusters.
-   Every claim in them is a fact the evidence states.
-4. Why this company: one specific, true sentence with a basis in the posting.
-   Leave it out when there is none. No flattery.
-5. Logistics, only when the posting or the notes raise location, time zone,
-   eligibility or contracting: its own paragraph, each fact only as the
-   evidence states it.
-6. Close: one sentence alone in its block, a concrete offer, for example a
-   walkthrough of a named piece of work. Never a question.
+Required structure for full_version, as blocks separated by blank lines (spec 160):
+1. Role line: the role, the team when the role names one, and the company, on
+   one line, for example "Staff Engineer, Payments team, Example GmbH". No
+   full stop.
+2. Hook: answer ask 1 with its facts. When ask 1 has no facts, answer the
+   highest-ranked ask that has facts. Open with what the candidate did, never
+   with the company or the role.
+3. Proof: one short paragraph per further ask, in rank order, from that ask's
+   facts only. Asks 4 and 5 may share a paragraph. Skip an ask with no facts.
+4. Why this company: one first-person sentence from product_facts only. With
+   no product_facts, leave it out.
+5. Logistics, only from logistics_facts: its own paragraph.
+6. Close: one sentence alone in its block, a concrete offer tied to the hook's
+   work. Never a question.
 
-The hook, the proof and the why sentence make three to five paragraphs.
+The hook and the proof make two to five paragraphs.
 
 """,
-    """- 150 to 220 words in full_version, role line included
-- Never restate the posting's text; say what the candidate did instead
-- Never copy more than five words in a row from the posting, the why sentence
-  included: name what is specific about the company in your own words
+    """- 120 to 220 words in full_version, role line included
+- Never restate the posting; say what the candidate did
 - Never write "I am writing to apply", "excited", "happy to", "would love to",
   "let me know" or "looking forward"
 - No hedging words: hopefully, perhaps, possibly, might, I believe, I think,
   I feel, I hope
-- State the candidate's experience only in the wording the truth sources give
-  for it, and never in decades
-- Copy every number exactly as the evidence states it, including any "~" and
-  any "in total"
-- Call a legal entity "a" or "an" entity of its type, such as "an Estonian OÜ"
-  or "a GmbH". Never write "my" or "our" before it, even when the evidence
-  states it is registered
-- When the posting asks for something the evidence cannot back, leave it out
-  of the letter and list it in gaps
+- Never state a metric without the action that produced it in the same
+  paragraph. When the facts hold a metric but not its action, use another fact
+- Copy every number exactly as its fact states it. Where a fact states a
+  percentage without "~", write it without "~". Keep "~", "approximately" and
+  "in total" where every fact with that number carries them
+- Call a legal entity "a" or "an" entity of its type, never "my" or "our"
+- Never start a sentence with the company name followed by describes, says,
+  offers, believes, claims or promises
 - End with the sharpest true sentence
 
 Short version:
@@ -108,8 +115,8 @@ Short version:
 - direct, not salesy
 
 """,
-    "- Write a role line, three to five body paragraphs, an optional logistics paragraph and a"
-    " one-sentence close, at most 220 words.\n",
+    "- Write a role line, two to five body paragraphs, logistics only from logistics_facts,"
+    " and a one-sentence close, 120 to 220 words.\n",
     "",
 )
 
@@ -175,47 +182,55 @@ Core voice:
 - evidence-first
 - human, not polished marketing copy
 
-Required structure for full_version, as blocks separated by blank lines (spec 158):
-1. Role line: the role, the team when the posting names one, and the company,
-   on one line. No full stop.
-2. Hook: open with the candidate's strongest quantified result that matches
-   the posting's top responsibility. The first sentence carries the number.
-   Never open with the posting, the company or the role.
-3. Proof: one short paragraph per cluster the posting asks for, at most three.
-   One of them may be AI-assisted engineering, from the truth sources only.
-4. Why the candidate chose a smaller scope. Draw it only from the application
-   profile's scope_reason, written as the candidate's stated preference. It is
-   never a claim about the employer and never a fact without evidence.
-5. Why this company: one specific, true sentence with a basis in the posting.
-   Leave it out when there is none. No flattery.
-6. Logistics: how the candidate contracts and invoices, the entity, the time
-   zone and any tax or VAT identifier, each only as the evidence states it.
-   For a value the material lacks, write [[TODO: what is needed]], for example
-   [[TODO: tax or VAT ID]]. Never invent one. Its own paragraph.
-7. Close: one sentence alone in its block, a concrete offer that names the demo
-   or the repository from candidate_links. Never a question.
+Your input (spec 160) is not the posting. It is:
+- company: the company as the posting writes it. Use exactly this casing.
+- role: the role.
+- asks: the posting's first asks in rank order, each with the candidate facts
+  that meet it, by id and text. These facts are lines of
+  resume_truth_source_md or latest_project_achievements_md or the CV's
+  verified bullet pool. Quote them verbatim as claim evidence.
+- logistics_facts: facts about where the candidate works from and how they
+  can work, when the posting raised location or terms.
+- product_facts: first-hand experience of the company's product, usually
+  empty.
+- facts: present only when there is no posting to rank against.
+Use no fact that is not in this input. Leave gaps empty: code lists them.
+Do not write a link, a URL or an experience statement: code adds those lines.
+- scope_reason: why the candidate chose a smaller scope, their stated
+  preference.
 
-The hook, the proof, the scope reason and the why sentence make three to five
-paragraphs. Do not write a salutation or a signature; the template adds both.
+Required structure for full_version, as blocks separated by blank lines (spec 160):
+1. Role line: the role, the team when the role names one, and the company, on
+   one line. No full stop.
+2. Hook: answer ask 1 with its facts. When ask 1 has no facts, answer the
+   highest-ranked ask that has facts. Open with what the candidate did.
+3. Proof: one short paragraph per further ask, in rank order, from that ask's
+   facts only. Skip an ask with no facts.
+4. Why the candidate chose a smaller scope, from scope_reason only, as a stated
+   preference. It is never a claim about the employer.
+5. Logistics: how the candidate works and contracts, from logistics_facts only.
+   For a value the facts lack, write [[TODO: what is needed]]. Never invent one.
+6. Close: one sentence alone in its block, a concrete offer tied to the hook's
+   work. Never a question.
+
+The hook, the proof and the scope reason make two to five paragraphs. Do not
+write a salutation or a signature; the template adds both.
 
 """,
-    """- 150 to 220 words in full_version, role line included
-- Never restate the posting's text; say what the candidate did instead
-- Never copy more than five words in a row from the posting, the why sentence
-  included: name what is specific about the company in your own words
+    """- 120 to 220 words in full_version, role line included
+- Never restate the posting; say what the candidate did
 - Never write "I am writing to apply", "excited", "happy to", "would love to",
   "let me know" or "looking forward"
 - No hedging words: hopefully, perhaps, possibly, might, I believe, I think,
   I feel, I hope
-- State the candidate's experience only in the wording the truth sources give
-  for it, and never in decades
-- Copy every number exactly as the evidence states it, including any "~" and
-  any "in total"
-- Call a legal entity "a" or "an" entity of its type, such as "an Estonian OÜ"
-  or "a GmbH". Never write "my" or "our" before it, even when the evidence
-  states it is registered
-- When the posting asks for something the evidence cannot back, leave it out
-  of the letter and list it in gaps
+- Never state a metric without the action that produced it in the same
+  paragraph. When the facts hold a metric but not its action, use another fact
+- Copy every number exactly as its fact states it. Where a fact states a
+  percentage without "~", write it without "~". Keep "~", "approximately" and
+  "in total" where every fact with that number carries them
+- Call a legal entity "a" or "an" entity of its type, never "my" or "our"
+- Never start a sentence with the company name followed by describes, says,
+  offers, believes, claims or promises
 - End with the sharpest true sentence
 
 Short version:
@@ -224,8 +239,8 @@ Short version:
 - direct, not salesy
 
 """,
-    "- Write a role line, three to five body paragraphs, a logistics paragraph and a"
-    " one-sentence close, at most 220 words.\n",
+    "- Write a role line, two to five body paragraphs, a logistics paragraph and a"
+    " one-sentence close, 120 to 220 words.\n",
     "",
 )
 
