@@ -128,7 +128,8 @@ The industry and focused voices state:
 - Numbers are copied exactly as the evidence states them, including any
   `~` and any "in total".
 - A legal entity is "a" or "an" entity of its type unless the evidence
-  states it is registered.
+  states it is registered. Amended by spec 159: never "my" or "our", even
+  when registered.
 - When the posting asks for something the evidence cannot back, leave it
   out of the letter and list it as a gap.
 
@@ -214,7 +215,8 @@ violation, empty when the letter passes. It refuses:
   the record's professional years, or the word "decade" or "decades".
 - **L10 entity:** "my" followed by a legal entity type (OÜ, GmbH, Ltd,
   LLC, BV, SAS, SRL, sp. z o.o.) unless an evidence line names that type
-  with "registered" and without "not".
+  with "registered" and without "not". Amended by spec 159: L10 refuses
+  "my" or "our" before an entity type whatever the evidence says.
 - **L11 shape:** the role line is missing (the first block is more than
   one line, more than 15 words, or ends in ".", "!" or "?"), or the block
   count is outside the kind's range.
@@ -458,7 +460,8 @@ The build found these places where the Behavior was wrong or silent.
     an ownership cue that governs the entity, at most two words before its
     type ("my GmbH", "contracts through a GmbH", "director of Example
     GmbH"), and must not name an employer, a client or "worked at" (two
-    rounds of review of #405).
+    rounds of review of #405). Superseded by spec 159, which removes the
+    ownership and registration heuristic.
 
 ## Out of scope
 
