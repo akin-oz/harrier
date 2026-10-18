@@ -171,7 +171,7 @@ def test_a_disclaimer_line_does_not_register_an_entity(
         db, "resume_truth", "truth.md", "markdown", f"{TRUTH}That my GmbH is registered.\n"
     )
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} I contract through my GmbH."))
-    assert "calls an entity the evidence does not show registered 'my GmbH'" in refusal(db)
+    assert "calls a legal entity 'my GmbH'" in refusal(db)
 
 
 def test_candidate_document_values_are_evidence(

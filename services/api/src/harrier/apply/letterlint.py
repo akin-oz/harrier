@@ -60,24 +60,34 @@ BANNED_ANYWHERE: tuple[str, ...] = (
 # L7: a shared run of this many words is a restatement.
 RESTATEMENT_WORDS = 8
 
-# L10: legal entity types a letter may not call "my" without evidence.
-ENTITY_TYPES: tuple[str, ...] = ("OÜ", "GmbH", "Ltd", "LLC", "BV", "SAS", "SRL", "sp. z o.o.")
+# L10: legal entity types a letter never calls "my" or "our" (spec 159).
+# Spelled as letter groups: a dot and whitespace may sit between two groups,
+# so "B.V." and "sp. z o. o." are the same types. A dot after the last group
+# is not part of the match, since it may end the sentence.
+ENTITY_TYPES: tuple[tuple[str, ...], ...] = (
+    ("O", "Ü"),
+    ("G", "m", "b", "H"),
+    ("Ltd",),
+    ("L", "L", "C"),
+    ("B", "V"),
+    ("S", "A", "S"),
+    ("S", "R", "L"),
+    ("sp", "z", "o", "o"),
+)
 
 # L11: the role line's length.
 ROLE_LINE_MAX_WORDS = 15
 
-# Words that make a "registered" line say the opposite or not yet.
-_NEGATED = re.compile(r"\b(?:not|never|no|pending|planned|yet)\b|n['\u2019]t\b")
-# A cue that makes the entity the candidate's own. It must govern the entity
-# itself, at most two words before its type: "my GmbH", "contracts through a
-# GmbH", "director of Example GmbH" (review of #405).
-_OWNERSHIP_CUE = (
-    r"(?:my|own(?:s|ed)?|founded|founder\s+of|director\s+of|contracts?\s+through"
-    r"|invoices?\s+through|trades?\s+as)"
+# L10: an owner word, at most two words, then an entity type, across any
+# whitespace. A word is a letter or digit followed by letters, digits,
+# apostrophes or hyphens, so a sentence end stops the match (spec 159).
+_ENTITY_TYPE = "|".join(
+    r"\.?\s*".join(re.escape(group) for group in groups) for groups in ENTITY_TYPES
 )
-# A line about someone else's company never shows ownership: "My employer
-# Acme GmbH, registered in Germany" (review of #405).
-_SOMEONE_ELSES = re.compile(r"\b(?:employer|employed|worked|works\s+at|client|customer)\b")
+_OWNED_ENTITY = re.compile(
+    rf"\b(?:my|our)\s+(?:[^\W_][\w'\u2019-]*\s+){{0,2}}(?:{_ENTITY_TYPE})(?!\w)",
+    re.IGNORECASE,
+)
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _APOSTROPHE = "\u2019"
@@ -142,30 +152,6 @@ def _shared_runs(text: str, posting: str, evidence: str) -> list[str]:
 
 def _starts_with(text: str, prefix: str) -> bool:
     return bool(prefix.strip()) and text.lower().startswith(prefix.strip().lower())
-
-
-def _owned(entity: str, line: str) -> bool:
-    """Whether an ownership cue governs this entity type on the line."""
-    pattern = rf"\b{_OWNERSHIP_CUE}\s+(?:[^\W_][\w.'-]*\s+){{0,2}}{re.escape(entity)}(?!\w)"
-    return re.search(pattern, line, re.IGNORECASE) is not None
-
-
-def _registered(entity: str, evidence: str) -> bool:
-    """Whether an evidence line names the entity type as registered and as
-    the candidate's own. A whole word: "unregistered" and "deregistered" are
-    not registration, and an employer's registered GmbH is not the
-    candidate's."""
-    for line in evidence.splitlines():
-        lowered = line.lower()
-        if (
-            _phrase(entity).search(line)
-            and re.search(r"\bregistered\b", lowered)
-            and _owned(entity, line)
-            and not _SOMEONE_ELSES.search(lowered)
-            and not _NEGATED.search(lowered)
-        ):
-            return True
-    return False
 
 
 def lint_letter(full_version: str, context: LintContext, short_version: str = "") -> list[str]:
@@ -260,11 +246,16 @@ def lint_letter(full_version: str, context: LintContext, short_version: str = ""
     if re.search(r"\bdecades?\b", both, re.IGNORECASE):
         violations.append("counts experience in decades")
 
-    # L10: an entity that is not registered is not "my" entity.
-    for entity in ENTITY_TYPES:
-        if _phrase(f"my {entity}").search(both) and not _registered(entity, context.evidence):
-            violations.append(
-                f"calls an entity the evidence does not show registered 'my {entity}'"
-            )
+    # L10: never "my" or "our" entity, whatever the evidence says. Each
+    # version alone, so a match cannot span the two (spec 159).
+    owned = [
+        " ".join(match.group(0).split())
+        for text in (full_version, short_version)
+        for match in _OWNED_ENTITY.finditer(text)
+    ]
+    for found in dict.fromkeys(owned):
+        violations.append(
+            f'calls a legal entity \'{found}\': write "a" or "an" before the entity type'
+        )
 
     return violations

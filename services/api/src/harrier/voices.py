@@ -95,8 +95,9 @@ The hook, the proof and the why sentence make three to five paragraphs.
   for it, and never in decades
 - Copy every number exactly as the evidence states it, including any "~" and
   any "in total"
-- Call a legal entity "a" or "an" entity of its type, never "my", unless the
-  evidence states it is registered
+- Call a legal entity "a" or "an" entity of its type, such as "an Estonian OÜ"
+  or "a GmbH". Never write "my" or "our" before it, even when the evidence
+  states it is registered
 - When the posting asks for something the evidence cannot back, leave it out
   of the letter and list it in gaps
 - End with the sharpest true sentence
@@ -210,8 +211,9 @@ paragraphs. Do not write a salutation or a signature; the template adds both.
   for it, and never in decades
 - Copy every number exactly as the evidence states it, including any "~" and
   any "in total"
-- Call a legal entity "a" or "an" entity of its type, never "my", unless the
-  evidence states it is registered
+- Call a legal entity "a" or "an" entity of its type, such as "an Estonian OÜ"
+  or "a GmbH". Never write "my" or "our" before it, even when the evidence
+  states it is registered
 - When the posting asks for something the evidence cannot back, leave it out
   of the letter and list it in gaps
 - End with the sharpest true sentence
