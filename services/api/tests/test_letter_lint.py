@@ -182,6 +182,21 @@ def test_a_negated_registration_is_not_registration() -> None:
         ], line
 
 
+def test_an_employers_registered_entity_is_not_mine() -> None:
+    """A registered GmbH the candidate worked at is not the candidate's own
+    (review of #405)."""
+    mine = letter(proof=f"{PROOF} I contract through my GmbH.")
+    employer = LintContext(
+        evidence=f"{EVIDENCE}Worked at Acme GmbH, registered in Germany.\n",
+        posting=POSTING,
+        company=COMPANY,
+        role=ROLE,
+    )
+    assert lint(mine, employer) == [
+        "calls an entity the evidence does not show registered 'my GmbH'"
+    ]
+
+
 def test_the_short_version_is_linted_too() -> None:
     """The short version goes into an application textbox (review of #405)."""
     assert lint(letter(), short="Two decades building payment systems.") == [

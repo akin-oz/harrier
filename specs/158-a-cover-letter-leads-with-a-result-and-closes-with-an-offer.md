@@ -283,7 +283,8 @@ kind's range and cap.
 - [x] "6+ years" is refused by L9 when the record holds 5, and "5+ years"
   passes (`services/api/tests/test_letter_lint.py::test_year_count_is_capped_by_the_record`).
 - [x] "my GmbH" is refused when no evidence line states one is registered
-  ("unregistered" is not registration), and "a GmbH" passes (`services/api/tests/test_letter_lint.py::test_an_unregistered_entity_is_not_mine`).
+  ("unregistered" is not registration, nor is an employer's registered
+  GmbH), and "a GmbH" passes (`services/api/tests/test_letter_lint.py::test_an_unregistered_entity_is_not_mine`).
 - [x] A run of eight words the evidence also has is not a restatement
   (amendment 1) (`services/api/tests/test_letter_lint.py::test_a_run_the_evidence_also_has_is_not_a_restatement`).
 - [x] An industry letter with a role line, three body paragraphs and a
@@ -451,6 +452,12 @@ The build found these places where the Behavior was wrong or silent.
     how a result was achieved; a letter cites only the truth sources, the
     two candidate fields and the brief's evidence. This replaces open
     decision 1's answer.
+16. **A registered entity must be the candidate's own.** L10 accepted any
+    line naming the entity type as registered, so an employer's "Acme GmbH,
+    registered in Germany" let "my GmbH" through. The line must also carry
+    an ownership cue ("my", "owns", "founded", "director", "contracts
+    through", "invoices through", "trades as", "sole proprietor") (review
+    of #405).
 
 ## Out of scope
 

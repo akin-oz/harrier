@@ -68,6 +68,13 @@ ROLE_LINE_MAX_WORDS = 15
 
 # Words that make a "registered" line say the opposite or not yet.
 _NEGATED = re.compile(r"\b(?:not|never|no|pending|planned|yet)\b|n['\u2019]t\b")
+# Words that make a registered entity the candidate's own, not an
+# employer's: "Worked at Acme GmbH, registered in Germany" names a GmbH that
+# is someone else's (review of #405).
+_OWNED = re.compile(
+    r"\b(?:my|own|owns|owned|founded|founder|director|contracts?\s+through"
+    r"|invoices?\s+through|trades?\s+as|sole\s+proprietor)\b"
+)
 
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 _APOSTROPHE = "\u2019"
@@ -135,13 +142,16 @@ def _starts_with(text: str, prefix: str) -> bool:
 
 
 def _registered(entity: str, evidence: str) -> bool:
-    """Whether an evidence line names the entity type as registered. A whole
-    word: "unregistered" and "deregistered" are not registration."""
+    """Whether an evidence line names the entity type as registered and as
+    the candidate's own. A whole word: "unregistered" and "deregistered" are
+    not registration, and an employer's registered GmbH is not the
+    candidate's."""
     for line in evidence.splitlines():
         lowered = line.lower()
         if (
             _phrase(entity).search(line)
             and re.search(r"\bregistered\b", lowered)
+            and _OWNED.search(lowered)
             and not _NEGATED.search(lowered)
         ):
             return True
