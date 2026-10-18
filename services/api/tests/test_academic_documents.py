@@ -60,7 +60,7 @@ from harrier_cli.main import main
 # spec 159's entity line.
 INDUSTRY_PROMPT_SHA256 = {
     "tailor": "e4d6e724cbb0bca98688928bfe01dcac3f4eaa77b5d14c94f52a8bc530ec8525",
-    "letter": "14d9c3138babf4a57505599edf405b8384a3e6811b812fbf4a61a485132b4dc9",
+    "letter": "b062e79467e60ff89c28bf85ba72bd1e952f2483262952ed353a828292f3e8f8",
     "answers": "5f4c2ce48f22338680ed62668bf294116c01931a608407710d7377791acb1a00",
 }
 
@@ -138,7 +138,7 @@ def test_the_academic_letter_prompt_is_written_for_a_committee() -> None:
     for topic in ("Research fit", "group or department", "Why this institution"):
         assert topic in academic
     assert "no word count" in academic
-    assert "at most 220 words" in letters_module.letter_prompt("industry")
+    assert "120 to 220 words" in letters_module.letter_prompt("industry")
 
 
 # --- the generators send their kind's prompt ----------------------------------

@@ -148,10 +148,10 @@ class KindRules:
     cv_template: str = "resume-template.html"
     # The page counts the PDF gate accepts, for the CV and the letter alike.
     pages: tuple[int, ...] = (1,)
-    # The letter's block range (role line and close included) and word cap
-    # when no brief states them (spec 158). None means the kind has none,
-    # and its length is the page gate's.
-    letter_blocks: tuple[int, int] | None = (5, 8)
+    # The letter's block range (role line, link and experience lines and
+    # close included) and word cap when no brief states them (specs 158,
+    # 160). None means the kind has none, and its length is the page gate's.
+    letter_blocks: tuple[int, int] | None = (4, 10)
     letter_max_words: int | None = 220
     # Spec 140: the letter's template; the most sentences the CV's profile
     # may have (None: no limit); and whether tailoring writes the
@@ -256,7 +256,7 @@ KIND_RULES["focused"] = replace(
     ),
     cv_template="resume-template-focused.html",
     pages=(1,),
-    letter_blocks=(6, 8),
+    letter_blocks=(5, 10),
     letter_max_words=220,
     letter_template="cover-letter-template-focused.html",
     profile_max_sentences=3,

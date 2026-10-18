@@ -83,6 +83,14 @@ ROLE_LINE = "Senior Product Engineer, Billing team, Examplesoft"
 HOOK = "I cut checkout errors by 17% after the redesign."
 HOOK_EVIDENCE = "Cut checkout errors by 17% after the redesign"
 CLOSE = "I can walk your team through the checkout flow on a call."
+# A body block with no number, skill or hedge, so the default letter clears
+# spec 160's floor of 120 words whatever a test puts in its other blocks.
+FILLER = (
+    "Most of that work went out in small steps. A change shipped behind a review, the"
+    " support team told us what still confused the people who used it, and the next change"
+    " fixed that before anything new started on the board. That rhythm kept the invoices"
+    " correct while the product kept moving."
+)
 
 CHECKOUT = "I built the checkout flow in TypeScript and React."
 CHECKOUT_EVIDENCE = "Built the checkout flow in TypeScript and React"
@@ -118,11 +126,13 @@ def letter_json(
     close: str = CLOSE,
     role_line: str = ROLE_LINE,
     gaps: Sequence[Mapping[str, str | None]] | None = None,
+    filler: str = FILLER,
 ) -> str:
-    """A letter of the industry shape (spec 158): the role line, the hook,
-    `first`, `middle` and `last` as the body, any extra blocks, and the
-    close. The hook's claim joins whatever claims a test declares."""
-    paragraphs = [role_line, hook, first, middle, last, *extra_paragraphs, close]
+    """A letter of the industry shape (specs 158, 160): the role line, the
+    hook, `first`, `middle`, `last` and the filler as the body, any extra
+    blocks, and the close. The hook's claim joins whatever claims a test
+    declares."""
+    paragraphs = [role_line, hook, first, middle, last, filler, *extra_paragraphs, close]
     declared = list(GROUNDED_CLAIMS if claims is None else claims)
     if hook == HOOK and HOOK_CLAIM not in declared:
         declared.append(HOOK_CLAIM)
@@ -307,11 +317,11 @@ def test_a_stub_paragraph_refuses_instead_of_being_dropped(
 def test_a_fourth_paragraph_refuses_instead_of_being_dropped(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The name is spec 065's. Since spec 158 the industry letter holds five
-    to eight blocks, so the block past the range is the ninth."""
+    """The name is spec 065's. Since spec 160 the industry letter holds four
+    to ten blocks, so the block past the range is the eleventh."""
     extra = "I would also like to mention my interest in the team."
-    stub_letter(monkeypatch, letter_json(extra_paragraphs=(extra,) * 3))
-    assert "should contain 5 to 8 blocks" in refusal(db)
+    stub_letter(monkeypatch, letter_json(extra_paragraphs=(extra,) * 4))
+    assert "should contain 4 to 10 blocks" in refusal(db)
 
 
 # --- C1 to C4: the citations ---------------------------------------------------
@@ -1253,13 +1263,15 @@ def refused_versions(
     posting: str = POSTING,
     brief: Brief = EMPTY_BRIEF,
 ) -> list[str]:
-    """The violations of a letter holding each sentence undeclared, or an
-    empty list when the letter passes."""
+    """The number violations (C5, C6) of a letter holding each sentence
+    undeclared, or an empty list when it has none. Since spec 160 a posting
+    sentence a test copies into the letter also trips L7, which is not what
+    these tests are about."""
     stub_letter(monkeypatch, letter_json(" ".join([CHECKOUT, INVOICES, *sentences])))
     try:
         generate_cover_letter(db, COMPANY, ROLE, jd_text=posting, brief=brief, scope=DEFAULT_SCOPE)
     except ClaimCheckError as caught:
-        return caught.violations
+        return [v for v in caught.violations if v.startswith("number ")]
     return []
 
 

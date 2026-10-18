@@ -860,6 +860,9 @@ def _cmd_cover_letter(args: argparse.Namespace) -> int:
                 # The draft's "Gaps" and "Facts used" sections (spec 158).
                 gaps=letter.gaps,
                 facts=letter.facts_used,
+                # The asks file and the posting's company casing (spec 160).
+                asks=letter.asks,
+                display_company=letter.company,
             )
         except NeedsInputError as needs:
             # The draft is written and only the operator can finish it. Its own

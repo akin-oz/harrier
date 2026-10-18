@@ -8,9 +8,15 @@ Everything is synthetic.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+from typing import Any
+
 import pytest
 
-from harrier.apply.letterlint import LintContext, lint_letter
+from harrier.apply.letterlint import AskCoverage, LintContext, lint_letter
+
+FIXTURES = Path(__file__).parent / "fixtures" / "letters"
 
 COMPANY = "Example GmbH"
 ROLE = "Frontend Engineer"
@@ -26,10 +32,19 @@ POSTING = (
 )
 
 ROLE_LINE = "Frontend Engineer, Payments team, Example GmbH"
-HOOK = "I cut page load time by 12% on the product pages."
+HOOK = "I cut page load time by ~12% on the product pages."
 PROOF = "I built a design system in React with documented components for product teams."
 WHY = "Payment tools for small shops are the product I want to build next."
 CLOSE = "I can walk your team through the design system on a call."
+# A body block with no number, skill or hedge, so the base letter clears
+# spec 160's floor of 120 words.
+BODY = (
+    "Most of that work shipped in small steps behind a review. The support team said what"
+    " still confused the people who used it, and the next change fixed that before anything"
+    " new started. That rhythm kept the product steady while it grew, and it kept the design"
+    " and the code from drifting apart over time. Each review asked one plain question: would"
+    " a new user understand this screen on the first try."
+)
 
 CONTEXT = LintContext(
     evidence=EVIDENCE, posting=POSTING, company=COMPANY, role=ROLE, professional_years=5
@@ -43,9 +58,12 @@ def letter(
     proof: str = PROOF,
     why: str = WHY,
     close: str = CLOSE,
+    body: str = BODY,
     extra: tuple[str, ...] = (),
 ) -> str:
-    return "\n\n".join([role_line, hook, proof, why, *extra, close])
+    return "\n\n".join(
+        block for block in [role_line, hook, proof, why, body, *extra, close] if block
+    )
 
 
 def lint(full: str, context: LintContext = CONTEXT, short: str = "") -> list[str]:
@@ -62,7 +80,6 @@ BROKEN = {
         letter(hook=f"Example GmbH needs speed, and {HOOK[0].lower()}{HOOK[1:]}"),
         "banned opener",
     ),
-    "L4 number": (letter(hook=f"I care about fast pages. {HOOK}"), "first sentence has no number"),
     "L5 banned": (letter(why=f"I am excited that {WHY[0].lower()}{WHY[1:]}"), "excited"),
     "L6 sentences": (letter(close=f"{CLOSE} It took a year."), "more than one sentence"),
     "L6 question": (
@@ -98,12 +115,14 @@ def test_each_rule_refuses_and_its_fix_passes(rule: str) -> None:
 
 
 def test_a_number_must_be_in_the_evidence() -> None:
-    """ "~12%" in the evidence backs "12%"; nothing backs "14%"."""
+    """ "~12%" in the evidence backs "12%" for L8; nothing backs "14%". Since
+    spec 160, L13 refuses "12%" for dropping the "~" every evidence line
+    gives it."""
     assert lint(letter()) == []
-    assert lint(letter(hook=HOOK.replace("12%", "14%"))) == [
-        "the hook's first sentence has no number from the evidence",
-        "number not in the evidence: 14%",
-    ]
+    assert lint(letter(hook=HOOK.replace("~12%", "14%"))) == ["number not in the evidence: 14%"]
+    dropped = lint(letter(hook=HOOK.replace("~12%", "12%")))
+    assert not any(v.startswith("number not in the evidence") for v in dropped)
+    assert [v.split(":")[0] for v in dropped] == ["a number lost its qualifier"]
 
 
 def test_compound_hyphens_are_not_punctuation() -> None:
@@ -221,3 +240,84 @@ def test_a_run_the_evidence_also_has_is_not_a_restatement() -> None:
     posting = f"{POSTING} Built a design system in React with documented components."
     context = LintContext(evidence=EVIDENCE, posting=posting, company=COMPANY, role=ROLE)
     assert lint(letter(), context) == []
+
+
+# --- spec 160 ---------------------------------------------------------------------
+
+
+def test_six_shared_words_and_too_few_words_are_refused() -> None:
+    six = letter(why="I would own the checkout experience end to end here too.")
+    assert any(
+        v.startswith("restates the posting: own the checkout experience end to") for v in lint(six)
+    )
+    words = len(letter().split())
+    short = letter(body=" ".join(BODY.split()[: 119 - (words - len(BODY.split()))]))
+    assert len(short.split()) == 119
+    assert "under the word floor: 119 words, at least 120" in lint(short)
+
+
+def _fixture(name: str) -> Any:
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def _fixture_context(letter_doc: Any) -> LintContext:
+    facts: dict[str, str] = _fixture("restream-profile.json")["facts"]
+    asks: list[dict[str, Any]] = letter_doc["asks"]["asks"]
+    used: list[dict[str, str]] = letter_doc["facts_used"]
+    return LintContext(
+        evidence="\n".join(facts.values()),
+        posting=(FIXTURES / "restream-posting.txt").read_text(encoding="utf-8"),
+        company="restream",
+        role="Design Engineer - Studio Team",
+        professional_years=5,
+        company_form=str(letter_doc["asks"]["company"]),
+        asks=tuple(
+            AskCoverage(
+                rank=int(ask["rank"]),
+                ask=str(ask["ask"]),
+                fact_texts=tuple(facts[fact_id] for fact_id in ask["fact_ids"]),
+                listed_as_gap=bool(ask["gap"]),
+            )
+            for ask in asks[:3]
+        ),
+        cited=tuple(fact["evidence"] for fact in used),
+        link_line=letter_doc.get("link_line") or None,
+    )
+
+
+def test_the_bad_fixture_fails_and_the_target_passes() -> None:
+    """The synthetic copies of the Restream letters (spec 160, section 9)."""
+    bad = _fixture("restream-bad.json")
+    violations = lint_letter(str(bad["full_version"]), _fixture_context(bad))
+    for expected in (
+        "a tilde on an exact percentage: ~41%",
+        "a tilde on an exact percentage: ~58%",
+        "the link line is missing: Portfolio: portfolio.example.dev",
+        "a sentence reports what the company says:",
+        "company name casing: 'restream', the posting writes 'Restream'",
+        "ask 1 not addressed by its facts:",
+        "ask 3 not addressed by its facts:",
+    ):
+        assert any(v.startswith(expected) for v in violations), (expected, violations)
+
+    target = _fixture("restream-target.json")
+    assert lint_letter(str(target["full_version"]), _fixture_context(target)) == []
+
+
+def test_a_qualifier_counts_only_next_to_its_number() -> None:
+    """A "~" on another number in the line qualifies nothing (spec 160,
+    amendment 3): the regeneration of a real letter found L13 reading the
+    whole line."""
+    context = LintContext(
+        evidence=f"{EVIDENCE}Grew signup completion from 41% to 58% across ~120K signups.\n",
+        posting=POSTING,
+        company=COMPANY,
+        role=ROLE,
+    )
+    exact = letter(proof=f"{PROOF} Signup completion grew from 41% to 58% across ~120K signups.")
+    assert lint(exact, context) == []
+    dropped = letter(proof=f"{PROOF} Signup completion grew from 41% to 58% across 120K signups.")
+    assert lint(dropped, context) == [
+        "a number lost its qualifier: 120k (in: Signup completion grew from 41% to 58% across"
+        " 120K signups.)"
+    ]

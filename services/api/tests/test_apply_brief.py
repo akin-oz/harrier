@@ -255,11 +255,11 @@ def test_a_two_paragraph_brief_accepts_two_paragraphs(
     """Since spec 158 the two blocks are the role line and the hook, which is
     then also the one-sentence close."""
     two = brief(letter={"paragraphs": 2})
-    stub_letter(monkeypatch, letter_json("", [], first="", last="", close=""))
+    stub_letter(monkeypatch, letter_json("", [], first="", last="", close="", filler=""))
     assert letter(db, two).full_version.count("\n\n") == 1
 
     stub_letter(monkeypatch, letter_json())
-    assert "over the stated limit: letter.paragraphs 2, full_version has 6" in refusal(db, two)
+    assert "over the stated limit: letter.paragraphs 2, full_version has 7" in refusal(db, two)
 
 
 def test_abbreviations_and_versions_do_not_split_sentences(

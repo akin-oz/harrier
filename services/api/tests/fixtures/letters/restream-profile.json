@@ -1,0 +1,17 @@
+{
+  "description": "Synthetic candidate facts for the Restream letter fixtures (spec 160). Nothing here is a real person's record.",
+  "facts": {
+    "r1_b1": "Owned a multi-step signup funnel handling ~120K signups.",
+    "r1_b2": "Researched where users dropped off in the signup funnel and redesigned the plan-selection step in Figma before building it in React.",
+    "r1_b3": "Built a token-driven component library in React and TypeScript with Storybook documentation.",
+    "r1_b4": "Designed a release pipeline with semantic versioning and automated deployments.",
+    "ach_1": "Grew signup funnel completion from 41% to 58% across ~120K signups.",
+    "t1": "Works from Exampleland, UTC+2, and invoices clients as a registered sole trader."
+  },
+  "links": [
+    {
+      "label": "Portfolio",
+      "url": "https://portfolio.example.dev"
+    }
+  ]
+}

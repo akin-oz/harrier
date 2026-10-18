@@ -1,0 +1,85 @@
+{
+  "description": "Synthetic copy of the regressed Restream letter (spec 160). It must fail the linter.",
+  "full_version": "Design Engineer, Studio Team, restream\n\nI grew a signup funnel's completion from ~41% to ~58% across ~120K signups. I owned its frontend.\n\nI built a token-driven component library in React and TypeScript with Storybook documentation.\n\nI also designed a release pipeline with semantic versioning and automated deployments.\n\nRestream describes a startup with a flat structure, where you work closely with the founders.\n\nI work from Exampleland, UTC+2, and invoice clients as a registered sole trader.\n\nI can walk you through the signup funnel rework step by step.",
+  "asks": {
+    "company": "Restream",
+    "asks": [
+      {
+        "rank": 1,
+        "ask": "Craft features from idea to design to implementation",
+        "quote": "Craft every detail of new product features",
+        "fact_ids": [
+          "r1_b2"
+        ],
+        "gap": false
+      },
+      {
+        "rank": 2,
+        "ask": "Design and implement UI and UX",
+        "quote": "Design and implement the UI and UX",
+        "fact_ids": [
+          "r1_b2",
+          "r1_b3"
+        ],
+        "gap": false
+      },
+      {
+        "rank": 3,
+        "ask": "Give and receive code review",
+        "quote": "Give and receive code review feedback",
+        "fact_ids": [
+          "r1_b3"
+        ],
+        "gap": false
+      },
+      {
+        "rank": 4,
+        "ask": "UX design process",
+        "quote": "Deep understanding of the UX design process",
+        "fact_ids": [
+          "r1_b2"
+        ],
+        "gap": false
+      },
+      {
+        "rank": 5,
+        "ask": "Figma",
+        "quote": "Proficient with Figma",
+        "fact_ids": [
+          "r1_b2"
+        ],
+        "gap": false
+      }
+    ],
+    "logistics": null,
+    "dropped_sections": [
+      "What We Offer"
+    ],
+    "gaps": [
+      "first-hand experience of Restream's product"
+    ]
+  },
+  "facts_used": [
+    {
+      "sentence": "I grew a signup funnel's completion from ~41% to ~58% across ~120K signups.",
+      "evidence": "Grew signup funnel completion from 41% to 58% across ~120K signups",
+      "source": "bullet_pool"
+    },
+    {
+      "sentence": "I owned its frontend.",
+      "evidence": "Owned a multi-step signup funnel handling ~120K signups",
+      "source": "bullet_pool"
+    },
+    {
+      "sentence": "I also designed a release pipeline with semantic versioning and automated deployments.",
+      "evidence": "Designed a release pipeline with semantic versioning and automated deployments",
+      "source": "bullet_pool"
+    },
+    {
+      "sentence": "I work from Exampleland, UTC+2, and invoice clients as a registered sole trader.",
+      "evidence": "Works from Exampleland, UTC+2, and invoices clients as a registered sole trader",
+      "source": "resume_truth"
+    }
+  ],
+  "link_line": "Portfolio: portfolio.example.dev"
+}

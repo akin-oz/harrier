@@ -34,6 +34,7 @@ from __future__ import annotations
 import atexit
 import fcntl
 import inspect
+import json
 import os
 import shutil
 import sys
@@ -543,6 +544,32 @@ def _no_built_spa(  # pyright: ignore[reportUnusedFunction]
 @pytest.fixture(autouse=True)
 def _api_token(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
     monkeypatch.setenv("HARRIER_API_TOKEN", TEST_TOKEN)
+
+
+def default_posting_analysis(system_prompt: str, user_input: str) -> str:
+    """The analysis a test gets unless it sets its own (spec 160): one ask,
+    quoting the start of the ask text, met by every fact."""
+    payload = cast("dict[str, object]", json.loads(user_input))
+    words = str(payload.get("ask_text", "")).split()
+    facts_raw = payload.get("facts")
+    fact_ids = list(cast("dict[str, str]", facts_raw)) if isinstance(facts_raw, dict) else []
+    asks: list[dict[str, object]] = (
+        [{"ask": "the posting's first ask", "quote": " ".join(words[:3]), "fact_ids": fact_ids}]
+        if words
+        else []
+    )
+    return json.dumps({"asks": asks, "logistics": None, "product_fact_ids": []})
+
+
+@pytest.fixture(autouse=True)
+def posting_analysis(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test reaches a provider through the letter's posting analysis. A
+    test that checks the analysis replaces this stub with its own."""
+    try:
+        import harrier.apply.postingasks as postingasks
+    except ImportError:
+        return
+    monkeypatch.setattr(postingasks, "generate_text", default_posting_analysis)
 
 
 @pytest.fixture(autouse=True)

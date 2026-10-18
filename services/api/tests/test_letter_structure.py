@@ -28,7 +28,9 @@ from test_apply_claims import (
 )
 
 import harrier.apply.letters as letters_module
+import harrier.apply.postingasks as postingasks
 from harrier.apply import generate_cover_letter
+from harrier.apply.claims import ClaimCheckError
 from harrier.connection import Connection
 from harrier.db import connect
 from harrier.profile.store import put_document
@@ -85,28 +87,29 @@ def _fake_render(html_text: str, pdf_path: Path) -> None:
 # --- the block range ------------------------------------------------------------
 
 
-def test_the_industry_letter_has_five_to_eight_blocks(
+def test_the_industry_letter_has_four_to_ten_blocks(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Role line, hook, three body paragraphs and the close pass; the role
-    line, hook and close alone are refused naming the range."""
+    """The fixture's seven blocks pass; the role line, hook and close alone
+    are refused naming the range (spec 160: four to ten)."""
     stub_letter(monkeypatch, letter_json())
-    assert generate(db).full_version.count("\n\n") == 5
+    assert generate(db).full_version.count("\n\n") == 6
 
-    stub_letter(monkeypatch, letter_json("", [], first="", last=""))
-    assert "should contain 5 to 8 blocks, role line and close included: it has 3" in refusal(db)
+    stub_letter(monkeypatch, letter_json("", [], first="", last="", filler=""))
+    assert "should contain 4 to 10 blocks, role line and close included: it has 3" in refusal(db)
 
 
 def test_the_focused_letter_has_a_logistics_block() -> None:
-    """Without the logistics block a focused letter has one block too few."""
+    """Without the logistics block a shortest focused letter has one block
+    too few (spec 160: five to ten)."""
     body = "I build accessible interfaces in React and TypeScript for product teams."
     close = "I can walk your team through the demo on a call."
     logistics = "I work from Exampleland in UTC+2 and invoice as a registered business."
-    blocks = ["Frontend Developer, Example Studio", body, body, body, close]
+    blocks = ["Frontend Developer, Example Studio", body, body, close]
     without = {"short_version": body, "full_version": "\n\n".join(blocks)}
     violations = letters_module.cover_letter_violations(without, kind="focused")
     assert violations == [
-        "cover letter should contain 6 to 8 blocks, role line and close included: it has 5"
+        "cover letter should contain 5 to 10 blocks, role line and close included: it has 4"
     ]
 
     blocks.insert(-1, logistics)
@@ -117,12 +120,12 @@ def test_the_focused_letter_has_a_logistics_block() -> None:
 # --- the evidence ------------------------------------------------------------------
 
 
-def test_story_bank_text_is_context_not_evidence(
+def test_story_bank_text_never_reaches_the_writer_or_the_evidence(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The offer evaluator's model wrote the story bank, so no field of it
-    verifies a claim (amendment 15). The payload still carries the STAR
-    strings as context."""
+    verifies a claim (spec 158, amendment 15), and since spec 160 the writer
+    is not sent it at all."""
     _store_story_bank(db)
     seen: list[str] = []
 
@@ -133,8 +136,8 @@ def test_story_bank_text_is_context_not_evidence(
 
     monkeypatch.setattr(letters_module, "generate_text", fake)
     assert f"unverified evidence: {REFUND_RESULT}" in refusal(db)
-    bank = json.loads(seen[0])["truth_sources"]["story_bank"]
-    assert bank[0]["result"] == f"{REFUND_RESULT}."
+    assert "story_bank" not in seen[0]
+    assert REFUND_RESULT not in seen[0]
 
     opener = "I once rebuilt the refund queue for the whole company."
     claims = [*GROUNDED_CLAIMS, candidate(opener, REFUND_OPENER)]
@@ -142,11 +145,11 @@ def test_story_bank_text_is_context_not_evidence(
     assert f"unverified evidence: {REFUND_OPENER}" in refusal(db)
 
 
-def test_the_payload_story_bank_has_no_company_or_role(
+def test_the_writer_payload_names_no_story_company_or_role(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A story's company and role are the posting it was written for, never
-    the candidate's employer (review of #405)."""
+    the candidate's employer (review of #405); the writer sees neither."""
     stories = [{**STORY_BANK[0], "company": "Acme", "role": "Staff Engineer"}]
     put_document(db, "story_bank", "story-bank.json", "json", json.dumps(stories))
     seen: list[str] = []
@@ -157,8 +160,6 @@ def test_the_payload_story_bank_has_no_company_or_role(
 
     monkeypatch.setattr(letters_module, "generate_text", fake)
     generate(db)
-    bank = json.loads(seen[0])["truth_sources"]["story_bank"]
-    assert bank and all("company" not in s and "role" not in s for s in bank)
     assert "Acme" not in seen[0]
 
 
@@ -204,11 +205,35 @@ def test_candidate_document_values_are_evidence(
 def test_gaps_and_facts_used_are_in_the_draft_only(
     db: Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    gap = {"requirement": "Code review practice", "posting_evidence": "We enforce code review"}
-    stub_letter(monkeypatch, letter_json(gaps=[gap]))
+    """Since spec 160 the gaps are the posting analysis's: an ask no fact
+    meets, with its posting quote."""
+
+    def analysis(system_prompt: str, user_input: str) -> str:
+        facts = list(json.loads(user_input)["facts"])
+        return json.dumps(
+            {
+                "asks": [
+                    {
+                        "ask": "invoicing tools",
+                        "quote": "builds invoicing tools",
+                        "fact_ids": facts,
+                    },
+                    {
+                        "ask": "Code review practice",
+                        "quote": "We enforce code review",
+                        "fact_ids": [],
+                    },
+                ],
+                "logistics": None,
+                "product_fact_ids": [],
+            }
+        )
+
+    monkeypatch.setattr(postingasks, "generate_text", analysis)
+    stub_letter(monkeypatch, letter_json())
     letter = generate(db)
-    assert [(g.requirement, g.posting_evidence) for g in letter.gaps] == [
-        ("Code review practice", "We enforce code review")
+    assert ("Code review practice", "We enforce code review") in [
+        (g.requirement, g.posting_evidence) for g in letter.gaps
     ]
     paths = letters_module.write_cover_letter_artifacts(
         db,
@@ -225,7 +250,7 @@ def test_gaps_and_facts_used_are_in_the_draft_only(
         facts=letter.facts_used,
     )
     markdown = paths["markdown"].read_text(encoding="utf-8")
-    assert '## Gaps\n\n- Code review practice: "We enforce code review"' in markdown
+    assert '- Code review practice: "We enforce code review"' in markdown
     assert f'- "{CHECKOUT}" rests on "Built the checkout flow in TypeScript and React"' in markdown
     assert "(resume_truth)" in markdown
     assert markdown.index("## Full Version") < markdown.index("## Gaps")
@@ -245,25 +270,58 @@ def test_a_draft_with_no_gaps_says_none() -> None:
 
 
 def test_a_gap_must_quote_the_posting(db: Connection, monkeypatch: pytest.MonkeyPatch) -> None:
-    gap = {"requirement": "Payments", "posting_evidence": "You will build payment rails"}
-    stub_letter(monkeypatch, letter_json(gaps=[gap]))
-    assert "gap evidence not in posting: You will build payment rails" in refusal(db)
+    """Since spec 160 a gap is an analysis ask with no facts, and its quote
+    must be in the posting like every ask's."""
+
+    def analysis(system_prompt: str, user_input: str) -> str:
+        facts = list(json.loads(user_input)["facts"])
+        return json.dumps(
+            {
+                "asks": [
+                    {
+                        "ask": "invoicing tools",
+                        "quote": "builds invoicing tools",
+                        "fact_ids": facts,
+                    },
+                    {"ask": "Payments", "quote": "You will build payment rails", "fact_ids": []},
+                ],
+                "logistics": None,
+                "product_fact_ids": [],
+            }
+        )
+
+    monkeypatch.setattr(postingasks, "generate_text", analysis)
+    stub_letter(monkeypatch, letter_json())
+    with pytest.raises(
+        ClaimCheckError, match="quote not in the posting: You will build payment rails"
+    ):
+        generate(db)
 
 
 def test_a_null_gap_field_is_empty_not_none(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """JSON null is no text: a gap with no requirement is dropped, and one
-    with no evidence is refused by its requirement (review of PR #405)."""
-    nameless = {"requirement": None, "posting_evidence": None}
-    stub_letter(monkeypatch, letter_json(gaps=[nameless]))
-    assert generate(db).gaps == ()
-
-    unquoted = {"requirement": "Payments", "posting_evidence": None}
-    stub_letter(monkeypatch, letter_json(gaps=[unquoted]))
-    message = refusal(db)
-    assert "gap evidence not in posting: Payments" in message
-    assert "None" not in message
+    """JSON null is no text (review of PR #405): the parser drops a gap with
+    no requirement and keeps an empty quote, never the text "None". Since
+    spec 160 the industry letter ignores the writer's gaps, so nothing the
+    writer sends reaches the draft either."""
+    response = json.dumps(
+        {
+            "gaps": [
+                {"requirement": None, "posting_evidence": None},
+                {"requirement": "Payments", "posting_evidence": None},
+            ]
+        }
+    )
+    assert letters_module.parse_cover_letter_gaps(response) == [
+        letters_module.Gap(requirement="Payments", posting_evidence="")
+    ]
+    stub_letter(
+        monkeypatch, letter_json(gaps=[{"requirement": "Payments", "posting_evidence": None}])
+    )
+    gaps = generate(db).gaps
+    assert all("None" not in g.requirement and g.posting_evidence != "None" for g in gaps)
+    assert "Payments" not in [g.requirement for g in gaps]
 
 
 # --- the academic kind --------------------------------------------------------------
