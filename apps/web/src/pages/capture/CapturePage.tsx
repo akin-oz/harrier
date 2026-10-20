@@ -3,12 +3,23 @@ import { useEffect, useState } from "react";
 
 import { api } from "../../shared/api/client";
 import { refusalMessage } from "../../shared/api/refusal";
+import type { Refusal } from "../../shared/api/refusal";
 import { trackKey } from "../../shared/track";
 import { forgetCaptureFragment } from "./fragment";
 import type { CaptureFields, Captured } from "./fragment";
 import "./CapturePage.css";
 
 const FALLBACK = "The job was not added.";
+
+// A duplicate or a missing field answers in the domain's own words, and any
+// other refusal the API declares carries a `detail`. A body that is not the
+// API's JSON (a proxy's error page, an empty answer) arrives as a string or
+// nothing, and reads as the fallback.
+function refusalOf(error: unknown): string {
+  if (typeof error !== "object" || error === null) return FALLBACK;
+  if ("message" in error && typeof error.message === "string") return error.message;
+  return "detail" in error ? refusalMessage(error as Refusal, FALLBACK) : FALLBACK;
+}
 
 // A job handed over from a posting, by the extension or any link to the
 // capture fragment (spec 119). Nothing is written until the owner presses
@@ -35,11 +46,10 @@ export function CapturePage({
 
   const add = useMutation({
     mutationFn: async (body: CaptureFields) => {
-      const { error } = await api.POST("/capture/add", { body });
-      // A duplicate or a missing field answers in the domain's own words.
-      if (error !== undefined) {
-        throw new Error("message" in error ? error.message : refusalMessage(error, FALLBACK));
-      }
+      const { error, response } = await api.POST("/capture/add", { body });
+      // The status decides, not the error: the client hands back no error at
+      // all for an empty failed answer (review of PR #413).
+      if (!response.ok) throw new Error(refusalOf(error));
     },
     onSuccess: () => {
       setAdded(true);

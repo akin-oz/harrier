@@ -213,6 +213,54 @@ test("a refusal without a message is read by the refusal reader", async () => {
   expect(input("Title").value).toBe(FIELDS.title);
 });
 
+// The add's answer exactly as given, for a body the JSON stub cannot make.
+function answerAddWith(response: () => Response) {
+  const calls = answerAdd(undefined);
+  const answer = globalThis.fetch;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const replied = await answer(request, init);
+      const url = request instanceof Request ? request.url : String(request);
+      return new URL(url, "http://localhost").pathname === ADD ? response() : replied;
+    }),
+  );
+  return calls;
+}
+
+test("a refusal whose body is not JSON shows the fallback", async () => {
+  // A proxy in front of the API answers with a page, not the API's JSON.
+  answerAddWith(
+    () =>
+      new Response("<html>Bad Gateway</html>", {
+        status: 502,
+        headers: { "Content-Type": "text/html" },
+      }),
+  );
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.click(addButton());
+  await waitFor(() => {
+    expect(screen.getByRole("status").textContent).toBe("The job was not added.");
+  });
+  expect(input("Title").value).toBe(FIELDS.title);
+});
+
+test("an empty refusal is never read as an add", async () => {
+  // The client hands back no error at all for an empty failed answer, so
+  // only the status says it failed.
+  answerAddWith(() => new Response(null, { status: 500, headers: { "Content-Length": "0" } }));
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.click(addButton());
+  await waitFor(() => {
+    expect(screen.getByRole("status").textContent).toBe("The job was not added.");
+  });
+  expect(addButton()).toBeDefined();
+});
+
 test("cancel writes nothing", async () => {
   const calls = answerAdd({ status: 200, body: { ok: true, message: "added" } });
   const onClose = vi.fn();
