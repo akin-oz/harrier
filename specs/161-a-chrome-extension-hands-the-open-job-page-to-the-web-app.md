@@ -76,7 +76,7 @@ as of `72066ab`:
 
 | Page | `source` | Reads |
 |---|---|---|
-| `linkedin.com/jobs/...` | `linkedin_manual` | title and company from the page title, company link fallback, location from the "Company · Location" text, description from the job details, link without its query string |
+| `linkedin.com/jobs/...` | `linkedin_manual` | title and company from the page title, company link fallback, location from the "Company · Location" text, description from the job details, link without its query string, or a split pane's `/jobs/view/<currentJobId>/` link (amendment of 2026-10-20) |
 | `wellfound.com` | `wellfound_manual` | the `JobListingSlideIn` panel: its `h1`, the avatar's company name, the pill row's location, `#job-description` |
 | `welcometothejungle.com` | `wttj_manual` | the job metadata block's title and company, the location and remote chips, the description section, page title and URL slug fallbacks |
 | `hiring.cafe` with a job panel open | `hiringcafe_manual` | the dialog's `h2`, the `@ Company` span, the map-pin location, the `/viewjob/` link, the `article` |
@@ -148,53 +148,135 @@ runs `just check-ts`, so no workflow changes.
 
 ## Acceptance criteria
 
-Planned tests under apps/extension/src/, run by vitest with jsdom against
+Tests under `apps/extension/src/`, run by vitest with jsdom against
 synthetic HTML fixtures. Fixtures may use real board and company names and
-carry no real person, posting text, or application content. Cited as
-planned until they exist.
+carry no real person, posting text, or application content.
 
-- [ ] A synthetic LinkedIn job page yields its title, company, location,
+- [x] A synthetic LinkedIn job page yields its title, company, location,
       description, `linkedin_manual`, and its link with the query string
-      removed (planned test_linkedin_page_yields_its_fields)
-- [ ] A LinkedIn page whose title has two parts takes the company from
-      the company link (planned test_linkedin_two_part_title_uses_the_company_link)
-- [ ] A synthetic Wellfound split pane reads the slide-in panel, not the
-      search bar `h1` (planned test_wellfound_reads_the_panel_not_the_search_bar)
-- [ ] A synthetic WTTJ page yields its fields, and falls back to the page
+      removed (linkedin.test.ts::"a LinkedIn job page yields its fields")
+- [x] A LinkedIn page whose title has two parts takes the company from
+      the company link
+      (linkedin.test.ts::"a LinkedIn page with a two-part title takes the company from its link")
+- [x] A LinkedIn search page links to the selected job by its
+      `currentJobId`, and an unread count before the page title is not
+      part of the job title
+      (linkedin.test.ts::"a LinkedIn search page links to the selected job",
+      ::"a LinkedIn title's unread count is not part of the job title")
+- [x] A synthetic Wellfound split pane reads the slide-in panel, not the
+      search bar `h1`
+      (wellfound.test.ts::"a Wellfound split pane is read from the job panel, not the search bar")
+- [x] A synthetic WTTJ page yields its fields, and falls back to the page
       title and slug when the metadata block is missing
-      (planned test_wttj_page_yields_its_fields, planned test_wttj_falls_back_to_title_and_slug)
-- [ ] A synthetic hiring.cafe page with its dialog open yields the
+      (wttj.test.ts::"a Welcome to the Jungle page yields its fields",
+      ::"a Welcome to the Jungle page with no metadata block falls back to its title and slug")
+- [x] A synthetic hiring.cafe page with its dialog open yields the
       `/viewjob/` link; with no dialog the generic reader runs
-      (planned test_hiringcafe_reads_the_open_dialog, planned test_hiringcafe_without_a_dialog_is_generic)
-- [ ] A page with a `JobPosting` in JSON-LD, including one inside
+      (hiringcafe.test.ts::"a hiring.cafe page with its job dialog open yields the viewjob link",
+      ::"a hiring.cafe page with no job dialog is read by the generic reader")
+- [x] A page with a `JobPosting` in JSON-LD, including one inside
       `@graph`, yields title, company, location and plain-text description
-      (planned test_json_ld_job_posting_yields_its_fields)
-- [ ] A page with malformed JSON-LD falls back to its `h1`
-      (planned test_malformed_json_ld_falls_back_to_h1)
-- [ ] A site reader that throws is replaced by the generic reader
-      (planned test_a_throwing_site_reader_falls_back)
-- [ ] The opened address is the configured origin plus `#capture?` and
+      (generic.test.ts::"a JobPosting in JSON-LD yields its fields, at the top level or in @graph",
+      ::"a JSON-LD description escaped twice is read as text",
+      ::"a JobPosting with no title takes it from the h1",
+      ::"an unread count before the page title is dropped")
+- [x] A page with malformed JSON-LD falls back to its `h1`
+      (generic.test.ts::"a page with malformed JSON-LD falls back to its h1",
+      ::"a page with no h1 takes its title and company from the page title")
+- [x] A site reader that throws is replaced by the generic reader, and
+      when that throws too only the link is sent
+      (page.test.ts::"a site reader that throws is replaced by the generic reader",
+      ::"a page no reader can read gives only its link")
+- [x] The built reader script hands its fields back as its last statement,
+      which is what `executeScript` returns
+      (inject.test.ts::"the built reader script ends with the page's fields")
+- [x] The opened address is the configured origin plus `#capture?` and
       the URL-encoded fields, with the description cut to 8000 characters,
-      and nothing in a query string (planned test_the_capture_address_carries_fields_in_the_fragment)
-- [ ] A selection becomes the description, the tab's http(s) address the
+      and nothing in a query string
+      (capture.test.ts::"the capture address carries the fields in its fragment")
+- [x] A selection becomes the description, the tab's http(s) address the
       link, `manual` the source, and the other fields are empty
-      (planned test_a_selection_becomes_the_description)
-- [ ] With no address set, the click opens the options page and no capture
-      tab (planned test_no_address_opens_the_options_page)
-- [ ] A refused injection sets the `!` badge and opens no tab
-      (planned test_an_unreadable_page_sets_the_badge)
-- [ ] The options page refuses `http://example.com` and accepts
+      (capture.test.ts::"a selection becomes the description",
+      ::"a selection the tab will not give is read from the menu",
+      ::"a whitespace-only selection opens the capture page with only the link")
+- [x] The menu item appears only when text is selected
+      (background.test.ts::"the context menu item appears only on a selection")
+- [x] With no address set, the click opens the options page and no capture
+      tab (capture.test.ts::"with no address set, the click opens the options page and no capture tab")
+- [x] A refused injection sets the `!` badge and opens no tab, and the next
+      click clears it
+      (capture.test.ts::"a refused injection sets the badge and opens no tab",
+      ::"the next click clears the badge")
+- [x] The options page refuses `http://example.com` and accepts
       `https://example.com` and `http://localhost:5173`
-      (planned test_the_address_must_be_https_or_localhost)
-- [ ] The manifest requests exactly `activeTab`, `scripting`,
+      (options.test.ts::"the address must be https or localhost",
+      ::"an address with a path, query or fragment is refused",
+      ::"with no address saved the page asks for one",
+      ::"a failed save says the address was not saved")
+- [x] The build finds the package from a checkout path holding a space
+      (build.test.ts::"the package root is a file path, not a URL path")
+- [x] The manifest requests exactly `activeTab`, `scripting`,
       `contextMenus` and `storage`, and no host permissions or content
-      scripts (planned test_the_manifest_asks_for_four_permissions)
-- [ ] The extension source makes no `fetch`, `XMLHttpRequest` or
-      `WebSocket` call
-- [ ] `just check-ts` runs the extension's type-check, lint, format check
+      scripts (manifest.test.ts::"the manifest asks for four permissions and no host access")
+- [x] The extension source makes no `fetch`, `XMLHttpRequest` or
+      `WebSocket` call: `apps/extension/eslint.config.js` refuses each by
+      name and as a property of `window`, `globalThis` and `self`, and the
+      lint runs in `just check-ts`
+- [x] `just check-ts` runs the extension's type-check, lint, format check
       and tests, and passes
-- [ ] docs/extension.md gives the build, load and setting steps and names
+- [x] docs/extension.md gives the build, load and setting steps and names
       the tests above as the proof of each reader
+
+## Amendment (2026-10-20): what the implementation settled
+
+Stated here so the code and the spec agree.
+
+- **The spec citation check reads the extension's tests.** Before this
+  change it read web tests only under `apps/web/src`, so every citation
+  above failed as "is not a web test file". It now reads
+  `apps/extension/src` too, in the same shapes. Proven by
+  `services/api/tests/test_spec_structure.py::test_an_extension_test_is_cited_like_a_web_test`.
+- **A fallback is the generic reader's output whole.** When a site reader
+  finds no title or throws, the fields, the source label included, are
+  what the generic reader gives: `manual`, as for any other page.
+- **Every reader's title is cleaned the bookmarklet's way.** Two suffixes
+  are cut, each starting at a `-` with a space on both sides: one where
+  `https://` follows, and one where the company already read follows,
+  compared without case. The universal bookmarklet's `cleanTitle` did the
+  same.
+- **The address is an origin only.** The options page refuses an address
+  with a path, query, fragment or user name, since the extension adds
+  `/#capture?` itself. `https://example.com/` is kept as
+  `https://example.com`.
+- **The context menu with no address set** opens the options page, as the
+  toolbar click does.
+- **A selection in a frame** is read from the frame the menu was opened
+  in. When that gives nothing after trimming, the menu's `selectionText`
+  is used.
+- **The reader's result is checked.** A result that is not an object of
+  strings, or no result, opens the capture page with only the tab's link.
+- **The no-network criterion is proven by lint**, not by a test reading
+  source text: the lint rule names each call.
+
+From the review of PR #415:
+
+- **A LinkedIn split pane keeps its job.** The table's "link without its
+  query string" lost the job on `/jobs/search/` and `/jobs/collections/`
+  pages, which name the selected job only in `currentJobId`. Such a page
+  now gives `<origin>/jobs/view/<currentJobId>/`, the shape
+  `harrier.screening.linkedin.linkedin_job_id` reads. A `/jobs/view/`
+  page, and a page with no numeric `currentJobId`, still drops the query.
+  The bookmarklet had the same gap.
+- **An unread count is not part of a title.** A leading count such as
+  `(3)` or `(9+)`, followed by whitespace, that a site puts before its
+  page title while notifications wait is dropped, with that whitespace,
+  before any reader splits the page title. A count with no whitespace
+  after it is kept.
+- **A posting with no title or company** takes them from step 2 of the
+  generic reader: the `h1`, else the page title and its split. The
+  posting's own values still win where it has them.
+- **A failed save says so.** When `chrome.storage.local` refuses the
+  write, the options page reads "The address was not saved. Try again."
 
 ## Proof / origin
 

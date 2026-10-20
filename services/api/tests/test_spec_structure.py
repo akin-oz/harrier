@@ -431,13 +431,15 @@ def unproven_citations(root: Path) -> list[str]:
     """Every test citation in `root/specs` that proves nothing, and why.
 
     `root` is a repository: specs, Python tests under `services/api/tests`,
-    web tests under `apps/web/src`. The suite runs this over this repository
-    and over small invented ones.
+    web tests under `apps/web/src` and the Chrome extension's under
+    `apps/extension/src`, which are cited the same way (spec 161). The suite
+    runs this over this repository and over small invented ones.
     """
     python: set[str] = set()
     for path in (root / "services" / "api" / "tests").rglob("*.py"):
         python.update(re.findall(r"def (test_[A-Za-z0-9_]+)", path.read_text(encoding="utf-8")))
     web = web_test_names(root / "apps" / "web" / "src")
+    web.update(web_test_names(root / "apps" / "extension" / "src"))
     problems: list[str] = []
     for spec in sorted((root / "specs").rglob("*.md")):
         text = spec.read_text(encoding="utf-8")
@@ -535,6 +537,20 @@ def test_a_web_name_must_be_in_the_file_it_names(tmp_path: Path) -> None:
     assert problems == [
         '099-cites.md:1: "only the other page has this" is not a test in Thing.test.tsx'
     ]
+
+
+def test_an_extension_test_is_cited_like_a_web_test(tmp_path: Path) -> None:
+    """The Chrome extension's tests are read too (spec 161). Before, every
+    citation of one failed as "is not a web test file", so a spec could not
+    name the tests that prove it."""
+    root = repository(
+        tmp_path, 'Proof: Reader.test.ts::"reads a page", Reader.test.ts::"was renamed".\n'
+    )
+    source = root / "apps" / "extension" / "src"
+    source.mkdir(parents=True)
+    (source / "Reader.test.ts").write_text('test("reads a page", () => {});\n', encoding="utf-8")
+    problems = unproven_citations(root)
+    assert problems == ['099-cites.md:1: "was renamed" is not a test in Reader.test.ts']
 
 
 @pytest.mark.parametrize(
