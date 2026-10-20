@@ -81,6 +81,10 @@ check-ts:
     pnpm --filter @harrier/web lint
     pnpm --filter @harrier/web format:check
     pnpm --filter @harrier/web test
+    pnpm --filter @harrier/extension type-check
+    pnpm --filter @harrier/extension lint
+    pnpm --filter @harrier/extension format:check
+    pnpm --filter @harrier/extension test
 
 # Fast turn-end gate (called by .claude/hooks/verify-on-stop.sh): type-checks + tests.
 gate:
@@ -88,6 +92,10 @@ gate:
     cd {{api_dir}} && uv run pytest -q
     pnpm --filter @harrier/web type-check
     pnpm --filter @harrier/web test
+    pnpm --filter @harrier/extension type-check
+    pnpm --filter @harrier/extension lint
+    pnpm --filter @harrier/extension format:check
+    pnpm --filter @harrier/extension test
 
 # Regenerate the API contract artifacts (openapi.json + TS types). CI runs this
 # and fails on any git diff (ADR-005).
