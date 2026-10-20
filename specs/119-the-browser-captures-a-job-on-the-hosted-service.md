@@ -171,11 +171,13 @@ Proven by `apps/web/src/pages/capture/fragment.test.ts`,
       with no message is read by the shared reader
       (CapturePage.test.tsx::"a duplicate shows the server's message and keeps the form",
       ::"a refusal without a message is read by the refusal reader")
-- [x] A refusal whose body is not the API's JSON, or is empty, shows
-      "The job was not added." and is never read as an add; the status
-      decides, not the client's error value (review of PR #413)
+- [x] A refusal whose body is not the API's JSON, is empty, or carries a
+      `detail` that is neither text nor field errors shows "The job was
+      not added." and is never read as an add; the status decides, not the
+      client's error value (review of PR #413)
       (CapturePage.test.tsx::"a refusal whose body is not JSON shows the fallback",
-      ::"an empty refusal is never read as an add")
+      ::"an empty refusal is never read as an add",
+      ::"a refusal whose detail is neither text nor field errors shows the fallback")
 - [x] Cancel and choosing a section leave the page and write nothing
       (CapturePage.test.tsx::"cancel writes nothing",
       App.test.tsx::"cancel on the capture page opens the tracker",

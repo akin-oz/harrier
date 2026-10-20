@@ -247,6 +247,18 @@ test("a refusal whose body is not JSON shows the fallback", async () => {
   expect(input("Title").value).toBe(FIELDS.title);
 });
 
+test("a refusal whose detail is neither text nor field errors shows the fallback", async () => {
+  answerAdd({ status: 403, body: { detail: { reason: "blocked" } } });
+  const user = userEvent.setup();
+  renderPage();
+
+  await user.click(addButton());
+  await waitFor(() => {
+    expect(screen.getByRole("status").textContent).toBe("The job was not added.");
+  });
+  expect(input("Title").value).toBe(FIELDS.title);
+});
+
 test("an empty refusal is never read as an add", async () => {
   // The client hands back no error at all for an empty failed answer, so
   // only the status says it failed.

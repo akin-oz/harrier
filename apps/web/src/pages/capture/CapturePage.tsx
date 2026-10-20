@@ -18,7 +18,18 @@ const FALLBACK = "The job was not added.";
 function refusalOf(error: unknown): string {
   if (typeof error !== "object" || error === null) return FALLBACK;
   if ("message" in error && typeof error.message === "string") return error.message;
-  return "detail" in error ? refusalMessage(error as Refusal, FALLBACK) : FALLBACK;
+  if (!("detail" in error)) return FALLBACK;
+  // The shared reader takes a string, or a list of field errors; any other
+  // `detail`, such as an object, would make it throw (review of PR #413).
+  const { detail } = error;
+  const readable =
+    typeof detail === "string" ||
+    (Array.isArray(detail) &&
+      detail.every(
+        (item: unknown) =>
+          typeof item === "object" && item !== null && ("loc" in item || "field" in item),
+      ));
+  return readable ? refusalMessage(error as Refusal, FALLBACK) : FALLBACK;
 }
 
 // A job handed over from a posting, by the extension or any link to the
