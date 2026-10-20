@@ -350,3 +350,43 @@ test("a request that gets no answer shows the sentence for it", async () => {
   expect(screen.getByRole("button", { name: "Sign out" })).toBeDefined();
   expect(fake.log).toEqual([]);
 });
+
+test("a capture survives sign-in", async () => {
+  // A job handed over from a posting while signed out (spec 119). The values
+  // are synthetic.
+  fake.signOutElsewhere();
+  const fields = {
+    title: "Platform Engineer",
+    company: "Sample Labs",
+    location: "Remote, Europe",
+    url: "https://jobs.example.com/postings/2",
+    source: "linkedin",
+    description: "Run the platform.",
+  };
+  window.history.replaceState(null, "", `/#capture?${new URLSearchParams(fields).toString()}`);
+  override = (path) =>
+    path === "/capture/add" ? reply({ ok: true, message: "added" }) : undefined;
+  const user = userEvent.setup();
+  render(<App />);
+
+  await user.type(await screen.findByLabelText("Email address"), "person@example.invalid");
+  await user.click(screen.getByRole("button", { name: "Send a sign-in code" }));
+  await user.type(await screen.findByLabelText("Sign-in code"), "123456");
+  await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+  expect(await screen.findByRole("heading", { name: "Add a job from a posting" })).toBeDefined();
+  expect(screen.getByLabelText<HTMLInputElement>("Title").value).toBe(fields.title);
+  expect(screen.getByLabelText<HTMLInputElement>("Company").value).toBe(fields.company);
+  expect(screen.getByLabelText<HTMLInputElement>("Location").value).toBe(fields.location);
+  expect(screen.getByLabelText<HTMLInputElement>("Link").value).toBe(fields.url);
+  expect(screen.getByLabelText<HTMLTextAreaElement>("Description").value).toBe(fields.description);
+  expect(screen.getByText("Source: linkedin")).toBeDefined();
+
+  await user.click(screen.getByRole("button", { name: "Add to tracker" }));
+  expect((await screen.findByText("Added to Job search.")).getAttribute("role")).toBe("status");
+  const adds = calls.filter((call) => call.url === "https://api.example.com/capture/add");
+  expect(adds).toHaveLength(1);
+  expect(adds[0]?.method).toBe("POST");
+  expect(adds[0]?.authorization).toBe("Bearer verified-token");
+  expect(adds[0]?.localToken).toBeNull();
+});

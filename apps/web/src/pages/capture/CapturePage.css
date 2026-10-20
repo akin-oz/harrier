@@ -1,0 +1,70 @@
+.capture-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 44rem;
+}
+.capture-page__heading {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.capture-page__track,
+.capture-page__source,
+.capture-page__note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+.capture-page__form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.capture-page__field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+.capture-page__field input,
+.capture-page__field textarea {
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  font: inherit;
+}
+.capture-page__buttons {
+  display: flex;
+  gap: var(--space-2);
+}
+.capture-page__button {
+  align-self: flex-start;
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-bg-raised);
+  color: var(--color-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.capture-page__button--primary {
+  font-weight: 600;
+}
+.capture-page__button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.capture-page__field input:focus-visible,
+.capture-page__field textarea:focus-visible,
+.capture-page__button:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+.capture-page__outcome {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: 13px;
+}

@@ -73,6 +73,7 @@ function stubApi(): string[] {
       if (url.pathname === "/api/session") return reply({ token: "test-token" });
       if (url.pathname === "/api/jobs") return reply([ROW]);
       if (url.pathname === "/api/health") return reply({ status: "ok" });
+      if (url.pathname === "/api/capture/add") return reply({ ok: true, message: "added" });
       if (url.pathname === "/api/apply/1/artifacts") return reply([]);
       // No brief stored for the row, as the API answers it (spec 095).
       if (url.pathname === "/api/apply/1/brief") return reply({ detail: "no brief" }, 404);
@@ -288,4 +289,57 @@ test("local mode never creates a Supabase client or sends a bearer token", async
   expect(loaded.supabase).toBe(false);
   // There is no session locally, so there is nothing to sign out of.
   expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
+});
+
+// A job handed over from a posting (spec 119). The values are synthetic.
+const CAPTURE =
+  "#capture?" +
+  new URLSearchParams({
+    title: "Platform Engineer",
+    company: "Sample Labs",
+    url: "https://jobs.example.com/postings/2",
+    source: "linkedin",
+  }).toString();
+
+test("a capture fragment opens the capture page instead of the tracker", async () => {
+  stubApi();
+  window.history.replaceState(null, "", `/${CAPTURE}`);
+  render(<App />);
+
+  expect(await screen.findByRole("heading", { name: "Add a job from a posting" })).toBeDefined();
+  expect(screen.getByLabelText<HTMLInputElement>("Title").value).toBe("Platform Engineer");
+  expect(screen.getByLabelText<HTMLInputElement>("Company").value).toBe("Sample Labs");
+  expect(screen.getByText("Adds to Job search.")).toBeDefined();
+  expect(window.location.hash).toBe("");
+  expect(screen.getByRole("navigation", { name: "Sections" })).toBeDefined();
+  expect(screen.queryByText("Example Co")).toBeNull();
+});
+
+test("cancel on the capture page opens the tracker", async () => {
+  const asked = stubApi();
+  window.history.replaceState(null, "", `/${CAPTURE}`);
+  const user = userEvent.setup();
+  render(<App />);
+
+  await screen.findByRole("heading", { name: "Add a job from a posting" });
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+  expect(await screen.findByText("Example Co")).toBeDefined();
+  expect(screen.queryByRole("heading", { name: "Add a job from a posting" })).toBeNull();
+  expect(asked.some((path) => path.startsWith("/api/capture/add"))).toBe(false);
+});
+
+test("choosing a section leaves the capture page", async () => {
+  const asked = stubApi();
+  window.history.replaceState(null, "", `/${CAPTURE}`);
+  const user = userEvent.setup();
+  render(<App />);
+
+  await screen.findByRole("heading", { name: "Add a job from a posting" });
+  const nav = screen.getByRole("navigation", { name: "Sections" });
+  await user.click(within(nav).getByRole("button", { name: "Tracker" }));
+
+  expect(await screen.findByText("Example Co")).toBeDefined();
+  expect(screen.queryByRole("heading", { name: "Add a job from a posting" })).toBeNull();
+  expect(asked.some((path) => path.startsWith("/api/capture/add"))).toBe(false);
 });

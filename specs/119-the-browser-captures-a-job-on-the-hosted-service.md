@@ -134,34 +134,62 @@ server.
 
 ## Acceptance criteria
 
-Planned tests in apps/web/src/pages/capture/CapturePage.test.tsx and
-apps/web/src/app/App.test.tsx, cited as planned until they exist.
+Proven by `apps/web/src/pages/capture/fragment.test.ts`,
+`apps/web/src/pages/capture/CapturePage.test.tsx`,
+`apps/web/src/app/App.test.tsx` and `apps/web/src/app/App.hosted.test.tsx`.
 
-- [ ] A fragment `#capture?title=T&company=C&location=L&url=https%3A%2F%2Fexample.com%2Fjob&source=wttj_manual&description=D`
+- [x] A fragment `#capture?title=T&company=C&location=L&url=https%3A%2F%2Fexample.com%2Fjob&source=wttj_manual&description=D`
       opens the capture page with each field prefilled and the source
-      shown (planned test_the_fragment_prefills_every_field)
-- [ ] After the page reads the fragment, `location.hash` is empty and
-      the query string is unchanged (planned test_reading_the_fragment_removes_it)
-- [ ] A signed-out visit with a capture fragment shows sign-in, and after
-      sign-in the capture page opens with the same fields
-      (planned test_the_fields_survive_sign_in)
-- [ ] `url=javascript%3Aalert(1)` leaves the link empty and shows the
-      left-out message (planned test_a_link_that_is_not_http_is_left_out)
-- [ ] A description of 9000 characters is held as its first 8000
-      (planned test_the_description_is_cut_to_8000)
-- [ ] Add is disabled with a blank title, with a blank company, and while
-      a request is in flight (planned test_add_waits_for_title_and_company)
-- [ ] Add sends one `POST /capture/add` with the form's six fields
-      through the generated client (planned test_add_posts_the_form_once)
-- [ ] A 200 shows "Added to" with the default track's name and no Add
-      button (planned test_an_add_shows_the_track_it_went_to)
-- [ ] A 409 shows the server's message and keeps the form
-      (planned test_a_duplicate_shows_the_servers_message)
-- [ ] With no capture fragment, the tracker opens as before
-      (planned test_no_fragment_opens_the_tracker)
-- [ ] No field from the fragment reaches `dangerouslySetInnerHTML` or an
-      `href` other than the validated link
-- [ ] `pnpm --filter @harrier/web type-check`, lint and test pass; `just
+      shown (fragment.test.ts::"a capture fragment yields every field",
+      CapturePage.test.tsx::"the form shows every field and the source",
+      App.test.tsx::"a capture fragment opens the capture page instead of the tracker")
+- [x] After the page reads the fragment, `location.hash` is empty and
+      the query string is unchanged
+      (CapturePage.test.tsx::"reading the page removes the fragment and keeps the track")
+- [x] A signed-out visit with a capture fragment shows sign-in, and after
+      sign-in the capture page opens with the same fields and adds with
+      the bearer token (App.hosted.test.tsx::"a capture survives sign-in")
+- [x] `url=javascript%3Aalert(1)` leaves the link empty and shows the
+      left-out message, as does a relative path or an `ftp:` address
+      (fragment.test.ts::"a link that is not an http address is left out",
+      CapturePage.test.tsx::"the left-out link is named")
+- [x] A description of 9000 characters is held as its first 8000
+      (fragment.test.ts::"the description is cut to 8000 characters")
+- [x] A missing source reads as `manual`, and a fragment that is not a
+      capture is not read (fragment.test.ts::"a missing source reads as manual",
+      ::"a fragment that is not a capture is not read")
+- [x] Add is disabled with a blank title, with a blank company, and while
+      a request is in flight
+      (CapturePage.test.tsx::"add waits for a title and a company",
+      ::"add is disabled while the request is in flight")
+- [x] Add sends one `POST /capture/add` with the form's six fields
+      through the generated client
+      (CapturePage.test.tsx::"add posts the form once with its six fields")
+- [x] A 200 shows "Added to" with the default track's name and no Add
+      button (CapturePage.test.tsx::"an add names the track it went to and offers no second add")
+- [x] A 409 shows the server's message and keeps the form, and a refusal
+      with no message is read by the shared reader
+      (CapturePage.test.tsx::"a duplicate shows the server's message and keeps the form",
+      ::"a refusal without a message is read by the refusal reader")
+- [x] A refusal whose body is not the API's JSON, is empty, or carries a
+      `detail` that is neither text nor field errors shows "The job was
+      not added." and is never read as an add; the status decides, not the
+      client's error value (review of PR #413)
+      (CapturePage.test.tsx::"a refusal whose body is not JSON shows the fallback",
+      ::"an empty refusal is never read as an add",
+      ::"a refusal whose detail is neither text nor field errors shows the fallback")
+- [x] Cancel and choosing a section leave the page and write nothing
+      (CapturePage.test.tsx::"cancel writes nothing",
+      App.test.tsx::"cancel on the capture page opens the tracker",
+      ::"choosing a section leaves the capture page")
+- [x] The result message goes into a status region present before it
+      (CapturePage.test.tsx::"the status region is there before any message")
+- [x] With no capture fragment, the tracker opens as before
+      (App.test.tsx::"renders the shell and the tracker fed by /jobs")
+- [x] No field from the fragment reaches `dangerouslySetInnerHTML` or an
+      `href`: the page renders each one as an input value or text
+      (CapturePage.test.tsx::"no field reaches the page as markup")
+- [x] `pnpm --filter @harrier/web type-check`, lint and test pass; `just
       contract` shows no diff
 
 ## Proof / origin
@@ -197,9 +225,9 @@ apps/web/src/app/App.test.tsx, cited as planned until they exist.
   fields. Spec 114's sessions refresh themselves, so this needs a sign-out
   in another tab or a revoked session. Keeping a copy in `sessionStorage`
   would fix it and is left out to keep fields out of storage.
-- The fragment stays in the browser's history entry for the visit that
-  opened the page, since `replaceState` changes the current entry only
-  after the page has read it. It holds a job posting's public fields, not
+- `replaceState` changes the current tab's entry. The browser's history
+  list may still keep the address as first visited, fragment included;
+  that was not checked. It holds a job posting's public fields, not
   personal data.
 
 ## Changes to approved specs

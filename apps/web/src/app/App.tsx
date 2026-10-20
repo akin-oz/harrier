@@ -3,6 +3,9 @@ import { useState } from "react";
 
 import type { Job } from "../entities/job";
 import { ApplyPage } from "../pages/apply/ApplyPage";
+import { CapturePage } from "../pages/capture/CapturePage";
+import { readCapture } from "../pages/capture/fragment";
+import type { Captured } from "../pages/capture/fragment";
 import { InboxPage } from "../pages/inbox/InboxPage";
 import { OperationsPage } from "../pages/operations/OperationsPage";
 import { OutreachPage } from "../pages/outreach/OutreachPage";
@@ -45,7 +48,8 @@ const SECTIONS = [
   { id: "settings", label: "Settings", defaultOnly: false },
 ] as const;
 
-type Section = (typeof SECTIONS)[number]["id"] | "tracks";
+// `capture` is reached only by its fragment (spec 119), so it has no nav entry.
+type Section = (typeof SECTIONS)[number]["id"] | "tracks" | "capture";
 
 export function App() {
   return (
@@ -62,7 +66,14 @@ function Shell() {
   // rendered another page would cross the layer direction FSD keeps one way
   // (ADR-001, and the fsd-reviewer enforces it). There is still no router;
   // the selected track is the URL's `track` query string (spec 094).
-  const [section, setSection] = useState<Section>("tracker");
+  // Read once, when the app first renders past sign-in. Code sign-in does
+  // not navigate, so a fragment present before sign-in is still here.
+  const [captured, setCaptured] = useState<Captured | null>(() =>
+    readCapture(globalThis.location.hash),
+  );
+  const [section, setSection] = useState<Section>(() =>
+    captured === null ? "tracker" : "capture",
+  );
   // The Apply view belongs to a row of one track, so it is held with that
   // track's slug and a switch leaves it behind.
   const [applying, setApplying] = useState<{ job: Job; slug: string | null } | null>(null);
@@ -82,6 +93,7 @@ function Shell() {
       <Header
         onManageTracks={() => {
           setApplying(null);
+          setCaptured(null);
           setSection("tracks");
         }}
       />
@@ -101,6 +113,7 @@ function Shell() {
               aria-disabled={off ? "true" : undefined}
               onClick={() => {
                 setApplying(null);
+                setCaptured(null);
                 setSection(entry.id);
               }}
             >
@@ -123,6 +136,11 @@ function Shell() {
             setApplying(null);
           }}
           onOpen={open}
+          captured={captured}
+          onCaptureClose={() => {
+            setCaptured(null);
+            setSection("tracker");
+          }}
         />
       </main>
     </div>
@@ -138,6 +156,8 @@ function Main({
   onApply,
   onBack,
   onOpen,
+  captured,
+  onCaptureClose,
 }: {
   section: Section;
   track: Track | null | undefined;
@@ -147,6 +167,8 @@ function Main({
   onApply: (job: Job) => void;
   onBack: () => void;
   onOpen: (track: Track) => void;
+  captured: Captured | null;
+  onCaptureClose: () => void;
 }) {
   if (section === "tracks") return <TracksPage onOpen={onOpen} />;
   if (section === "settings") return <SettingsPage />;
@@ -168,6 +190,18 @@ function Main({
   }
   if (track === undefined) {
     return <p className="app-notice">Loading tracks.</p>;
+  }
+  if (section === "capture" && captured !== null) {
+    // Capture writes to the default track whatever track the URL names
+    // (spec 119), so the page names that one.
+    const home = tracksState.data?.find((entry) => entry.is_default);
+    return (
+      <CapturePage
+        captured={captured}
+        trackLabel={home?.label ?? "the default track"}
+        onClose={onCaptureClose}
+      />
+    );
   }
   if (track === null) {
     // A plain message and the way back, rather than an empty table that
