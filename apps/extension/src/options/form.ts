@@ -2,6 +2,7 @@ import { ADDRESS_FORMS, ADDRESS_KEY, storedOrigin, webAppOrigin, type Store } fr
 
 const ASK = "Set the web app address, then click the Harrier icon again.";
 const SAVED = "Saved. Click the Harrier icon on a job page to capture it.";
+const NOT_SAVED = "The address was not saved. Try again.";
 
 /** The options page's one setting: the web app address (spec 161). */
 export async function mountOptions(doc: Document, store: Store): Promise<void> {
@@ -32,9 +33,14 @@ export async function mountOptions(doc: Document, store: Store): Promise<void> {
       message.textContent = ADDRESS_FORMS;
       return;
     }
-    void store.set({ [ADDRESS_KEY]: origin }).then(() => {
-      input.value = origin;
-      message.textContent = SAVED;
-    });
+    void store.set({ [ADDRESS_KEY]: origin }).then(
+      () => {
+        input.value = origin;
+        message.textContent = SAVED;
+      },
+      () => {
+        message.textContent = NOT_SAVED;
+      },
+    );
   });
 }

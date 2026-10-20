@@ -76,7 +76,7 @@ as of `72066ab`:
 
 | Page | `source` | Reads |
 |---|---|---|
-| `linkedin.com/jobs/...` | `linkedin_manual` | title and company from the page title, company link fallback, location from the "Company · Location" text, description from the job details, link without its query string |
+| `linkedin.com/jobs/...` | `linkedin_manual` | title and company from the page title, company link fallback, location from the "Company · Location" text, description from the job details, link without its query string, or a split pane's `/jobs/view/<currentJobId>/` link (amendment of 2026-10-20) |
 | `wellfound.com` | `wellfound_manual` | the `JobListingSlideIn` panel: its `h1`, the avatar's company name, the pill row's location, `#job-description` |
 | `welcometothejungle.com` | `wttj_manual` | the job metadata block's title and company, the location and remote chips, the description section, page title and URL slug fallbacks |
 | `hiring.cafe` with a job panel open | `hiringcafe_manual` | the dialog's `h2`, the `@ Company` span, the map-pin location, the `/viewjob/` link, the `article` |
@@ -158,6 +158,11 @@ carry no real person, posting text, or application content.
 - [x] A LinkedIn page whose title has two parts takes the company from
       the company link
       (linkedin.test.ts::"a LinkedIn page with a two-part title takes the company from its link")
+- [x] A LinkedIn search page links to the selected job by its
+      `currentJobId`, and an unread count before the page title is not
+      part of the job title
+      (linkedin.test.ts::"a LinkedIn search page links to the selected job",
+      ::"a LinkedIn title's unread count is not part of the job title")
 - [x] A synthetic Wellfound split pane reads the slide-in panel, not the
       search bar `h1`
       (wellfound.test.ts::"a Wellfound split pane is read from the job panel, not the search bar")
@@ -172,7 +177,9 @@ carry no real person, posting text, or application content.
 - [x] A page with a `JobPosting` in JSON-LD, including one inside
       `@graph`, yields title, company, location and plain-text description
       (generic.test.ts::"a JobPosting in JSON-LD yields its fields, at the top level or in @graph",
-      ::"a JSON-LD description escaped twice is read as text")
+      ::"a JSON-LD description escaped twice is read as text",
+      ::"a JobPosting with no title takes it from the h1",
+      ::"an unread count before the page title is dropped")
 - [x] A page with malformed JSON-LD falls back to its `h1`
       (generic.test.ts::"a page with malformed JSON-LD falls back to its h1",
       ::"a page with no h1 takes its title and company from the page title")
@@ -204,7 +211,10 @@ carry no real person, posting text, or application content.
       `https://example.com` and `http://localhost:5173`
       (options.test.ts::"the address must be https or localhost",
       ::"an address with a path, query or fragment is refused",
-      ::"with no address saved the page asks for one")
+      ::"with no address saved the page asks for one",
+      ::"a failed save says the address was not saved")
+- [x] The build finds the package from a checkout path holding a space
+      (build.test.ts::"the package root is a file path, not a URL path")
 - [x] The manifest requests exactly `activeTab`, `scripting`,
       `contextMenus` and `storage`, and no host permissions or content
       scripts (manifest.test.ts::"the manifest asks for four permissions and no host access")
@@ -245,6 +255,24 @@ Stated here so the code and the spec agree.
   strings, or no result, opens the capture page with only the tab's link.
 - **The no-network criterion is proven by lint**, not by a test reading
   source text: the lint rule names each call.
+
+From the review of PR #415:
+
+- **A LinkedIn split pane keeps its job.** The table's "link without its
+  query string" lost the job on `/jobs/search/` and `/jobs/collections/`
+  pages, which name the selected job only in `currentJobId`. Such a page
+  now gives `<origin>/jobs/view/<currentJobId>/`, the shape
+  `harrier.screening.linkedin.linkedin_job_id` reads. A `/jobs/view/`
+  page, and a page with no numeric `currentJobId`, still drops the query.
+  The bookmarklet had the same gap.
+- **An unread count is not part of a title.** A leading `(3) ` or
+  `(9+) ` that a site puts before its page title while notifications
+  wait is dropped before any reader splits the page title.
+- **A posting with no title or company** takes them from step 2 of the
+  generic reader: the `h1`, else the page title and its split. The
+  posting's own values still win where it has them.
+- **A failed save says so.** When `chrome.storage.local` refuses the
+  write, the options page reads "The address was not saved. Try again."
 
 ## Proof / origin
 

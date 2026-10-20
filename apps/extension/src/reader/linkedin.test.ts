@@ -40,3 +40,24 @@ test("a LinkedIn page with a two-part title takes the company from its link", ()
   expect(fields.company).toBe("Northwind Labs");
   expect(fields.location).toBe("Porto, Portugal");
 });
+
+test("a LinkedIn search page links to the selected job", () => {
+  // The split pane names the selected job only in its query string.
+  const doc = page(
+    "Senior Platform Engineer | Northwind Labs | LinkedIn",
+    "<h1>Senior Platform Engineer</h1>",
+  );
+
+  const fields = readPage(
+    doc,
+    "https://www.linkedin.com/jobs/search/?currentJobId=4000000002&keywords=platform&refId=abc123&trackingId=def456",
+  );
+
+  expect(fields.url).toBe("https://www.linkedin.com/jobs/view/4000000002/");
+});
+
+test("a LinkedIn title's unread count is not part of the job title", () => {
+  const doc = page("(3) Senior Platform Engineer | Northwind Labs | LinkedIn", "<h1>Jobs</h1>");
+
+  expect(readPage(doc, JOB).title).toBe("Senior Platform Engineer");
+});

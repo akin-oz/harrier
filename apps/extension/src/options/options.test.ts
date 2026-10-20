@@ -88,3 +88,17 @@ test("a saved address is shown in the field", async () => {
   expect(document.querySelector("input")?.value).toBe("https://harrier.example.com");
   expect(message()).toBe("");
 });
+
+test("a failed save says the address was not saved", async () => {
+  const store: Store = {
+    get: () => Promise.resolve({}),
+    set: () => Promise.reject(new Error("QUOTA_BYTES quota exceeded")),
+  };
+  await mountOptions(document, store);
+
+  await submit("https://example.com");
+
+  await vi.waitFor(() => {
+    expect(message()).toBe("The address was not saved. Try again.");
+  });
+});

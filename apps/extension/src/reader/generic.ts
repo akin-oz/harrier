@@ -1,15 +1,25 @@
 import type { CaptureFields } from "../fields";
-import { splitPageTitle, text } from "./dom";
+import { pageTitle, splitPageTitle, text } from "./dom";
 
 /** The reader for every page no site reader claims (spec 161): a
  * schema.org `JobPosting` in the page's JSON-LD, else the first `h1` or the
- * page title. The link is the page address. */
+ * page title. A posting with no title or company takes them from the `h1`
+ * and the page title. The link is the page address. */
 export function readGeneric(doc: Document, url: URL): CaptureFields {
+  const split = splitPageTitle(pageTitle(doc));
+  const heading = text(doc.querySelector("h1")) || split.title;
   const posting = jobPosting(doc);
-  if (posting) return { ...posting, url: url.href, source: "manual" };
-  const split = splitPageTitle(doc.title);
+  if (posting) {
+    return {
+      ...posting,
+      title: posting.title || heading,
+      company: posting.company || split.company,
+      url: url.href,
+      source: "manual",
+    };
+  }
   return {
-    title: text(doc.querySelector("h1")) || split.title,
+    title: heading,
     company: split.company,
     location: "",
     url: url.href,

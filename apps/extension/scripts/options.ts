@@ -1,6 +1,14 @@
+import { fileURLToPath } from "node:url";
 import type { BuildOptions } from "esbuild";
 
-const root = new URL("..", import.meta.url).pathname;
+/** The package folder, with its trailing separator, from a module's file
+ * URL in `scripts/`. A URL's path keeps `%20` for a space, which esbuild
+ * would not find on disk. */
+export function packageRoot(moduleUrl: string): string {
+  return fileURLToPath(new URL("..", moduleUrl));
+}
+
+const root = packageRoot(import.meta.url);
 
 // The reader is injected with `chrome.scripting.executeScript({ files })`,
 // which hands back the value of the script's last statement. The bundle

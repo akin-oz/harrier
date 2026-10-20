@@ -1,5 +1,5 @@
 import type { CaptureFields } from "../fields";
-import { first, onHost, splitPageTitle, text } from "./dom";
+import { first, onHost, pageTitle, splitPageTitle, text } from "./dom";
 
 /** A reader for one job board. Each one ports that board's bookmarklet
  * rules from docs/bookmarklets.md at 72066ab, where the selector reasoning
@@ -16,7 +16,7 @@ export interface SiteReader {
 const linkedin: SiteReader = {
   matches: (url) => onHost(url, "linkedin.com") && url.pathname.startsWith("/jobs"),
   read(doc, url) {
-    const parts = doc.title.split(" | ");
+    const parts = pageTitle(doc).split(" | ");
     const last = (parts[parts.length - 1] ?? "").trim();
     let company = parts.length >= 3 && last === "LinkedIn" ? (parts[1] ?? "").trim() : "";
     if (!company) company = linkedinCompanyLink(doc);
@@ -24,8 +24,7 @@ const linkedin: SiteReader = {
       title: (parts[0] ?? "").trim(),
       company,
       location: linkedinLocation(text(doc.body), company),
-      // Without the query string, which carries only tracking parameters.
-      url: url.origin + url.pathname,
+      url: linkedinLink(url),
       source: "linkedin_manual",
       description: first(
         doc,
@@ -37,6 +36,19 @@ const linkedin: SiteReader = {
     };
   },
 };
+
+// The job's own link. The query string goes, for its tracking parameters,
+// except on a split-pane page such as `/jobs/search/` or
+// `/jobs/collections/...`, where `currentJobId` is the only thing naming the
+// selected job: that page gives the job's `/jobs/view/` link, the shape the
+// server reads a LinkedIn job id from (harrier.screening.linkedin).
+function linkedinLink(url: URL): string {
+  const selected = url.searchParams.get("currentJobId") ?? "";
+  if (!url.pathname.startsWith("/jobs/view/") && /^\d+$/.test(selected)) {
+    return `${url.origin}/jobs/view/${selected}/`;
+  }
+  return url.origin + url.pathname;
+}
 
 // The site's own links, which also point at company pages.
 const NOT_A_COMPANY = /^(LinkedIn|Sign in|Join now|Post a job|Post jobs for free)$/i;
@@ -82,7 +94,7 @@ const wellfound: SiteReader = {
     const location = (pieces.length > 1 ? pieces.slice(1).join("|") : (pieces[0] ?? "")).trim();
     if (!title || !company) {
       // "Title at Company | Wellfound"
-      const fallback = (doc.title.split("|")[0] ?? "").split(" at ");
+      const fallback = (pageTitle(doc).split("|")[0] ?? "").split(" at ");
       title ||= (fallback[0] ?? "").trim();
       company ||= (fallback[1] ?? "").trim();
     }
@@ -111,7 +123,7 @@ const wttj: SiteReader = {
     );
     if (!title || !company) {
       // "Title - COMPANY | Welcome to the Jungle"
-      const fallback = splitPageTitle(doc.title);
+      const fallback = splitPageTitle(pageTitle(doc));
       title ||= fallback.title;
       company ||= fallback.company;
     }

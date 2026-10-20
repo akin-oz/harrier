@@ -101,3 +101,27 @@ test("a page with no h1 takes its title and company from the page title", () => 
   expect(fields.title).toBe("Platform Engineer");
   expect(fields.company).toBe("Woodgrove");
 });
+
+test("a JobPosting with no title takes it from the h1", () => {
+  // Some boards name the job in `name` rather than `title`.
+  const doc = page(
+    "Careers - Woodgrove",
+    ldJson({ "@type": "JobPosting", name: "Platform Engineer", description: "Build things." }) +
+      "<h1>Platform Engineer</h1>",
+  );
+
+  const fields = readPage(doc, CAREERS);
+
+  expect(fields.title).toBe("Platform Engineer");
+  expect(fields.company).toBe("Woodgrove");
+  expect(fields.description).toBe("Build things.");
+});
+
+test("an unread count before the page title is dropped", () => {
+  const doc = page("(12+) Platform Engineer - Woodgrove | Jobs", "<p>Apply now</p>");
+
+  const fields = readPage(doc, CAREERS);
+
+  expect(fields.title).toBe("Platform Engineer");
+  expect(fields.company).toBe("Woodgrove");
+});

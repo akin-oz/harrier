@@ -20,6 +20,12 @@ export function first(root: ParentNode, ...selectors: string[]): string {
   return "";
 }
 
+/** The page's title without the unread count some sites put before it while
+ * notifications wait, such as LinkedIn's "(3) " or "(9+) ". */
+export function pageTitle(doc: Document): string {
+  return doc.title.replace(/^\(\d+\+?\)\s+/, "");
+}
+
 /** The bookmarklet's "Title - Company" split of a page title: the part
  * before the first `|`, cut at its last ` - `. */
 export function splitPageTitle(pageTitle: string): { title: string; company: string } {
