@@ -40,6 +40,15 @@ contract refusal object. A string reaches it today and happens to give the
 fallback. A JSON `null` reaches it too and throws a `TypeError` on
 `error.detail`, so the operator sees that instead of the fallback.
 
+A JSON object can also throw there. `refusalMessage` returns a string
+`detail` as it is and otherwise calls `(error.detail ?? []).map(...)`. So
+`{"detail": {"reason": "blocked"}}` throws (an object has no `map`), and so
+does a list with an item that is not an object (`"loc" in "x"` throws on a
+string). A list item that is an object of neither declared shape reads as
+"undefined: undefined". The types say none of this can arrive. A proxy, a
+route that raises `HTTPException` with a dict `detail`, or a contract the
+browser has not caught up with can send it anyway.
+
 Spec 082 named the empty body as a failure mode for the tracker writes and
 relied on their `data === undefined` guard. Most call sites have no such
 guard. No spec says how the browser reads a failed answer in general.
@@ -49,15 +58,18 @@ or sees a stack message instead of a sentence. The hosted deployment
 (ADR-013) has a proxy in front of the API, where an empty or HTML 502 is
 ordinary.
 
-Found by CodeRabbit on PR #413, which fixed the shape for the capture page
+Found by CodeRabbit on PR #413, which fixed both shapes for the capture page
 only (`refusalOf` in `apps/web/src/pages/capture/CapturePage.tsx`, deciding
-on `response.ok`).
+on `response.ok` and guarding the `detail` it reads).
 
 ## Scope
 
-One place: the generated client's middleware in
-`apps/web/src/shared/api/client.ts`, in both build modes. No call site
-changes.
+Two places, and no call site changes:
+
+- the generated client's middleware in
+  `apps/web/src/shared/api/client.ts`, in both build modes;
+- the shared reader `refusalMessage` in
+  `apps/web/src/shared/api/refusal.ts`.
 
 ## Behavior
 
@@ -88,6 +100,22 @@ the answer to its one retry after a refresh passes the rule too.
 A request that gets no answer at all is unchanged: it rejects, and the
 hosted build turns that into `UNREACHABLE` (spec 134).
 
+`refusalMessage(error, fallback)` never throws, whatever object it is
+given:
+
+- a string `detail` is returned as it is, as today;
+- a list `detail` is read item by item. An item that is an object with an
+  array `loc` and a string `msg` reads as `<last loc part>: <msg>`, as
+  today. An item that is an object with a string `field` and a string
+  `problem` reads as `<field>: <problem>`, as today. Any other item is
+  skipped. The read items are joined with "; ", and an empty result gives
+  the fallback;
+- any other `detail` (missing, `null`, a number, an object) gives the
+  fallback.
+
+Its parameter type stays the contract union of spec 082, so a contract
+change still fails `pnpm type-check` there.
+
 ## Failure modes
 
 - **An empty 500 or 502 on a write.** The call site's error path runs and
@@ -95,6 +123,12 @@ hosted build turns that into `UNREACHABLE` (spec 134).
 - **An HTML 502 from a proxy.** The fallback shows, not the HTML.
 - **A JSON `null` error body.** The fallback shows, not a `TypeError`.
 - **A declared refusal.** Unchanged: the API's `detail` shows verbatim.
+- **A JSON object whose `detail` is an object**, such as
+  `{"detail": {"reason": "blocked"}}`. The fallback shows, not a
+  `TypeError`.
+- **A list `detail` with some items of neither shape.** The items that
+  have a declared shape show; the others are dropped. If none has one, the
+  fallback shows.
 - **A hosted 401 with an empty body.** The hosted middleware reads it first
   as today (no reason, so the session ends as `invalid`), then the call
   site gets `{}` and shows its fallback.
@@ -126,6 +160,14 @@ hosted build turns that into `UNREACHABLE` (spec 134).
       answers an empty 500 returns `error` as `{}` (planned test in
       client.test.ts: "the retry's empty failed answer becomes an empty
       refusal").
+- [ ] `refusalMessage` returns the fallback for `{"detail": {"reason":
+      "blocked"}}`, for `{"detail": null}`, for `{"detail": 3}` and for
+      `{"detail": ["x", null]}`; and for `{"detail": ["x", {"loc":
+      ["body", "limit"], "msg": "too large", "type": "x"}, {"other": 1}]}`
+      it returns "limit: too large" (planned test in refusal.test.ts: "a
+      detail of no declared shape gives the fallback, never a throw"). The
+      first and fourth cases throw without the change.
+- [ ] The existing tests in `refusal.test.ts` pass unchanged.
 - [ ] An existing test that shows a declared refusal verbatim still passes
       (`BriefPanel.test.tsx`: "a refusal is shown in the store's words and
       the input is kept").
@@ -138,7 +180,9 @@ hosted build turns that into `UNREACHABLE` (spec 134).
 
 - openapi-fetch 0.17.0, `dist/index.mjs`, the end of `coreFetch` (lines
   179 to 201 in the installed copy).
-- CodeRabbit's finding on PR #413 about the capture page.
+- CodeRabbit's findings on PR #413 about the capture page: the `in`
+  operator on a string error body, and `refusalMessage` throwing on an
+  object `detail`.
 - Spec 082, Failure modes, which named the empty body for the tracker
   writes.
 
@@ -155,7 +199,8 @@ hosted build turns that into `UNREACHABLE` (spec 134).
 - Runtime validation of a JSON object body against its declared schema.
   ADR-005 trusts the types at the seam, and spec 082 kept that.
 - The capture page's own `refusalOf` (PR #413). It decides on
-  `response.ok` and stays correct after this change.
+  `response.ok`, guards its own `detail`, and stays correct after this
+  change. Moving it onto the shared reader is a separate change.
 - `localToken`'s `GET /session` in `client.ts`, which uses `fetch`
   directly and already decides on `response.ok`.
 
