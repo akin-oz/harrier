@@ -239,9 +239,11 @@ Stated here so the code and the spec agree.
 - **A fallback is the generic reader's output whole.** When a site reader
   finds no title or throws, the fields, the source label included, are
   what the generic reader gives: `manual`, as for any other page.
-- **Every reader's title is cleaned the bookmarklet's way.** A
-  ` - https://...` suffix and a ` - Company` suffix naming the company read
-  are cut, as the universal bookmarklet's `cleanTitle` did.
+- **Every reader's title is cleaned the bookmarklet's way.** Two suffixes
+  are cut, each starting at a `-` with a space on both sides: one where
+  `https://` follows, and one where the company already read follows,
+  compared without case. The universal bookmarklet's `cleanTitle` did the
+  same.
 - **The address is an origin only.** The options page refuses an address
   with a path, query, fragment or user name, since the extension adds
   `/#capture?` itself. `https://example.com/` is kept as
@@ -265,9 +267,11 @@ From the review of PR #415:
   `harrier.screening.linkedin.linkedin_job_id` reads. A `/jobs/view/`
   page, and a page with no numeric `currentJobId`, still drops the query.
   The bookmarklet had the same gap.
-- **An unread count is not part of a title.** A leading `(3) ` or
-  `(9+) ` that a site puts before its page title while notifications
-  wait is dropped before any reader splits the page title.
+- **An unread count is not part of a title.** A leading count such as
+  `(3)` or `(9+)`, followed by whitespace, that a site puts before its
+  page title while notifications wait is dropped, with that whitespace,
+  before any reader splits the page title. A count with no whitespace
+  after it is kept.
 - **A posting with no title or company** takes them from step 2 of the
   generic reader: the `h1`, else the page title and its split. The
   posting's own values still win where it has them.
