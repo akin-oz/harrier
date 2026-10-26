@@ -332,6 +332,26 @@ def lint_letter(full_version: str, context: LintContext, short_version: str = ""
     return violations
 
 
+def _copied_runs(sentence: str, fact: str) -> list[str]:
+    """Each longest run of words `sentence` shares with `fact` that is at
+    least `COPIED_FACT_WORDS` long, in the sentence's order (L21)."""
+    fact_windows = _windows(fact, COPIED_FACT_WORDS)
+    words = _words(sentence)
+    covered = [False] * len(words)
+    for at in range(len(words) - COPIED_FACT_WORDS + 1):
+        if tuple(words[at : at + COPIED_FACT_WORDS]) in fact_windows:
+            covered[at : at + COPIED_FACT_WORDS] = [True] * COPIED_FACT_WORDS
+    runs: list[str] = []
+    start: int | None = None
+    for at, inside in enumerate([*covered, False]):
+        if inside and start is None:
+            start = at
+        elif not inside and start is not None:
+            runs.append(" ".join(words[start:at]))
+            start = None
+    return runs
+
+
 def _body_blocks(blocks: list[str], context: LintContext) -> list[str]:
     """Every block after the role line except the close and the lines code
     added (spec 165)."""
@@ -367,16 +387,16 @@ def _prose_rules(both: str, blocks: list[str], context: LintContext) -> list[str
             + (", two in a row" if in_a_row else "")
         )
 
-    # L21: a body sentence that copies a fact the writer was given.
-    copied: list[str] = []
+    # L21: a body sentence that copies a fact the writer was given. The
+    # message quotes the shared words so the retry knows what to change
+    # (amendment 7).
     for fact_id, text in context.fact_texts:
-        fact_windows = _windows(text, COPIED_FACT_WORDS)
-        if fact_windows and any(
-            _windows(sentence, COPIED_FACT_WORDS) & fact_windows for sentence in sentences
-        ):
-            copied.append(fact_id)
-    for fact_id in dict.fromkeys(copied):
-        violations.append(f"copies fact {fact_id} word for word: say it in other words")
+        runs = [run for sentence in sentences for run in _copied_runs(sentence, text)]
+        if runs:
+            quoted = "; ".join(f'"{run}"' for run in dict.fromkeys(runs))
+            violations.append(
+                f"copies fact {fact_id} word for word ({quoted}): say it in other words"
+            )
 
     # L22: two body paragraphs that open with the same word.
     openers = [_WORD.findall(block)[0] for block in body if _WORD.search(block)]

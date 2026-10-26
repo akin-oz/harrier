@@ -96,6 +96,8 @@ Required structure for full_version, as blocks separated by blank lines (spec 16
    facts only. Open it with a sentence that names what the ask needs, in your
    own words (never six words in a row from the ask), give one or two facts
    as the evidence, then say in one clause what that means for this role.
+   Vary how each proof paragraph opens: never repeat one sentence pattern,
+   such as "<topic> needs <quality>.", across paragraphs.
    Asks 4 and 5 may share a paragraph. Skip an ask with no facts.
 4. Why this company: one first-person sentence from product_facts only. With
    no product_facts, leave it out.
@@ -237,6 +239,8 @@ Required structure for full_version, as blocks separated by blank lines (spec 16
    facts only. Open it with a sentence that names what the ask needs, in your
    own words (never six words in a row from the ask), give one or two facts
    as the evidence, then say in one clause what that means for this role.
+   Vary how each proof paragraph opens: never repeat one sentence pattern,
+   such as "<topic> needs <quality>.", across paragraphs.
    Skip an ask with no facts.
 4. Why the candidate chose a smaller scope, from scope_reason only, as a stated
    preference. It is never a claim about the employer.

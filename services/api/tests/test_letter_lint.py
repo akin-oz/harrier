@@ -396,12 +396,14 @@ def test_i_openings_count_runs_and_share() -> None:
 
 
 def test_a_copied_fact_is_refused_and_a_reworded_one_passes() -> None:
-    """L21 names the fact, never its text. The reworded sentence keeps the
-    tool and passes L21 and the claim check (spec 065) on the same fact."""
+    """L21 names the fact and quotes the longest run the sentence shares
+    with it, so the retry knows which words to change (amendment 7). The
+    reworded sentence keeps the tool and passes L21 and the claim check
+    (spec 065) on the same fact."""
     copied = f"For product teams, I {FACT[0].lower()}{FACT[1:]}"
     violations = lint(letter(proof=copied), FACT_CONTEXT)
-    assert f"copies fact {FACT_ID} word for word: say it in other words" in violations
-    assert not any(FACT in violation for violation in violations)
+    run = "built a design system in react with documented components for product teams"
+    assert f'copies fact {FACT_ID} word for word ("{run}"): say it in other words' in violations
 
     reworded = "Product teams now build on a documented React design system that I built."
     assert lint(letter(proof=reworded), FACT_CONTEXT) == []
@@ -436,8 +438,8 @@ def test_the_bullet_copy_fixture_fails_and_the_target_passes() -> None:
     violations = lint_letter(str(bad["full_version"]), context(bad))
     for expected in (
         '"I" or "My" starts',
-        "copies fact r1_b2 word for word",
-        "copies fact r1_b3 word for word",
+        "copies fact r1_b2 word for word (",
+        "copies fact r1_b3 word for word (",
     ):
         assert any(v.startswith(expected) for v in violations), (expected, violations)
 

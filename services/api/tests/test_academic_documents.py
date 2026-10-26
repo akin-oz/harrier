@@ -60,7 +60,7 @@ from harrier_cli.main import main
 # spec 159's entity line, and again with spec 165's prose rules.
 INDUSTRY_PROMPT_SHA256 = {
     "tailor": "e4d6e724cbb0bca98688928bfe01dcac3f4eaa77b5d14c94f52a8bc530ec8525",
-    "letter": "f81d43daab063229b1ed8b753f530e7a8ebb2ab6d8c41f16892e4b9cd28ff1de",
+    "letter": "f74d77da8e9836ab634ab426385bf25f77c1f26847c776de04cb7749bf743e1f",
     "answers": "5f4c2ce48f22338680ed62668bf294116c01931a608407710d7377791acb1a00",
 }
 

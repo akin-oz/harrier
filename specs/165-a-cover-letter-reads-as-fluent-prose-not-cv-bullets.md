@@ -147,7 +147,7 @@ the close.
 - **L21 copied fact.** Refused when a body sentence shares a run of ten or
   more consecutive words with one fact text the writer received under
   `asks`, compared as L7 compares (case and punctuation aside). The message
-  names the fact id, never its text.
+  names the fact id and quotes the shared words (amendment 7).
 - **L22 paragraph openers.** Refused when two body paragraphs begin with
   the same word.
 
@@ -302,3 +302,34 @@ wrong file.
    with a "My" sentence. Each is reworded to keep its facts and numbers.
    `restream-target.json` is revised as section 3 of the Acceptance criteria
    says; its hook and component sentence also copied a fact (L21).
+
+## Amendment (2026-10-26, regeneration)
+
+Regenerating two real letters with the built rules (jobs from the
+operator's local store, run against a scratch copy of it; the letters are
+personal data and are not quoted) found these. Akin decided both on
+2026-10-26.
+
+7. **L21 quotes the copied words.** The message named the fact id only,
+   so the retry had to guess which words to change, and on one letter it
+   rewrote the two flagged facts but left a third ten-word run. The message
+   now reads `copies fact <id> word for word ("<words>"): say it in other
+   words`, where `<words>` is each longest run the sentence shares with the
+   fact, lowercased as L7 compares them. The words are the candidate's own
+   fact, which the writer already holds; they reach only the local refusal
+   output and the retry payload, never git.
+8. **Proof paragraphs vary their openings.** Told to open each proof
+   paragraph with what the ask needs, the writer opened every one with the
+   same pattern ("Architecture needs boundaries. Speed needs measuring.").
+   Both voices now also say to vary how each proof paragraph opens and
+   never to repeat one sentence pattern across paragraphs. Code does not
+   check this beyond L22.
+
+9. **Result of the regeneration.** With items 7 and 8 built, one of the
+   two letters passed every rule after its retry and rendered a one-page
+   PDF. The other was refused after its retry by L21 alone, on a run made
+   of a product's name and its one-line description. A proper name cannot
+   be reworded, so a fact that names a product with a description of ten
+   words or more can keep tripping L21. This is a limitation of the window,
+   not fixed here; the operator writes such a letter by hand or shortens
+   the fact.
