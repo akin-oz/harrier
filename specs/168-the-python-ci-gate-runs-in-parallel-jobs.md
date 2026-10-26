@@ -101,16 +101,17 @@ All six jobs start when the workflow starts; only the gate waits.
 
 ## Acceptance criteria
 
-- [ ] With `HARRIER_TEST_SHARD` set to `1/3`, `2/3` and `3/3` over the same
+- [x] With `HARRIER_TEST_SHARD` set to `1/3`, `2/3` and `3/3` over the same
       test files, the three collected sets are disjoint and their union is
-      the unsharded collection (planned test_shards_partition_the_collection).
-- [ ] Shard sizes for one collection differ by at most one (planned
-      test_shards_differ_in_size_by_at_most_one).
-- [ ] Each malformed value listed under Behavior exits 4 with no test run
-      and a message naming `HARRIER_TEST_SHARD` (planned
-      test_a_malformed_shard_is_a_usage_error).
-- [ ] An empty `HARRIER_TEST_SHARD` collects the same tests as an unset one
-      (planned test_an_empty_shard_runs_everything).
+      the unsharded collection
+      (`test_shards_partition_the_collection` in test_test_shards.py).
+- [x] Shard sizes for one collection differ by at most one
+      (`test_shards_differ_in_size_by_at_most_one` in test_test_shards.py).
+- [x] Each malformed value listed under Behavior exits 4 with no test run
+      and a message naming `HARRIER_TEST_SHARD`
+      (`test_a_malformed_shard_is_a_usage_error` in test_test_shards.py).
+- [x] An empty `HARRIER_TEST_SHARD` collects the same tests as an unset one
+      (`test_an_empty_shard_runs_everything` in test_test_shards.py).
 - [ ] On the implementing pull request's CI run, the four shards' passed
       counts add up to the passed count of the same commit run unsharded,
       and so do the skipped counts. The pull request states both totals.
