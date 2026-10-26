@@ -264,7 +264,9 @@ def pytest_configure(config: pytest.Config) -> None:
         "on SQLite, for the reason given (spec 126)",
     )
     _read_no_dotenv_outside_the_tests_tmp_paths()
-    config.stash[_shard_key] = _parse_shard(os.environ.get(SHARD_VARIABLE, ""))
+    # Taken out of the environment, so a session a test starts (pytester, a
+    # child process) runs everything it collects (spec 168).
+    config.stash[_shard_key] = _parse_shard(os.environ.pop(SHARD_VARIABLE, ""))
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:

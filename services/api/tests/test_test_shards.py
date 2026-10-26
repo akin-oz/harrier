@@ -21,10 +21,9 @@ SHARD_VARIABLE = "HARRIER_TEST_SHARD"
 TARGETS = ("tests/test_spec_structure.py", "tests/test_spec_gate.py")
 
 
-def _collect(shard: str | None) -> subprocess.CompletedProcess[str]:
+def _pytest(shard: str | None, *args: str) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
-    # A CI shard runs this test with its own shard set; the child decides
-    # only on the value given here.
+    # Whatever this session had, the child decides on the value given here.
     env.pop(SHARD_VARIABLE, None)
     if shard is not None:
         env[SHARD_VARIABLE] = shard
@@ -33,11 +32,10 @@ def _collect(shard: str | None) -> subprocess.CompletedProcess[str]:
             sys.executable,
             "-m",
             "pytest",
-            "--collect-only",
             "-q",
             "-p",
             "no:cacheprovider",
-            *TARGETS,
+            *args,
         ],
         cwd=API_DIR,
         env=env,
@@ -45,6 +43,10 @@ def _collect(shard: str | None) -> subprocess.CompletedProcess[str]:
         text=True,
         check=False,
     )
+
+
+def _collect(shard: str | None) -> subprocess.CompletedProcess[str]:
+    return _pytest(shard, "--collect-only", *TARGETS)
 
 
 def _collected(shard: str | None) -> list[str]:
@@ -81,3 +83,17 @@ def test_a_malformed_shard_is_a_usage_error(value: str):
     assert SHARD_VARIABLE in result.stderr
     assert repr(value) in result.stderr
     assert "::" not in result.stdout
+
+
+def test_a_session_a_test_starts_is_not_sharded():
+    # The one test kept by shard 1 of 2 starts its own session over four
+    # tests with pytester and expects all four. It would see two if the
+    # shard reached that session too, as it did on PR #418's first run.
+    nested = (
+        "tests/test_domain_sql_on_both_stores.py"
+        "::test_a_sqlite_only_test_gets_the_sqlite_parameter_alone"
+    )
+    result = _pytest("1/2", nested)
+
+    assert result.returncode == pytest.ExitCode.OK, result.stdout + result.stderr
+    assert "1 passed" in result.stdout
