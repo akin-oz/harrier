@@ -1,4 +1,4 @@
-"""The cover letter linter, rule by rule (spec 158, L1 to L11).
+"""The cover letter linter, rule by rule (spec 158, L1 to L11; spec 165, L18 to L22).
 
 `lint_letter` is the decision: the pipeline adds its messages to the letter's
 refusal, and every rule here is the linter's own. Each test breaks one rule
@@ -9,12 +9,15 @@ Everything is synthetic.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from harrier.apply.claims import ClaimContext, check_claims, parse_claims
 from harrier.apply.letterlint import AskCoverage, LintContext, lint_letter
+from harrier.resume.content import SkillVocabulary, TruthSources
 
 FIXTURES = Path(__file__).parent / "fixtures" / "letters"
 
@@ -33,7 +36,9 @@ POSTING = (
 
 ROLE_LINE = "Frontend Engineer, Payments team, Example GmbH"
 HOOK = "I cut page load time by ~12% on the product pages."
-PROOF = "I built a design system in React with documented components for product teams."
+# Spec 165: the proof does not open with "I", so the base letter has no two
+# "I" sentences in a row (L20) and no two paragraphs on the same word (L22).
+PROOF = "For product teams, I built a design system in React with documented components."
 WHY = "Payment tools for small shops are the product I want to build next."
 CLOSE = "I can walk your team through the design system on a call."
 # A body block with no number, skill or hedge, so the base letter clears
@@ -321,3 +326,120 @@ def test_a_qualifier_counts_only_next_to_its_number() -> None:
         "a number lost its qualifier: 120k (in: Signup completion grew from 41% to 58% across"
         " 120K signups.)"
     ]
+
+
+# --- spec 165: how the letter reads (L18 to L22) ---
+
+FACT_ID = "r1_b2"
+FACT = "Built a design system in React with documented components for product teams."
+FACT_CONTEXT = replace(CONTEXT, fact_texts=((FACT_ID, FACT),))
+
+PROSE_BROKEN = {
+    "L18 negative": (
+        letter(proof=f"{PROOF} I had to ship it in a month."),
+        "negative framing: had to",
+    ),
+    "L19 passive": (
+        letter(proof=f"{PROOF} My React skills were strengthened through that work."),
+        "passive growth: were strengthened through",
+    ),
+    "L20 I openings": (
+        letter(proof="I built a design system in React with documented components."),
+        '"I" or "My" starts 2 of 7 body sentences, two in a row',
+    ),
+    "L21 copied fact": (
+        letter(proof=f"Product teams got one thing above all: I {FACT[0].lower()}{FACT[1:]}"),
+        f"copies fact {FACT_ID} word for word",
+    ),
+    "L22 paragraph openers": (
+        letter(why="For small shops, payment tools are the product I want to build next."),
+        'two body paragraphs open with "For"',
+    ),
+}
+
+
+@pytest.mark.parametrize("rule", sorted(PROSE_BROKEN))
+def test_prose_rules_refuse_and_their_fixes_pass(rule: str) -> None:
+    """Each broken letter names its rule; the base letter, which is the same
+    letter with that defect fixed, passes with the fact in the context."""
+    broken, message = PROSE_BROKEN[rule]
+    assert any(message in violation for violation in lint(broken, FACT_CONTEXT)), lint(
+        broken, FACT_CONTEXT
+    )
+    assert lint(letter(), FACT_CONTEXT) == []
+
+
+def _body_letter(*sentences: str) -> str:
+    return "\n\n".join([ROLE_LINE, " ".join(sentences), CLOSE])
+
+
+def _i_violations(full: str) -> list[str]:
+    return [v for v in lint(full) if v.startswith('"I" or "My"')]
+
+
+def test_i_openings_count_runs_and_share() -> None:
+    """L20 refuses two "I" sentences in a row, or more than a third of the
+    body; three in nine with none in a row pass."""
+    other = "The team shipped it."
+    mine = "I shipped it."
+    assert _i_violations(_body_letter(mine, mine, *[other] * 7)) == [
+        '"I" or "My" starts 2 of 9 body sentences, two in a row'
+    ]
+    assert _i_violations(_body_letter(*[mine, other] * 3, other, other, other)) == []
+    assert _i_violations(_body_letter(*[mine, other] * 4, other)) == [
+        '"I" or "My" starts 4 of 9 body sentences'
+    ]
+    # "My" counts, and a curly apostrophe reads as a straight one.
+    assert _i_violations(
+        _body_letter("My team shipped it.", f"I{chr(0x2019)}ve shipped it.", other)
+    ) == ['"I" or "My" starts 2 of 3 body sentences, two in a row']
+
+
+def test_a_copied_fact_is_refused_and_a_reworded_one_passes() -> None:
+    """L21 names the fact, never its text. The reworded sentence keeps the
+    tool and passes L21 and the claim check (spec 065) on the same fact."""
+    copied = f"For product teams, I {FACT[0].lower()}{FACT[1:]}"
+    violations = lint(letter(proof=copied), FACT_CONTEXT)
+    assert f"copies fact {FACT_ID} word for word: say it in other words" in violations
+    assert not any(FACT in violation for violation in violations)
+
+    reworded = "Product teams now build on a documented React design system that I built."
+    assert lint(letter(proof=reworded), FACT_CONTEXT) == []
+    context = ClaimContext(
+        sources=TruthSources(truth_text=FACT, achievements_text=""),
+        posting=POSTING,
+        company=COMPANY,
+        role=ROLE,
+        vocabulary=SkillVocabulary(terms=("React",), verified=frozenset({"react"})),
+    )
+    claims = parse_claims([{"sentence": reworded, "about": "candidate", "evidence": [FACT]}])
+    assert check_claims([reworded], claims, context) == []
+
+
+def test_passive_growth_needs_the_preposition() -> None:
+    passive = letter(proof=f"{PROOF} The pipeline was built through a migration.")
+    assert "passive growth: was built through" in lint(passive)
+    active = letter(proof=f"{PROOF} Later, I built a migration path for it.")
+    assert not any(v.startswith("passive growth") for v in lint(active))
+
+
+def test_the_bullet_copy_fixture_fails_and_the_target_passes() -> None:
+    """The synthetic letter written as CV bullets fails L20 and L21; the
+    spec 160 target, revised to the new voice, passes every rule."""
+    facts: dict[str, str] = _fixture("restream-profile.json")["facts"]
+
+    def context(letter_doc: Any) -> LintContext:
+        given = dict.fromkeys(f for ask in letter_doc["asks"]["asks"] for f in ask["fact_ids"])
+        return replace(_fixture_context(letter_doc), fact_texts=tuple((f, facts[f]) for f in given))
+
+    bad = _fixture("bullet-copy-bad.json")
+    violations = lint_letter(str(bad["full_version"]), context(bad))
+    for expected in (
+        '"I" or "My" starts',
+        "copies fact r1_b2 word for word",
+        "copies fact r1_b3 word for word",
+    ):
+        assert any(v.startswith(expected) for v in violations), (expected, violations)
+
+    target = _fixture("restream-target.json")
+    assert lint_letter(str(target["full_version"]), context(target)) == []

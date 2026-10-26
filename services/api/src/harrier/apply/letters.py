@@ -620,6 +620,8 @@ def plan_letter(
     gaps = [gap for gap in (link_gap, experience_gap) if gap]
     if not analysis.product_fact_ids:
         gaps.append(f"first-hand experience of {display}'s product")
+    if not track_motivation(conn, scope):
+        gaps.append(MOTIVATION_GAP)
     return AskPlan(
         analysis=replace(analysis, extra_gaps=tuple(gaps)),
         facts=facts,
@@ -630,6 +632,20 @@ def plan_letter(
         logistics_block=scope.track.kind == "focused"
         or bool(analysis.logistics_quote or analysis.logistics_fact_ids),
     )
+
+
+MOTIVATION_GAP = "a motivation statement"
+
+
+def track_motivation(conn: Connection, scope: Scope) -> str:
+    """The track's `motivation` (spec 165): the operator's stated reason for
+    wanting this kind of role. "" when the application profile has none or
+    cannot be read."""
+    try:
+        profile = load_profile_json(conn, scope)
+    except ApplicationProfileError:
+        return ""
+    return str(profile.get("motivation") or "").strip()
 
 
 def writer_payload(
@@ -668,6 +684,8 @@ def writer_payload(
         "employer_guidance": brief.employer_guidance,
         "guidance_url": brief.guidance_url,
         "operator_evidence": list(brief.evidence),
+        # A stated preference, never evidence (spec 165).
+        "motivation": track_motivation(conn, scope),
     }
     if not analysis.asks:
         # No posting to rank against: every fact, unranked (amendment 1).
@@ -802,6 +820,14 @@ def _checked_letter(
         link_line=plan.link if plan is not None else None,
     )
     added = tuple(line for line in ((plan.link, plan.experience) if plan else ()) if line)
+    if plan is not None:
+        # L21 reads the facts the writer was given under `asks` (spec 165).
+        given = dict.fromkeys(f for ask in plan.analysis.asks for f in ask.fact_ids)
+        lint = replace(
+            lint,
+            fact_texts=tuple((f, plan.facts[f]) for f in given if f in plan.facts),
+            added_lines=added,
+        )
     if plan is not None:
         # The analysis owns the gaps; the writer was told to leave them
         # empty and never saw the posting to quote (spec 160, section 4).
@@ -1009,6 +1035,25 @@ def markdown_to_html_paragraphs(text: str) -> str:
     return "\n".join(f"<p>{html.escape(block)}</p>" for block in blocks)
 
 
+SALUTATION = "Dear Hiring Manager,"
+SIGN_OFF = "Kind regards,"
+
+
+def letter_frame(kind: str, name: str) -> dict[str, str]:
+    """The salutation above the letter and the sign-off below it (spec 165).
+    The industry letter has both; the academic letter neither, and the
+    focused template writes its own."""
+    if kind != "industry":
+        return {"salutation_html": "", "sign_off_html": ""}
+    return {
+        "salutation_html": f'<p class="salutation">{html.escape(SALUTATION)}</p>',
+        "sign_off_html": (
+            f'<p class="sign-off">{html.escape(SIGN_OFF)}</p>\n'
+            f'<p class="signature">{html.escape(name)}</p>'
+        ),
+    }
+
+
 def render_cover_letter_html(
     conn: Connection,
     company: str,
@@ -1046,6 +1091,7 @@ def render_cover_letter_html(
         "linkedin_label": html.escape(contact["linkedin_label"]),
         "full_version_html": markdown_to_html_paragraphs(full_version),
         "company": html.escape(company.strip()),
+        **letter_frame(kind, contact["name"]),
     }
     for key, value in replacements.items():
         html_text = html_text.replace(f"{{{{{key}}}}}", value)

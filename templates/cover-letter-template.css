@@ -78,6 +78,11 @@ body {
   margin-bottom: 0;
 }
 
+/* The industry sign-off sits on the line above the name (spec 165). */
+.letter-copy p.sign-off {
+  margin: 16px 0 0;
+}
+
 @media print {
   body {
     padding: 0;
