@@ -264,6 +264,9 @@ def pytest_configure(config: pytest.Config) -> None:
         "on SQLite, for the reason given (spec 126)",
     )
     _read_no_dotenv_outside_the_tests_tmp_paths()
+    # Taken out of the environment, so a session a test starts (pytester, a
+    # child process) runs everything it collects (spec 168).
+    config.stash[_shard_key] = _parse_shard(os.environ.pop(SHARD_VARIABLE, ""))
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
@@ -780,3 +783,40 @@ def store(dual_store: DualStore) -> Connection:
     """A migrated `Connection` per test, on SQLite and on Postgres as one
     synthetic owner that runs as `harrier_tenant` (spec 126)."""
     return dual_store.open()
+
+
+# --- one shard of the suite (spec 168) ---
+
+# CI runs the suite as four jobs, each with its own Postgres, and each job
+# keeps every fourth collected test. Unset or empty, every test runs.
+SHARD_VARIABLE = "HARRIER_TEST_SHARD"
+_shard_key = pytest.StashKey[tuple[int, int] | None]()
+
+
+def _parse_shard(value: str) -> tuple[int, int] | None:
+    """`K/N` as `(K, N)`, None for an empty value, a usage error otherwise:
+    a malformed value never becomes a silent full or empty run."""
+    if value == "":
+        return None
+    # Not stripped: spaces around or instead of K/N are a malformed value.
+    parts = value.split("/")
+    if len(parts) == 2 and all(part.isascii() and part.isdigit() for part in parts):
+        index, count = int(parts[0]), int(parts[1])
+        if 1 <= index <= count:
+            return index, count
+    raise pytest.UsageError(f"{SHARD_VARIABLE} must be K/N with 1 <= K <= N, got {value!r}")
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Keep test number i when i mod N is K - 1. Last, so the numbering is
+    the final collection order and the N shards hold every test once."""
+    shard = config.stash.get(_shard_key, None)
+    if shard is None:
+        return
+    index, count = shard
+    kept = [item for number, item in enumerate(items) if number % count == index - 1]
+    dropped = [item for number, item in enumerate(items) if number % count != index - 1]
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+    items[:] = kept
