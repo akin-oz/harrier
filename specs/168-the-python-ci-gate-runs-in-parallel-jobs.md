@@ -55,7 +55,8 @@ integers with `1 <= K <= N`.
 - **`K/N`:** after collection, the collected tests are numbered from 0 in
   collection order. Test number `i` stays if `i mod N == K - 1`. The others
   are deselected, and pytest's summary counts them as deselected.
-- **Any other value** (`0/4`, `5/4`, `2/0`, `x`, `1/`, `1/4/2`): pytest
+- **Any other value** (`0/4`, `5/4`, `2/0`, `x`, `1/`, `1/4/2`, and a
+  value of spaces or with spaces around `K/N`, as review found): pytest
   stops before running any test, exit code 4 (usage error), with a message
   that names `HARRIER_TEST_SHARD` and the value it got.
 

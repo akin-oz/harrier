@@ -75,7 +75,7 @@ def test_an_empty_shard_runs_everything():
     assert _collected("") == _collected(None)
 
 
-@pytest.mark.parametrize("value", ["0/4", "5/4", "2/0", "x", "1/", "1/4/2"])
+@pytest.mark.parametrize("value", ["0/4", "5/4", "2/0", "x", "1/", "1/4/2", " ", " 1/4", "1/4 "])
 def test_a_malformed_shard_is_a_usage_error(value: str):
     result = _collect(value)
 

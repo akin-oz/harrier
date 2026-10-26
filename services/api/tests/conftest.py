@@ -796,9 +796,10 @@ _shard_key = pytest.StashKey[tuple[int, int] | None]()
 def _parse_shard(value: str) -> tuple[int, int] | None:
     """`K/N` as `(K, N)`, None for an empty value, a usage error otherwise:
     a malformed value never becomes a silent full or empty run."""
-    if not value.strip():
+    if value == "":
         return None
-    parts = value.strip().split("/")
+    # Not stripped: spaces around or instead of K/N are a malformed value.
+    parts = value.split("/")
     if len(parts) == 2 and all(part.isascii() and part.isdigit() for part in parts):
         index, count = int(parts[0]), int(parts[1])
         if 1 <= index <= count:
