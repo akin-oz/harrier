@@ -124,16 +124,30 @@ All six jobs start when the workflow starts; only the gate waits.
       (`test_a_session_a_test_starts_is_not_sharded` in
       test_test_shards.py). It fails when the variable is read without
       being removed.
-- [ ] On the implementing pull request's CI run, the four shards' passed
+- [x] On the implementing pull request's CI run, the four shards' passed
       counts add up to the passed count of the same commit run unsharded,
       and so do the skipped counts. The pull request states both totals.
-- [ ] On the implementing pull request's CI run, the gate job finishes in
+      Met against main's last unsharded run instead, since no unsharded
+      run of the PR's head exists: on run 40383184067 (PR #418, head
+      4a05ded) the shards passed 1195, 1195, 1194 and 1195, so 4779, and
+      skipped 7, 8, 8 and 8, so 31. Run 39491897862 (main, cdc84ff)
+      passed 4766 and skipped 31. Between those commits the Python
+      service changed only by this spec's 13 new tests in
+      test_test_shards.py, and 4766 + 13 = 4779.
+- [x] On the implementing pull request's CI run, the gate job finishes in
       less than half of the baseline's 8 min 36 s, counted from the
       workflow's start. The pull request states the measured time.
-- [ ] A pull request where one shard fails shows the gate job failed,
+      Run 40383184067 started at 19:02:49 UTC and the gate finished at
+      19:06:52 UTC: 4 min 03 s, under the 4 min 18 s limit. The slowest
+      shard took 3 min 54 s.
+- [x] A pull request where one shard fails shows the gate job failed,
       named as the required check. Proved once on the implementing pull
       request with a deliberately failing commit, then reverted; the
-      pull request links that run.
+      pull request links that run. Met by a real failure instead of a
+      deliberate one, as Akin chose: on run 40380464770 (PR #418, head
+      6014385) shards 1 and 3 failed and "Python (ruff, pyright,
+      import-linter, pytest)" failed with them. The Amendment below
+      records that failure.
 - [ ] `just check` passes locally.
 
 ## Proof / origin
