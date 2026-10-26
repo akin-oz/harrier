@@ -1,8 +1,8 @@
 ---
 spec: 168
 title: The Python CI gate runs in parallel jobs
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M0
 depends: [002, 039, 103]
 ---
