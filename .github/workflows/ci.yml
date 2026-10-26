@@ -8,10 +8,29 @@ on:
     branches: [main]
 
 jobs:
-  check-python:
-    name: Python (ruff, pyright, import-linter, pytest)
+  # The Python gate is three parts that start together (spec 168): the static
+  # checks, the tests as four shards, and a job under the name the
+  # main-protection ruleset requires, which passes only if all of them did.
+  check-python-static:
+    name: Python static (ruff, pyright, import-linter)
     runs-on: ubuntu-latest
-    # The Postgres store's tests run here (spec 103). GitHub sets CI=true, so
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: extractions/setup-just@v3
+      - run: just check-python-static
+
+  check-python-tests:
+    name: Python tests (shard ${{ matrix.shard }} of 4)
+    runs-on: ubuntu-latest
+    strategy:
+      # One run shows every failing test, not only the first shard's.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    # The Postgres store's tests run here (spec 103). Each shard has its own
+    # server: the tests create roles server-wide, so shards cannot share one
+    # (spec 168). GitHub sets CI=true, so
     # tests/pg_support.py fails the run, rather than skipping, when this
     # service is missing or unreachable (spec 039).
     services:
@@ -32,6 +51,7 @@ jobs:
     env:
       # A throwaway CI database, not a credential.
       HARRIER_TEST_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      HARRIER_TEST_SHARD: ${{ matrix.shard }}/4
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
@@ -46,7 +66,26 @@ jobs:
           sudo apt-get install -y --no-install-recommends postgresql-common
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y --no-install-recommends postgresql-client-17 age
-      - run: just check-python
+      - run: just check-python-tests
+
+  check-python:
+    name: Python (ruff, pyright, import-linter, pytest)
+    needs: [check-python-static, check-python-tests]
+    # Runs when a part failed or was cancelled too: a skipped required check
+    # reads as passing, and a part that did not run has not passed.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every Python job passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          failed="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<< "$NEEDS")"
+          if [ -n "$failed" ]; then
+            echo "::error::not every Python job passed"
+            echo "$failed"
+            exit 1
+          fi
 
   check-ts:
     name: TypeScript (tsc, eslint, prettier, vitest)

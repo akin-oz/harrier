@@ -67,12 +67,19 @@ demo-discover:
 # Full local gate, identical to CI.
 check: check-python check-ts contract aie-check spec-structure
 
-check-python:
+check-python: check-python-static check-python-tests
+
+# CI runs these two as separate jobs, the tests as four shards (spec 168).
+check-python-static:
     cd {{api_dir}} && uv sync --quiet
     cd {{api_dir}} && uv run ruff check .
     cd {{api_dir}} && uv run ruff format --check .
     cd {{api_dir}} && uv run pyright
     cd {{api_dir}} && uv run lint-imports
+
+# HARRIER_TEST_SHARD=K/N runs one shard; unset, every test runs.
+check-python-tests:
+    cd {{api_dir}} && uv sync --quiet
     cd {{api_dir}} && uv run pytest -q
 
 check-ts:

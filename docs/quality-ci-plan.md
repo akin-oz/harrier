@@ -21,6 +21,12 @@ drift (ADR-007).
 | Spec trailer gate | every commit's `Spec: NNN` resolves to a spec file with `approved: yes` | commit guard (shape only) + lefthook commit-msg | yes (authoritative) | merge-protected |
 | Secret scan | gitleaks with project rules | pre-commit (staged) | yes (full diff) | yes (full history, scheduled weekly) |
 
+The Python row's checks run in CI as six jobs that start together: the
+static checks, the tests as four shards (`HARRIER_TEST_SHARD=K/4`, each with
+its own Postgres), and a gate job under the required check's name that passes
+only if the others did (spec 168, `.github/workflows/ci.yml`). The shard rule
+is proved by `services/api/tests/test_test_shards.py`.
+
 ## PR versus main
 
 - **PR**: everything above. The spec-trailer job iterates `BASE..HEAD` commits,
