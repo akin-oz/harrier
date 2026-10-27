@@ -114,7 +114,7 @@ ANSWERS_SHARED: tuple[str, ...] = (
 - Prefer one idea per sentence.
 - Never frame a fact negatively ("had to", "I don't have", "I lack"). State a missing area as what the candidate is doing about it, only when the truth sources state that.
 - Write growth in the active voice ("I built", never "was developed through").
-- Do not start two sentences in a row with "I" or "My".
+- Do not start two sentences in a row with "I" or "My", and in a medium answer start at most a third of the sentences with them.
 
 Banned phrasing:
 """

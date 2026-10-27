@@ -77,6 +77,9 @@ origin).
 - [x] "e.g. my" inside a medium answer does not end a sentence for L20
       (amendment 1;
       `services/api/tests/test_answer_tone.py::test_i_runs_split_sentences_as_the_answer_limits_do`).
+- [x] Every kind's answers prompt states the three rules, L20's third
+      included (amendment 4;
+      `services/api/tests/test_answer_tone.py::test_every_answers_prompt_states_the_tone_rules`).
 
 ## Proof / origin
 
@@ -122,3 +125,16 @@ The build found these places where the Behavior was silent.
    `services/api/tests/test_apply_brief.py` were one-sentence medium
    answers opening with "I" and are reworded; what they test is unchanged.
    Scope gains that file.
+4. **The prompt states L20's third.** The third rule line said only "not
+   two in a row", so a medium answer opening sentences one and three of
+   four with "I" followed the prompt and was refused (review of PR #424).
+   The line now adds "and in a medium answer start at most a third of the
+   sentences with them".
+5. **A competency answer is checked as one medium answer.** Spec 166
+   merged first. L20 reads the joined STAR text like any medium answer.
+   Its synthetic filler in `services/api/tests/test_star_answers.py`
+   opened every part with "I", which made each part a sentence starting
+   "I", so the filler is reworded. Scope gains that file. Spec 166's task
+   line says "what the candidate had to achieve". A task part that copies
+   "had to" is refused by L18 and gets the retry. That wording belongs to
+   spec 166 and is left as it is here.

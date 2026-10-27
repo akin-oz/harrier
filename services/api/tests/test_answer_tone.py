@@ -34,6 +34,7 @@ from harrier.apply.claims import ClaimCheckError
 from harrier.apply.letterlint import tone_violations
 from harrier.connection import Connection
 from harrier.db import connect
+from harrier.tracks import TRACK_KINDS
 
 
 @pytest.fixture()
@@ -111,6 +112,19 @@ def test_i_runs_split_sentences_as_the_answer_limits_do(
     medium = "The checkout work covered quality checks, e.g. my lint step on v1.2 of the service."
     stub_sequence(monkeypatch, answers_module, [answers_json(answer(medium, []))])
     assert generate(db)[0].medium_answer == medium
+
+
+def test_every_answers_prompt_states_the_tone_rules() -> None:
+    """The prompt states each limit the check enforces, including L20's
+    third, so a draft that follows it is not refused (review of PR #424)."""
+    for kind in TRACK_KINDS:
+        prompt = " ".join(answers_module.answers_prompt(kind).split())
+        assert "Never frame a fact negatively" in prompt, kind
+        assert "Write growth in the active voice" in prompt, kind
+        assert (
+            'Do not start two sentences in a row with "I" or "My", and in a medium answer'
+            " start at most a third of the sentences with them." in prompt
+        ), kind
 
 
 def test_deterministic_answers_are_not_tone_checked() -> None:
