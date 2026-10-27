@@ -57,11 +57,12 @@ from harrier_cli.main import main
 # block and an industry voice (SYSTEM_PROMPT_TAILOR in resume/ai.py, and
 # SYSTEM_PROMPT_BASE in apply/letters.py and apply/answers.py at 807f6cb).
 # The letter's changed on purpose with spec 158's structure, again with
-# spec 159's entity line, and again with spec 165's prose rules.
+# spec 159's entity line, and again with spec 165's prose rules. The answers'
+# changed on purpose with spec 166's competency block.
 INDUSTRY_PROMPT_SHA256 = {
     "tailor": "e4d6e724cbb0bca98688928bfe01dcac3f4eaa77b5d14c94f52a8bc530ec8525",
     "letter": "f74d77da8e9836ab634ab426385bf25f77c1f26847c776de04cb7749bf743e1f",
-    "answers": "5f4c2ce48f22338680ed62668bf294116c01931a608407710d7377791acb1a00",
+    "answers": "6b38bc60c433452edb31fae0df95173661ca7e50c9f3c272c338a9689a557f4a",
 }
 
 # Truth rules the spec names, flattened to single spaces. Each must reach the
@@ -92,7 +93,7 @@ NAMED_TRUTH_RULES = {
 SHARED_BLOCK_SHA256 = {
     "tailor": "a329a5bab049cb38abdc5d41866f7df4b922a4ba1eb1db5511797988d1afb30e",
     "letter": "a817e3ecad4970037e4c509ecb593160e1ae19a9e2c09e44628a795090e7cf1a",
-    "answers": "4ecacc81eec0b311f60307d946db6da1f62a8602c214c59a767f38047850bbad",
+    "answers": "33902c6470ba9c8d25d567e0d1675d97f79845cadc193a119a1bcdd146482d3f",
 }
 
 

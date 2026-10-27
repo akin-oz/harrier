@@ -47,7 +47,7 @@ from harrier.apply.requirements import (
     requirement_flags,
     requirement_kind,
 )
-from harrier.apply.review import Review, render_review
+from harrier.apply.review import Review, StarBalance, render_review
 from harrier.connection import Connection
 from harrier.filestore import artifact_path, files_in, join_key, local_file, save_text
 from harrier.llm import LLMClientError, generate_text
@@ -128,6 +128,17 @@ Claims and evidence, for each answer:
 - Say "convention" or "warning" rather than "enforced" unless the material shows something enforcing it.
 - Do not state model names, versions or other time-sensitive tool details unless the material supplies them.
 
+Competency questions, the ones listed in competency_questions:
+- Answer each in STAR order and return its four parts in "star". Leave medium_answer empty: code joins the parts into the medium answer, and the 3 to 6 sentence rule does not apply to it.
+- Every part comes from one situation the truth sources describe.
+- situation: the context, in about one sentence.
+- task: what the candidate had to achieve.
+- action: what the candidate did, specifically, in the first person. It is the longest part, longer than situation and task together.
+- result: the outcome, with the figure the evidence gives, when it gives one.
+- Unless a limit is stated for answers, the joined parts come to 300 to 500 words.
+- If the truth sources describe no situation that fits, return every part of "star" empty and say so in notes.
+- Omit "star" for every other question.
+
 Return strict JSON only with this shape:
 {
   "answers": [
@@ -136,6 +147,7 @@ Return strict JSON only with this shape:
       "short_answer": "string",
       "medium_answer": "string",
       "notes": ["string"],
+      "star": {"situation": "string", "task": "string", "action": "string", "result": "string"},
       "claims": [
         {"sentence": "string", "about": "candidate or employer", "evidence": ["string"]}
       ]
@@ -161,6 +173,9 @@ class AnswerDraft:
     notes: list[str]
     # What the answer rests on, listed under "To verify" (spec 066, B9).
     claims: list[Claim] = field(default_factory=list[Claim])
+    # A competency answer's parts, keyed by STAR_PARTS (spec 166). None for
+    # every other question.
+    star: dict[str, str] | None = None
 
 
 ANSWERS = "answers"
@@ -199,12 +214,22 @@ def parse_questions(question: str | None, questions_file: str | None) -> list[st
     return DEFAULT_QUESTIONS[:]
 
 
+# Phrases that ask for an example from the candidate's past (spec 166).
+_COMPETENCY = re.compile(
+    r"\b(?:describe a time|describe a situation|tell us about a time|tell me about a time"
+    r"|give an example|give us an example|provide an example|share an example"
+    r"|an example of when|a time when)\b"
+)
+
+
 def classify_question(question: str) -> str:
     q = normalize(question)
     if "salary" in q or "compensation" in q or "salary expectation" in q:
         return "salary"
     if "notice period" in q or "availability" in q or "start date" in q:
         return "availability"
+    if _COMPETENCY.search(q):
+        return "competency"
     if "leaving" in q or "why do you want to leave" in q or "why are you leaving" in q:
         return "leaving"
     if "fit" in q or "why should we hire" in q:
@@ -363,6 +388,10 @@ def build_answers_payload(
         "job_url": job_url or "",
         "tracker_metadata": _tracker_metadata(tracker_row),
         "questions": questions,
+        # Answered in STAR order, with the parts in "star" (spec 166).
+        "competency_questions": [
+            question for question in questions if classify_question(question) == "competency"
+        ],
         "job_description_text": jd_text or "",
         "application_profile_question_guidance": build_question_guidance(profile, questions),
         # The application brief (spec 066). Empty values when there is none.
@@ -405,27 +434,51 @@ def extract_json_object(text: str) -> str:
     return value[start : end + 1]
 
 
-def parse_answers_response(text: str) -> list[dict[str, object]]:
+STAR_PARTS = ("situation", "task", "action", "result")
+
+
+def parse_star(raw: object) -> dict[str, str]:
+    """The four parts of a competency answer, each empty when the model left
+    it out or sent something other than text, so the part reaches check S1
+    rather than a parse error or a list printed as prose."""
+    star = cast("dict[str, object]", raw) if isinstance(raw, dict) else {}
+    return {
+        part: " ".join(value.split()) if isinstance(value := star.get(part), str) else ""
+        for part in STAR_PARTS
+    }
+
+
+def parse_answers_response(text: str, competency: Sequence[bool] = ()) -> list[dict[str, object]]:
+    """The model's answers. `competency` marks, by position, the answers whose
+    medium answer code builds from the "star" parts (spec 166)."""
     payload_raw: object = loads_tolerant(extract_json_object(text))
     payload = cast("dict[str, object]", payload_raw) if isinstance(payload_raw, dict) else {}
     answers = payload.get("answers")
     if not isinstance(answers, list) or not answers:
         raise ValueError("AI response did not contain answers")
     normalized: list[dict[str, object]] = []
-    for item in cast("list[object]", answers):
+    for index, item in enumerate(cast("list[object]", answers)):
         if not isinstance(item, dict):
             continue
         entry = cast("dict[str, object]", item)
         question = str(entry.get("question", "")).strip()
         short_answer = str(entry.get("short_answer", "")).strip()
-        medium_answer = str(entry.get("medium_answer", "")).strip()
+        star = (
+            parse_star(entry.get("star")) if index < len(competency) and competency[index] else None
+        )
+        # The model's own medium answer is ignored for a competency question.
+        medium_answer = (
+            " ".join(star.values()).strip()
+            if star is not None
+            else str(entry.get("medium_answer", "")).strip()
+        )
         notes_raw = entry.get("notes")
         notes = (
             [str(note).strip() for note in cast("list[object]", notes_raw) if str(note).strip()]
             if isinstance(notes_raw, list)
             else []
         )
-        if not question or not short_answer or not medium_answer:
+        if not question or not short_answer or (star is None and not medium_answer):
             raise ValueError("AI response was missing required answer fields")
         normalized.append(
             {
@@ -434,6 +487,7 @@ def parse_answers_response(text: str) -> list[dict[str, object]]:
                 "medium_answer": medium_answer,
                 "notes": notes,
                 "claims": parse_claims(entry.get("claims")),
+                "star": star,
             }
         )
     if not normalized:
@@ -451,9 +505,11 @@ def request_answers(prompt: str, payload: dict[str, object]) -> str:
     return output_text
 
 
-def parse_generated_answers(output_text: str) -> list[dict[str, object]]:
+def parse_generated_answers(
+    output_text: str, competency: Sequence[bool] = ()
+) -> list[dict[str, object]]:
     try:
-        return parse_answers_response(output_text)
+        return parse_answers_response(output_text, competency)
     except (ValueError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"failed to parse AI response: {exc}") from exc
 
@@ -574,6 +630,40 @@ def generate_answer_set(
     ]
 
 
+# The usual competency answer length when the form sets none (spec 166, S4).
+STAR_WORDS = (300, 500)
+
+
+def star_violations(draft: AnswerDraft, number: int, brief: Brief) -> list[str]:
+    """Checks S1 to S4 on a competency answer (spec 166). Empty for any other
+    answer. An empty part stops there: the balance of a missing part says
+    nothing the empty part has not said."""
+    if draft.star is None:
+        return []
+    where = f'answer {number} ("{draft.question}")'
+    empty = [part for part in STAR_PARTS if not draft.star.get(part, "").strip()]
+    if empty:
+        return [f"S1: {where} has an empty {part}" for part in empty]
+    words = {part: len(draft.star[part].split()) for part in STAR_PARTS}
+    violations = [
+        f"S2: {where} action has {words['action']} words, not more than its {part} ({words[part]})"
+        for part in ("situation", "task", "result")
+        if words["action"] <= words[part]
+    ]
+    if words["situation"] + words["task"] >= words["action"]:
+        violations.append(
+            f"S3: {where} situation and task have {words['situation'] + words['task']} words,"
+            f" not fewer than its action ({words['action']})"
+        )
+    # A limit the brief states replaces the range (spec 066 checks it).
+    if brief.answers.max_words is None and brief.answers.max_sentences is None:
+        total = len(draft.medium_answer.split())
+        low, high = STAR_WORDS
+        if not low <= total <= high:
+            violations.append(f"S4: {where} medium answer has {total} words, not {low} to {high}")
+    return violations
+
+
 def _checked_answers(
     conn: Connection,
     output_text: str,
@@ -586,7 +676,9 @@ def _checked_answers(
 ) -> list[AnswerDraft]:
     """One response parsed and put through every check. Raises
     `ClaimCheckError` with every violation when it is refused."""
-    generated = parse_generated_answers(output_text)
+    generated = parse_generated_answers(
+        output_text, [classify_question(question) == "competency" for question in model_questions]
+    )
     # Model answers are placed back by position among the questions sent, so
     # the count has to match or an answer would land under the wrong question.
     if len(generated) != len(model_questions):
@@ -604,6 +696,7 @@ def _checked_answers(
                 if sanitize_answer_text(str(note))
             ],
             claims=list(cast("list[Claim]", item["claims"])),
+            star=cast("dict[str, str] | None", item["star"]),
         )
         for item in generated
     ]
@@ -636,6 +729,7 @@ def _checked_answers(
             violations.extend(
                 limit_violations(text, brief.answers, "answers", f"answer {number} {label}")
             )
+        violations.extend(star_violations(draft, number, brief))
         violations.extend(check_claims(texts, draft.claims, context))
     if violations:
         raise ClaimCheckError(list(dict.fromkeys(violations)))
@@ -686,7 +780,16 @@ def render_markdown(
         return markdown
     texts = [text for d in drafts for text in (d.short_answer, d.medium_answer, *d.notes)]
     review = Review(
-        claims=tuple(claim for draft in drafts for claim in draft.claims), flags=tuple(flags)
+        claims=tuple(claim for draft in drafts for claim in draft.claims),
+        flags=tuple(flags),
+        star=tuple(
+            StarBalance(
+                question=draft.question,
+                words=tuple((part, len(draft.star[part].split())) for part in STAR_PARTS),
+            )
+            for draft in drafts
+            if draft.star is not None
+        ),
     )
     return markdown + "\n" + render_review(texts, review, review_path)
 

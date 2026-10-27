@@ -111,22 +111,21 @@ print in the answers file itself.
 
 ## Acceptance criteria
 
-- [ ] Each listed phrase classifies a question as `competency`, and "What
-      is your notice period?" stays `availability` (planned test in
-      test_star_answers.py: test_competency_questions_are_classified).
-- [ ] A competency answer whose action is shorter than its situation is
+- [x] Each listed phrase classifies a question as `competency`, and "What
+      is your notice period?" stays `availability` (`services/api/tests/test_star_answers.py::test_competency_questions_are_classified`).
+- [x] A competency answer whose action is shorter than its situation is
       refused naming S2, and the same answer with a longer action passes
-      (planned test: test_the_action_carries_the_answer).
-- [ ] A competency answer with an empty result is refused naming S1
-      (planned test: test_every_star_part_is_required).
-- [ ] A 250-word competency answer is refused by S4 with no brief limit,
-      and passes when the brief sets answers to at most 250 words (planned
-      test: test_the_brief_limit_replaces_the_star_range).
-- [ ] The medium answer is the four parts joined in order, and the review
-      lists each part's word count (planned test:
-      test_the_medium_answer_joins_the_parts).
-- [ ] A non-competency question parses and is checked exactly as today
-      (planned test: test_other_questions_are_unchanged).
+      (`services/api/tests/test_star_answers.py::test_the_action_carries_the_answer`).
+- [x] A competency answer with an empty result is refused naming S1
+      (`services/api/tests/test_star_answers.py::test_every_star_part_is_required`).
+- [x] A 250-word competency answer is refused by S4 with no brief limit,
+      and passes when the brief sets answers to at most 250 words
+      (`services/api/tests/test_star_answers.py::test_the_brief_limit_replaces_the_star_range`).
+- [x] The medium answer is the four parts joined in order, and the review
+      lists each part's word count
+      (`services/api/tests/test_star_answers.py::test_the_medium_answer_joins_the_parts`).
+- [x] A non-competency question parses and is checked exactly as today
+      (`services/api/tests/test_star_answers.py::test_other_questions_are_unchanged`).
 
 ## Proof / origin
 
@@ -154,6 +153,13 @@ print in the answers file itself.
   as the guidance's percentages, which it gives two different ways.
 - Classification is a phrase list. "Walk us through a project where" is not
   in it.
+- The competency mark follows the answers by position, as spec 066 merges
+  every model answer back by position and checks only the count. A model
+  that returns answers out of order gets the S1 retry (a competency slot
+  without a `star`) or a parse failure (another slot with an empty
+  `medium_answer`), not a wrong answer filed as STAR. Checking each
+  answer's echoed question is a change to spec 066's merge, not to this
+  spec (review of PR #423).
 
 ## Open decisions for Akin
 
@@ -165,3 +171,45 @@ print in the answers file itself.
 
 Akin approved the spec as written, which settles the open decisions above
 as the spec states them.
+
+## Amendment (2026-10-27, implementation)
+
+The build found these places where the Behavior was silent or named a file
+that does not change.
+
+1. **The voices do not change.** Scope named the three answers voices in
+   `services/api/src/harrier/voices.py`. Every voice wraps `ANSWERS_SHARED`
+   (`assemble`), so the STAR instruction is written once there and reaches
+   all three kinds. `voices.py` does not change.
+2. **How the payload marks a competency question.** The answers payload
+   gains `competency_questions`, the questions sent to the model that
+   classify as `competency`, in order. It is an empty list when there are
+   none.
+3. **A missing or malformed `star` is four empty parts,** not a parse
+   error, so it reaches S1 and gets the retry. A part that is not a string
+   (a list, a number) counts as empty
+   (`services/api/tests/test_star_answers.py::test_a_part_that_is_not_text_is_empty`). A competency answer's
+   `short_answer` is still required. A `star` on any other question is not
+   read.
+4. **An empty part stops the checks there.** When S1 finds an empty part,
+   S2 to S4 are not reported for that answer: the balance of a missing part
+   says nothing S1 has not said.
+5. **What "the brief sets an answers limit" means for S4.** Either
+   `answers.max_words` or `answers.max_sentences` in the brief replaces the
+   300 to 500 word range. Spec 066 checks that limit as before.
+6. **Every S violation names the answer number and the question,** for
+   example `S1: answer 1 ("Describe a time when ...") has an empty result`,
+   so the exit 1 after the retry names the question (Failure modes).
+7. **How the review lists the parts.** `Review` gains `star`, a tuple of
+   `StarBalance` (`services/api/src/harrier/apply/review.py`).
+   `render_review` lists, under "To verify", a `- STAR: "question"` line
+   and one indented line per part with its word count. It lists names and
+   counts, not the part text, so the parts never print apart from the
+   medium answer.
+8. **The deterministic path** (`build_deterministic_draft`) has no
+   `competency` template in the example profiles and falls back to
+   `generic`, as every class without a template does. It is not STAR
+   checked.
+9. **The prompt pins change on purpose.** `SHARED_BLOCK_SHA256["answers"]`
+   and `INDUSTRY_PROMPT_SHA256["answers"]` in
+   `services/api/tests/test_academic_documents.py` move to the new block.
