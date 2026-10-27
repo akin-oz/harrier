@@ -16,9 +16,19 @@ from harrier.apply.requirements import Flag
 
 
 @dataclass(frozen=True)
+class StarBalance:
+    """A competency answer's four parts and their word counts, in order, so
+    the operator can see the balance (spec 166)."""
+
+    question: str
+    words: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
 class Review:
     claims: tuple[Claim, ...] = ()
     flags: tuple[Flag, ...] = ()
+    star: tuple[StarBalance, ...] = ()
 
 
 def next_action(texts: Sequence[str], review: Review, path: Path) -> str:
@@ -37,6 +47,9 @@ def render_review(texts: Sequence[str], review: Review, path: Path) -> str:
     joined = "\n".join(texts)
     items = [f"- Placeholder: {placeholder}" for placeholder in find_placeholders(joined)]
     items.extend(f'- Flag ({flag.kind}): "{flag.sentence}"' for flag in review.flags)
+    for balance in review.star:
+        items.append(f'- STAR: "{balance.question}"')
+        items.extend(f"  - {part}: {words} words" for part, words in balance.words)
     items.extend(
         f'- Claim: "{claim.sentence}" rests on: '
         + "; ".join(f'"{fragment}"' for fragment in claim.evidence)
