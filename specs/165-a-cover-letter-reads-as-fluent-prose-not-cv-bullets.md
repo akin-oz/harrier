@@ -147,7 +147,7 @@ the close.
 - **L21 copied fact.** Refused when a body sentence shares a run of ten or
   more consecutive words with one fact text the writer received under
   `asks`, compared as L7 compares (case and punctuation aside). The message
-  names the fact id, never its text.
+  names the fact id and quotes the shared words (amendment 7).
 - **L22 paragraph openers.** Refused when two body paragraphs begin with
   the same word.
 
@@ -184,32 +184,26 @@ prints "Hello <Company> team," and the name.
 
 ## Acceptance criteria
 
-- [ ] A synthetic letter breaking each of L18 to L22 is refused with that
-      rule's message, and the same letter fixed passes (planned test in
-      test_letter_lint.py: test_prose_rules_refuse_and_their_fixes_pass).
-- [ ] Two consecutive "I" sentences are refused; three "I" sentences in
-      nine, none consecutive, pass (planned test:
-      test_i_openings_count_runs_and_share).
-- [ ] A body sentence that is a fact with "I" in front is refused by L21
+- [x] A synthetic letter breaking each of L18 to L22 is refused with that
+      rule's message, and the same letter fixed passes (`services/api/tests/test_letter_lint.py::test_prose_rules_refuse_and_their_fixes_pass`).
+- [x] Two consecutive "I" sentences are refused; three "I" sentences in
+      nine, none consecutive, pass (`services/api/tests/test_letter_lint.py::test_i_openings_count_runs_and_share`).
+- [x] A body sentence that is a fact with "I" in front is refused by L21
       naming the fact id; the same fact reworded with its number and tool
-      kept passes L21 and the claim check (planned test:
-      test_a_copied_fact_is_refused_and_a_reworded_one_passes).
-- [ ] "was built through a migration" is refused by L19 and "built a
-      migration path" is not (planned test:
-      test_passive_growth_needs_the_preposition).
-- [ ] The writer payload carries `motivation` from the application
+      kept passes L21 and the claim check (`services/api/tests/test_letter_lint.py::test_a_copied_fact_is_refused_and_a_reworded_one_passes`).
+- [x] "was built through a migration" is refused by L19 and "built a
+      migration path" is not (`services/api/tests/test_letter_lint.py::test_passive_growth_needs_the_preposition`).
+- [x] The writer payload carries `motivation` from the application
       profile, and an empty one adds "a motivation statement" to the asks
-      file's gaps (planned test in test_letter_structure.py:
-      test_motivation_reaches_the_writer_or_is_a_gap).
-- [ ] The industry HTML has "Dear Hiring Manager," before the letter and
+      file's gaps (`services/api/tests/test_letter_structure.py::test_motivation_reaches_the_writer_or_is_a_gap`).
+- [x] The industry HTML has "Dear Hiring Manager," before the letter and
       "Kind regards," and the name after it; the markdown draft's
-      `full_version` has neither (planned test:
-      test_the_industry_letter_has_a_salutation_and_sign_off).
-- [ ] A new synthetic fixture, `bullet-copy-bad.*` in
+      `full_version` has neither (`services/api/tests/test_letter_structure.py::test_the_industry_letter_has_a_salutation_and_sign_off`).
+- [x] A new synthetic fixture, `bullet-copy-bad.*` in
       `services/api/tests/fixtures/letters/`, fails L20 and L21, and the
       spec 160 target fixture, revised to the new voice, passes every rule
-      (planned test: test_the_bullet_copy_fixture_fails_and_the_target_passes).
-- [ ] The academic letter is not linted, and the answers prompt pins hold
+      (`services/api/tests/test_letter_lint.py::test_the_bullet_copy_fixture_fails_and_the_target_passes`).
+- [x] The academic letter is not linted, and the answers prompt pins hold
       (`services/api/tests/test_academic_documents.py::test_both_kinds_share_every_truth_rule`).
 
 ## Proof / origin
@@ -273,3 +267,69 @@ prints "Hello <Company> team," and the name.
 
 Akin approved the spec as written, which settles the open decisions above
 as the spec states them.
+
+## Amendment (2026-10-26, implementation)
+
+The build found these places where the Behavior was silent or named the
+wrong file.
+
+1. **The motivation gap is added in `letters.py`.** Scope named
+   `postingasks.py`. The other code-added gaps (the link, the experience
+   statement, the product) are added in `plan_letter`
+   (`services/api/src/harrier/apply/letters.py`), so the motivation gap is
+   added there too, through `track_motivation` and `MOTIVATION_GAP`.
+   `postingasks.py` does not change.
+2. **The academic letter shares the industry template.** Both kinds render
+   `templates/cover-letter-template.html`. The template gains two
+   placeholders, `{{salutation_html}}` and `{{sign_off_html}}`, which
+   `letter_frame` fills on the industry kind and leaves empty on the
+   academic kind, so the academic letter is unchanged.
+3. **One CSS rule.** `templates/cover-letter-template.css`, not in Scope,
+   gains a top margin on the sign-off so it sits apart from the close.
+4. **L20 to L22 read the body only when they can.** The linter learns which
+   blocks code added from `LintContext.added_lines`, set with
+   `LintContext.fact_texts` in `_checked_letter`. A caller that sets neither
+   (the tests' direct calls, the academic path) still gets L18 to L20 and
+   L22 over every block between the role line and the close; L21 needs the
+   facts and does not run without them.
+5. **L22 names the word as the letter writes it** ("For", not "for"), and
+   compares case-insensitively.
+6. **Shared test letters move to the new voice.** The synthetic letters
+   other suites share broke L20 to L22: `CHECKOUT` and `INVOICES` in
+   `services/api/tests/test_apply_claims.py` started with "I" one after the
+   other, `PROOF` in `services/api/tests/test_letter_lint.py` did too, and
+   `FULL_LETTER` in `services/api/tests/test_apply.py` followed an "I" hook
+   with a "My" sentence. Each is reworded to keep its facts and numbers.
+   `restream-target.json` is revised as section 3 of the Acceptance criteria
+   says; its hook and component sentence also copied a fact (L21).
+
+## Amendment (2026-10-26, regeneration)
+
+Regenerating two real letters with the built rules (jobs from the
+operator's local store, run against a scratch copy of it; the letters are
+personal data and are not quoted) found these. Akin decided both on
+2026-10-26.
+
+7. **L21 quotes the copied words.** The message named the fact id only,
+   so the retry had to guess which words to change, and on one letter it
+   rewrote the two flagged facts but left a third ten-word run. The message
+   now reads `copies fact <id> word for word ("<words>"): say it in other
+   words`, where `<words>` is each longest run the sentence shares with the
+   fact, lowercased as L7 compares them. The words are the candidate's own
+   fact, which the writer already holds; they reach only the local refusal
+   output and the retry payload, never git.
+8. **Proof paragraphs vary their openings.** Told to open each proof
+   paragraph with what the ask needs, the writer opened every one with the
+   same pattern ("Architecture needs boundaries. Speed needs measuring.").
+   Both voices now also say to vary how each proof paragraph opens and
+   never to repeat one sentence pattern across paragraphs. Code does not
+   check this beyond L22.
+
+9. **Result of the regeneration.** With items 7 and 8 built, one of the
+   two letters passed every rule after its retry and rendered a one-page
+   PDF. The other was refused after its retry by L21 alone, on a run made
+   of a product's name and its one-line description. A proper name cannot
+   be reworded, so a fact that names a product with a description of ten
+   words or more can keep tripping L21. This is a limitation of the window,
+   not fixed here; the operator writes such a letter by hand or shortens
+   the fact.

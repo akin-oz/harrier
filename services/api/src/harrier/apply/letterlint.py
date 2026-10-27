@@ -1,4 +1,5 @@
-"""The cover letter linter (spec 158, rules L1 to L11; spec 160, L12 to L17).
+"""The cover letter linter (spec 158, rules L1 to L11; spec 160, L12 to L17;
+spec 165, L18 to L22).
 
 Deterministic: no model call and no network. It reads the letter, the
 evidence the letter may cite, the posting, and the record's professional
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from itertools import pairwise
 
 from harrier.apply.claims import number_tokens
 from harrier.resume.content import year_counts
@@ -101,6 +103,34 @@ ENTITY_TYPES: tuple[tuple[str, ...], ...] = (
 # L11: the role line's length.
 ROLE_LINE_MAX_WORDS = 15
 
+# L18 (spec 165): negative framing, refused anywhere.
+NEGATIVE_FRAMING: tuple[str, ...] = (
+    "had to",
+    "was required to",
+    "were required to",
+    "although I have never",
+    "although I've never",
+    "I have never done",
+    "I've never done",
+    "I don't have",
+    "I do not have",
+    "I lack",
+    "despite not having",
+)
+
+# L19: a passive account of the candidate's own growth.
+_PASSIVE_GROWTH = re.compile(
+    r"(?<!\w)(?:was|were|has been|have been)\s+"
+    r"(?:developed|strengthened|improved|honed|gained|built)\s+(?:by|through)(?!\w)",
+    re.IGNORECASE,
+)
+
+# L20: the words a sentence in the first person starts with.
+I_OPENERS: tuple[str, ...] = ("i", "i'm", "i've", "i'd", "i'll", "my")
+
+# L21: a shared run of this many words with one fact is a copied fact.
+COPIED_FACT_WORDS = 10
+
 # L10: an owner word, at most two words, then an entity type, across any
 # whitespace. A word is a letter or digit followed by letters, digits,
 # apostrophes or hyphens, so a sentence end stops the match (spec 159).
@@ -146,6 +176,11 @@ class LintContext:
     asks: tuple[AskCoverage, ...] = ()
     cited: tuple[str, ...] = ()
     link_line: str | None = None
+    # Spec 165: each fact the writer received under `asks`, as (id, text),
+    # for L21; and the lines code added (the link and experience lines),
+    # which are not body sentences. Empty switches L21 off.
+    fact_texts: tuple[tuple[str, str], ...] = ()
+    added_lines: tuple[str, ...] = ()
 
 
 def _phrase(phrase: str) -> re.Pattern[str]:
@@ -164,12 +199,9 @@ def _words(text: str) -> list[str]:
     return [word.lower().replace(_APOSTROPHE, "'") for word in _WORD.findall(text)]
 
 
-def _windows(text: str) -> set[tuple[str, ...]]:
+def _windows(text: str, size: int = RESTATEMENT_WORDS) -> set[tuple[str, ...]]:
     words = _words(text)
-    return {
-        tuple(words[at : at + RESTATEMENT_WORDS])
-        for at in range(len(words) - RESTATEMENT_WORDS + 1)
-    }
+    return {tuple(words[at : at + size]) for at in range(len(words) - size + 1)}
 
 
 def _shared_runs(text: str, posting: str, evidence: str) -> list[str]:
@@ -195,7 +227,7 @@ def _starts_with(text: str, prefix: str) -> bool:
 
 
 def lint_letter(full_version: str, context: LintContext, short_version: str = "") -> list[str]:
-    """Every rule of L1 to L11 the letter breaks. Empty when it passes.
+    """Every rule of L1 to L22 the letter breaks. Empty when it passes.
 
     L11's block count is the kind's and the brief's, so
     `cover_letter_violations` holds it; this checks the role line."""
@@ -295,7 +327,85 @@ def lint_letter(full_version: str, context: LintContext, short_version: str = ""
             f'calls a legal entity \'{found}\': write "a" or "an" before the entity type'
         )
 
+    violations.extend(_prose_rules(both, blocks, context))
     violations.extend(_asks_rules(full_version, blocks, context))
+    return violations
+
+
+def _copied_runs(sentence: str, fact: str) -> list[str]:
+    """Each longest run of words `sentence` shares with `fact` that is at
+    least `COPIED_FACT_WORDS` long, in the sentence's order (L21)."""
+    fact_windows = _windows(fact, COPIED_FACT_WORDS)
+    words = _words(sentence)
+    covered = [False] * len(words)
+    for at in range(len(words) - COPIED_FACT_WORDS + 1):
+        if tuple(words[at : at + COPIED_FACT_WORDS]) in fact_windows:
+            covered[at : at + COPIED_FACT_WORDS] = [True] * COPIED_FACT_WORDS
+    runs: list[str] = []
+    start: int | None = None
+    for at, inside in enumerate([*covered, False]):
+        if inside and start is None:
+            start = at
+        elif not inside and start is not None:
+            runs.append(" ".join(words[start:at]))
+            start = None
+    return runs
+
+
+def _body_blocks(blocks: list[str], context: LintContext) -> list[str]:
+    """Every block after the role line except the close and the lines code
+    added (spec 165)."""
+    added = {line.strip() for line in (*context.added_lines, context.link_line or "") if line}
+    return [block for block in blocks[1:-1] if block.strip() not in added]
+
+
+def _prose_rules(both: str, blocks: list[str], context: LintContext) -> list[str]:
+    """L18 to L22 (spec 165): how the letter reads."""
+    violations: list[str] = []
+    plain = both.replace(_APOSTROPHE, "'")
+
+    # L18: negative framing.
+    negative = [phrase for phrase in NEGATIVE_FRAMING if _phrase(phrase).search(plain)]
+    if negative:
+        violations.append(f"negative framing: {', '.join(negative)}")
+
+    # L19: passive growth.
+    passive = [" ".join(match.group(0).split()) for match in _PASSIVE_GROWTH.finditer(plain)]
+    if passive:
+        violations.append(f"passive growth: {', '.join(dict.fromkeys(passive))}")
+
+    body = _body_blocks(blocks, context)
+    sentences = [sentence for block in body for sentence in _sentences(block)]
+
+    # L20: sentences that start with "I" or "My".
+    starts = [bool(words) and words[0] in I_OPENERS for words in map(_words, sentences)]
+    in_a_row = any(first and second for first, second in pairwise(starts))
+    count = sum(starts)
+    if in_a_row or count * 3 > len(sentences):
+        violations.append(
+            f'"I" or "My" starts {count} of {len(sentences)} body sentences'
+            + (", two in a row" if in_a_row else "")
+        )
+
+    # L21: a body sentence that copies a fact the writer was given. The
+    # message quotes the shared words so the retry knows what to change
+    # (amendment 7).
+    for fact_id, text in context.fact_texts:
+        runs = [run for sentence in sentences for run in _copied_runs(sentence, text)]
+        if runs:
+            quoted = "; ".join(f'"{run}"' for run in dict.fromkeys(runs))
+            violations.append(
+                f"copies fact {fact_id} word for word ({quoted}): say it in other words"
+            )
+
+    # L22: two body paragraphs that open with the same word.
+    openers = [_WORD.findall(block)[0] for block in body if _WORD.search(block)]
+    folded = [word.lower().replace(_APOSTROPHE, "'") for word in openers]
+    seen: set[str] = set()
+    for word, key in zip(openers, folded, strict=True):
+        if folded.count(key) > 1 and key not in seen:
+            seen.add(key)
+            violations.append(f'two body paragraphs open with "{word}"')
     return violations
 
 

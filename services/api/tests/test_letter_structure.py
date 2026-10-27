@@ -9,15 +9,20 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
+from resume_support import DEFAULT_SCOPE
 from test_apply_claims import (
     CHECKOUT,
+    CLOSE,
     COMPANY,
     GROUNDED_CLAIMS,
     INVOICES,
     POSTING,
+    PROFILE_JSON_PATH,
     ROLE,
+    ROLE_LINE,
     TRUTH,
     candidate,
     generate,
@@ -358,3 +363,90 @@ def refusal_on(db: Connection, full: str) -> list[str]:
         evidence="", posting=POSTING, company=COMPANY, role=ROLE, professional_years=None
     )
     return letters_module.cover_letter_violations(letter, kind="industry", lint=lint)
+
+
+# --- spec 165: motivation and the letter's frame ----------------------------------
+
+
+def test_motivation_reaches_the_writer_or_is_a_gap(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The track's `motivation` is in the writer payload. Without one, the
+    payload's is empty and the asks document lists the gap."""
+    seen: list[dict[str, object]] = []
+
+    def writer(system_prompt: str, user_input: str) -> str:
+        seen.append(json.loads(user_input))
+        return letter_json()
+
+    monkeypatch.setattr(letters_module, "generate_text", writer)
+    letter = generate(db)
+    assert seen[-1]["motivation"] == ""
+    assert letter.asks is not None
+    assert letters_module.MOTIVATION_GAP in cast("list[str]", letter.asks["gaps"])
+    assert letters_module.MOTIVATION_GAP in [gap.requirement for gap in letter.gaps]
+
+    profile = json.loads(PROFILE_JSON_PATH.read_text(encoding="utf-8"))
+    motivation = "Billing products are the work I want to do more of."
+    put_document(
+        db,
+        "application_profile",
+        "application-profile.json",
+        "json",
+        json.dumps({**profile, "motivation": motivation}),
+        track_id=1,
+    )
+    letter = generate(db)
+    assert seen[-1]["motivation"] == motivation
+    assert letter.asks is not None
+    assert letters_module.MOTIVATION_GAP not in cast("list[str]", letter.asks["gaps"])
+
+
+def test_a_letter_without_a_posting_still_lists_the_motivation_gap(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no posting text there is no analysis, but an empty `motivation`
+    is still a gap in the asks document."""
+    stub_letter(monkeypatch, letter_json())
+    letter = generate_cover_letter(db, COMPANY, ROLE, jd_text=None, scope=DEFAULT_SCOPE)
+    assert letter.asks is not None
+    assert letters_module.MOTIVATION_GAP in cast("list[str]", letter.asks["gaps"])
+
+
+def test_the_industry_letter_has_a_salutation_and_sign_off(
+    db: Connection, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The industry HTML opens with the salutation and ends with the sign-off
+    and the name; neither is in the letter text or the markdown draft. The
+    academic letter has neither."""
+    stub_letter(monkeypatch, letter_json())
+    letter = generate(db)
+
+    def write(kind: str, directory: str) -> dict[str, Path]:
+        return letters_module.write_cover_letter_artifacts(
+            db,
+            COMPANY,
+            ROLE,
+            None,
+            letter.short_version,
+            letter.full_version,
+            output_dir=tmp_path / directory,
+            render=_fake_render,
+            validate=lambda pdf_path, html_text: [],
+            kind=kind,
+        )
+
+    paths = write("industry", "industry")
+    html_text = paths["html"].read_text(encoding="utf-8")
+    salutation = html_text.index("Dear Hiring Manager,")
+    assert salutation < html_text.index(ROLE_LINE)
+    sign_off = html_text.index("Kind regards,")
+    assert html_text.index(CLOSE) < sign_off < html_text.index('<p class="signature">')
+    assert "Dear Hiring Manager" not in letter.full_version
+    markdown = paths["markdown"].read_text(encoding="utf-8")
+    assert "Dear Hiring Manager" not in markdown
+    assert "Kind regards" not in markdown
+
+    academic = write("academic", "academic")["html"].read_text(encoding="utf-8")
+    assert "Dear Hiring Manager" not in academic
+    assert "Kind regards" not in academic

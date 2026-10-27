@@ -92,9 +92,11 @@ FILLER = (
     " correct while the product kept moving."
 )
 
-CHECKOUT = "I built the checkout flow in TypeScript and React."
+# Spec 165: neither opens with "I" (L20, L22) nor copies its truth line
+# word for word (L21).
+CHECKOUT = "For the checkout, I built the flow in TypeScript and React."
 CHECKOUT_EVIDENCE = "Built the checkout flow in TypeScript and React"
-INVOICES = "I processed 1,200 invoices over 2025 with the billing service."
+INVOICES = "Through the billing service, I processed 1,200 invoices over 2025."
 INVOICES_EVIDENCE = "Processed 1,200 invoices over 2025 with the billing service"
 
 
@@ -516,9 +518,11 @@ def with_marked_truth(db: Connection) -> None:
 def test_a_claim_quoting_a_backticked_truth_line_without_backticks_passes(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The refusal that prompted spec 068, rebuilt synthetically."""
+    """The refusal that prompted spec 068, rebuilt synthetically. The
+    sentence words the fact its own way, so L21 (spec 165) has no copy to
+    refuse; the evidence is the truth line without its backticks."""
     with_marked_truth(db)
-    sentence = "I wrote the sync-contract script that bundles the billing schema."
+    sentence = "Alongside that, I wrote the sync-contract script, which bundles the billing schema."
     claims = [
         *GROUNDED_CLAIMS,
         candidate(sentence, "Wrote the sync-contract script that bundles the billing schema"),
@@ -551,7 +555,7 @@ def test_a_plain_claim_sentence_matches_output_that_carries_markers(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     claims = [candidate(CHECKOUT, CHECKOUT_EVIDENCE), *GROUNDED_CLAIMS[1:]]
-    marked = "I built the **checkout flow** in TypeScript and React."
+    marked = "For the checkout, I built the **flow** in TypeScript and React."
     stub_letter(monkeypatch, letter_json(f"{marked} {INVOICES}", claims))
     assert marked in generate(db).full_version
 
@@ -559,7 +563,7 @@ def test_a_plain_claim_sentence_matches_output_that_carries_markers(
 def test_a_marked_claim_sentence_matches_plain_output(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    marked = "I built the **checkout flow** in TypeScript and React."
+    marked = "For the checkout, I built the **flow** in TypeScript and React."
     claims = [candidate(marked, CHECKOUT_EVIDENCE), *GROUNDED_CLAIMS[1:]]
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES}", claims))
     assert CHECKOUT in generate(db).full_version
@@ -588,7 +592,7 @@ def test_numbers_in_the_company_and_role_are_exempt(
 def test_mixed_tokens_and_slash_pairs_are_not_numbers(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    last = "I can talk about storage on S3, OAuth2 and running a service 24/7 any time."
+    last = "Storage on S3, OAuth2 and running a service 24/7 are topics I can talk about any time."
     stub_letter(monkeypatch, letter_json(last=last))
     assert generate(db).full_version
 
@@ -660,7 +664,7 @@ def test_unlabelled_synthetic_evidence_is_refused(
 def test_labelled_synthetic_evidence_passes(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sentence = "I built a demo of the reporting dashboard on synthetic data."
+    sentence = "On synthetic data, I built a demo of the reporting dashboard."
     claims = [
         *GROUNDED_CLAIMS,
         candidate(sentence, "Built a demo of the reporting dashboard on synthetic data"),
@@ -693,7 +697,10 @@ def test_an_unverified_skill_is_refused(db: Connection, monkeypatch: pytest.Monk
 def test_an_alias_of_a_verified_skill_passes(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    last = "I would be glad to talk about the billing work and the React.js front end."
+    last = (
+        "Beyond the checkout, I would be glad to talk about the billing work and the React.js"
+        " front end."
+    )
     stub_letter(monkeypatch, letter_json(last=last))
     assert "React.js" in generate(db).full_version
 
@@ -748,7 +755,7 @@ def test_enforcement_language_without_evidence_is_refused(
 def test_enforcement_language_with_evidence_passes(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    sentence = "I added a lint rule that is enforced in CI for every pull request."
+    sentence = "For every pull request, I added a lint rule that is enforced in CI."
     claims = [
         *GROUNDED_CLAIMS,
         candidate(sentence, "Added a lint rule that is enforced in CI for every pull request"),
@@ -1148,7 +1155,7 @@ def test_a_scope_refusal_names_its_sentence(
 def test_the_same_number_in_two_sentences_is_refused_in_each(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    workshops = "I ran 4 workshops for the support staff."
+    workshops = "For the support staff, I ran 4 workshops."
     stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {MENTORED} {workshops}"))
     assert violations(db) == [
         f"number without evidence: 4 (in: {MENTORED})",
@@ -1170,7 +1177,10 @@ def test_a_repeated_number_in_one_sentence_names_the_word_before_it(
     it. The `3` inside `300` is not the value 3, so `3` keeps the plain form."""
     pages = "I cut load time by 40% across 40 product pages."
     drills = "I ran 3 drills before 300 tickets arrived."
-    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {pages} {drills}"))
+    # A sentence between the two keeps them from being two "I" sentences in
+    # a row (spec 165, L20), which is not what this test is about.
+    between = "The launch went smoothly."
+    stub_letter(monkeypatch, letter_json(f"{CHECKOUT} {INVOICES} {pages} {between} {drills}"))
     assert violations(db) == [
         f'number without evidence: 40% (after "by" in: {pages})',
         f'number without evidence: 40 (after "across" in: {pages})',

@@ -56,11 +56,11 @@ from harrier_cli.main import main
 # sha256 of each prompt as main held it before spec 101 split it into a shared
 # block and an industry voice (SYSTEM_PROMPT_TAILOR in resume/ai.py, and
 # SYSTEM_PROMPT_BASE in apply/letters.py and apply/answers.py at 807f6cb).
-# The letter's changed on purpose with spec 158's structure, and again with
-# spec 159's entity line.
+# The letter's changed on purpose with spec 158's structure, again with
+# spec 159's entity line, and again with spec 165's prose rules.
 INDUSTRY_PROMPT_SHA256 = {
     "tailor": "e4d6e724cbb0bca98688928bfe01dcac3f4eaa77b5d14c94f52a8bc530ec8525",
-    "letter": "b062e79467e60ff89c28bf85ba72bd1e952f2483262952ed353a828292f3e8f8",
+    "letter": "f74d77da8e9836ab634ab426385bf25f77c1f26847c776de04cb7749bf743e1f",
     "answers": "5f4c2ce48f22338680ed62668bf294116c01931a608407710d7377791acb1a00",
 }
 
