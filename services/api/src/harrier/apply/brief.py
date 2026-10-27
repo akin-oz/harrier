@@ -245,14 +245,18 @@ def never_name_hits(names: tuple[str, ...], text: str) -> list[str]:
 _SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'(\[])")
 
 
-def count_sentences(text: str) -> int:
+def split_sentences(text: str) -> list[str]:
     """A sentence ends at `.`, `!` or `?` followed by whitespace and an
     uppercase letter, or at the end of the text, so "e.g. the" and "v1.2" do
-    not split (B2)."""
+    not split (B2). The answers' L20 reads the same sentences (spec 167)."""
     stripped = text.strip()
     if not stripped:
-        return 0
-    return len([part for part in _SENTENCE_BREAK.split(stripped) if part.strip()])
+        return []
+    return [part for part in _SENTENCE_BREAK.split(stripped) if part.strip()]
+
+
+def count_sentences(text: str) -> int:
+    return len(split_sentences(text))
 
 
 def limit_violations(text: str, limits: Limits, surface: str, where: str) -> list[str]:

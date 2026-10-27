@@ -37,7 +37,9 @@ from harrier.db import connect
 
 COMPETENCY = "Describe a time when you improved how your team shipped work."
 EXPERIENCE = "What relevant experience do you have?"
-FILLER = "I went through each step with the team and wrote down what had changed"
+# Spec 167: each part is one sentence, so the filler does not open with "I"
+# or the joined answer would be a run of "I" sentences (L20).
+FILLER = "Together with the team we went through each step and wrote down what had changed"
 CHECKOUT_CLAIM = candidate(CHECKOUT, CHECKOUT_EVIDENCE)
 
 

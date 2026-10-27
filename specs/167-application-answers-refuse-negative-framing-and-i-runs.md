@@ -61,17 +61,25 @@ origin).
 
 ## Acceptance criteria
 
-- [ ] An answer set whose medium answer says "I had to" is refused naming
+- [x] An answer set whose medium answer says "I had to" is refused naming
       L18 and answer 1, retried once, and passes when the retry drops it
-      (planned test in test_answer_tone.py:
-      test_an_answer_with_negative_framing_is_retried).
-- [ ] A medium answer with two consecutive "I" sentences is refused; a
-      short answer starting with "I" is not (planned test:
-      test_i_runs_read_the_medium_answer_only).
-- [ ] The deterministic path is not tone checked (planned test:
-      test_deterministic_answers_are_not_tone_checked).
-- [ ] The letter tests for L18 to L20 from spec 165 pass unchanged after
+      (`services/api/tests/test_answer_tone.py::test_an_answer_with_negative_framing_is_retried`).
+- [x] A medium answer with two consecutive "I" sentences is refused; a
+      short answer starting with "I" is not
+      (`services/api/tests/test_answer_tone.py::test_i_runs_read_the_medium_answer_only`).
+- [x] The deterministic path is not tone checked
+      (`services/api/tests/test_answer_tone.py::test_deterministic_answers_are_not_tone_checked`).
+- [x] The letter tests for L18 to L20 from spec 165 pass unchanged after
       the move (`services/api/tests/test_letter_lint.py`).
+- [x] Passive growth in a short answer is refused naming answer 1 short
+      (amendment 2;
+      `services/api/tests/test_answer_tone.py::test_passive_growth_in_a_short_answer_is_refused`).
+- [x] "e.g. my" inside a medium answer does not end a sentence for L20
+      (amendment 1;
+      `services/api/tests/test_answer_tone.py::test_i_runs_split_sentences_as_the_answer_limits_do`).
+- [x] Every kind's answers prompt states the three rules, L20's third
+      included (amendment 4;
+      `services/api/tests/test_answer_tone.py::test_every_answers_prompt_states_the_tone_rules`).
 
 ## Proof / origin
 
@@ -93,3 +101,40 @@ origin).
 ## Honest limitations
 
 - Phrase lists. "It fell to me to" is negative framing and passes.
+
+## Amendment (2026-10-27, implementation)
+
+The build found these places where the Behavior was silent.
+
+1. **L20 on an answer splits sentences as the answers limits do.** The
+   letter's splitter ends a sentence at any `.` followed by a space, so
+   "e.g. the lint step" became two sentences and a one-sentence answer
+   read as "1 of 2". The answers limits (spec 066, B2) already split only
+   before an uppercase letter or a quote. `brief.py` gains
+   `split_sentences`, which `count_sentences` and `tone_violations` both
+   use. The letter's L20 keeps its own splitter, so its behavior does not
+   change. Scope gains `services/api/src/harrier/apply/brief.py`.
+2. **The message names the answer, the field and the rule.** A violation
+   reads `answer <n> <short|medium>: <the letter's message>`, for example
+   `answer 1 medium: negative framing: had to`. "Naming L18" in the first
+   criterion means the L18 message; no rule reports its id today. L20 on an
+   answer says `sentences`, not the letter's `body sentences`.
+3. **A one-sentence medium answer that opens with "I" is refused.** One of
+   one is more than a third. The prompt asks for 3 to 6 sentences in a
+   medium answer, so this is a refusal the retry can fix. Two fixtures in
+   `services/api/tests/test_apply_brief.py` were one-sentence medium
+   answers opening with "I" and are reworded; what they test is unchanged.
+   Scope gains that file.
+4. **The prompt states L20's third.** The third rule line said only "not
+   two in a row", so a medium answer opening sentences one and three of
+   four with "I" followed the prompt and was refused (review of PR #424).
+   The line now adds "and in a medium answer start at most a third of the
+   sentences with them".
+5. **A competency answer is checked as one medium answer.** Spec 166
+   merged first. L20 reads the joined STAR text like any medium answer.
+   Its synthetic filler in `services/api/tests/test_star_answers.py`
+   opened every part with "I", which made each part a sentence starting
+   "I", so the filler is reworded. Scope gains that file. Spec 166's task
+   line says "what the candidate had to achieve". A task part that copies
+   "had to" is refused by L18 and gets the retry. That wording belongs to
+   spec 166 and is left as it is here.

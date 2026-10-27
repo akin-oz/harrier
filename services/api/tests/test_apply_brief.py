@@ -265,7 +265,9 @@ def test_a_two_paragraph_brief_accepts_two_paragraphs(
 def test_abbreviations_and_versions_do_not_split_sentences(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    medium = "I checked the build, e.g. the lint step, on v1.2 of the billing service."
+    # Spec 167: it opens with "For", since an answer of one sentence that
+    # opens with "I" is a run of "I" sentences (L20).
+    medium = "For billing, I checked the build, e.g. the lint step, on v1.2 of the service."
     stub_answers(monkeypatch, [answer(medium, [])])
     drafts = generate_answer_set(
         db,
@@ -378,7 +380,9 @@ def test_a_work_authorization_question_is_not_sent_to_the_model(
 # --- B7: opinions -----------------------------------------------------------------
 
 OPINION = "Which tool do you dislike most?"
-VIEW = "I dislike tools that hide their configuration."
+# Spec 167: it does not open with "I", since a one-sentence answer that
+# does is a run of "I" sentences (L20).
+VIEW = "Tools that hide their configuration are the ones I dislike."
 
 
 def test_an_opinion_question_without_a_view_is_a_placeholder(
