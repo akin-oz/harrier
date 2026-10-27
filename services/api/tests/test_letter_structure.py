@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from resume_support import DEFAULT_SCOPE
 from test_apply_claims import (
     CHECKOUT,
     CLOSE,
@@ -399,6 +400,17 @@ def test_motivation_reaches_the_writer_or_is_a_gap(
     assert seen[-1]["motivation"] == motivation
     assert letter.asks is not None
     assert letters_module.MOTIVATION_GAP not in cast("list[str]", letter.asks["gaps"])
+
+
+def test_a_letter_without_a_posting_still_lists_the_motivation_gap(
+    db: Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no posting text there is no analysis, but an empty `motivation`
+    is still a gap in the asks document."""
+    stub_letter(monkeypatch, letter_json())
+    letter = generate_cover_letter(db, COMPANY, ROLE, jd_text=None, scope=DEFAULT_SCOPE)
+    assert letter.asks is not None
+    assert letters_module.MOTIVATION_GAP in cast("list[str]", letter.asks["gaps"])
 
 
 def test_the_industry_letter_has_a_salutation_and_sign_off(

@@ -609,7 +609,8 @@ def plan_letter(
     display = posting_company(company, posting)
     form = display if re.search(rf"(?<!\w){re.escape(display)}(?!\w)", posting) else ""
     if not posting.strip():
-        return AskPlan(analysis=Analysis(), facts=facts, company=display)
+        unset = () if track_motivation(conn, scope) else (MOTIVATION_GAP,)
+        return AskPlan(analysis=Analysis(extra_gaps=unset), facts=facts, company=display)
     analysis = analyse_posting(posting, facts, display, role)
     if analysis.asks and all(ask.gap for ask in analysis.asks):
         asks = "; ".join(f"{ask.rank}. {ask.ask}" for ask in analysis.asks)
