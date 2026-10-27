@@ -128,6 +128,15 @@ def test_every_star_part_is_required(db: Connection, monkeypatch: pytest.MonkeyP
     assert f'S1: answer 1 ("{COMPETENCY}") has an empty result' in refused
 
 
+def test_a_part_that_is_not_text_is_empty(db: Connection, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A list is not printed as "['...']" prose: it counts as empty (review
+    of PR #423)."""
+    parts: dict[str, object] = {**star(30, 30, 200, 80), "result": ["Shipped the change."]}
+    stub_answers(monkeypatch, [{**competency_answer(star(30, 30, 200, 80)), "star": parts}])
+    refused = refusal(db)
+    assert f'S1: answer 1 ("{COMPETENCY}") has an empty result' in refused
+
+
 def test_the_brief_limit_replaces_the_star_range(
     db: Connection, monkeypatch: pytest.MonkeyPatch
 ) -> None:

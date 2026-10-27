@@ -153,6 +153,13 @@ print in the answers file itself.
   as the guidance's percentages, which it gives two different ways.
 - Classification is a phrase list. "Walk us through a project where" is not
   in it.
+- The competency mark follows the answers by position, as spec 066 merges
+  every model answer back by position and checks only the count. A model
+  that returns answers out of order gets the S1 retry (a competency slot
+  without a `star`) or a parse failure (another slot with an empty
+  `medium_answer`), not a wrong answer filed as STAR. Checking each
+  answer's echoed question is a change to spec 066's merge, not to this
+  spec (review of PR #423).
 
 ## Open decisions for Akin
 
@@ -179,7 +186,9 @@ that does not change.
    classify as `competency`, in order. It is an empty list when there are
    none.
 3. **A missing or malformed `star` is four empty parts,** not a parse
-   error, so it reaches S1 and gets the retry. A competency answer's
+   error, so it reaches S1 and gets the retry. A part that is not a string
+   (a list, a number) counts as empty
+   (`services/api/tests/test_star_answers.py::test_a_part_that_is_not_text_is_empty`). A competency answer's
    `short_answer` is still required. A `star` on any other question is not
    read.
 4. **An empty part stops the checks there.** When S1 finds an empty part,

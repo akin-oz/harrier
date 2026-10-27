@@ -439,9 +439,13 @@ STAR_PARTS = ("situation", "task", "action", "result")
 
 def parse_star(raw: object) -> dict[str, str]:
     """The four parts of a competency answer, each empty when the model left
-    it out, so a missing part reaches check S1 rather than a parse error."""
+    it out or sent something other than text, so the part reaches check S1
+    rather than a parse error or a list printed as prose."""
     star = cast("dict[str, object]", raw) if isinstance(raw, dict) else {}
-    return {part: " ".join(str(star.get(part) or "").split()) for part in STAR_PARTS}
+    return {
+        part: " ".join(value.split()) if isinstance(value := star.get(part), str) else ""
+        for part in STAR_PARTS
+    }
 
 
 def parse_answers_response(text: str, competency: Sequence[bool] = ()) -> list[dict[str, object]]:
