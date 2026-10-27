@@ -211,3 +211,8 @@ The build found these places where the Behavior was silent or read wrong.
    when the bundle does not load. `_cmd_profile_check` prints it after
    `check_resume`'s lines, so a bundle that loads but fails the truth gate
    still gets its advice.
+8. **One existing test pinned the whole output.**
+   `services/api/tests/test_account_writes.py::test_account_writes_puts_track_documents`
+   compared every line `profile check` printed with the valid line alone.
+   It now pins the valid line first, the advisory header after it when
+   any finding prints, and no truth gate failure.

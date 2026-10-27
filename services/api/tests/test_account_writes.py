@@ -217,7 +217,11 @@ def test_account_writes_puts_track_documents(
 
     checked = run("--track", SLUG, "profile", "check")
     assert checked.code == 0, checked.out + checked.err
-    assert checked.out.splitlines() == [f"resume content for track {SLUG}: valid"]
+    # The truth gate's line first; spec 164's advisory findings may follow it.
+    lines = checked.out.splitlines()
+    assert lines[0] == f"resume content for track {SLUG}: valid"
+    assert lines[1:] == [] or lines[1] == "writing (advisory):"
+    assert not [line for line in lines if "not supported by the truth documents" in line]
 
     # Four profile sentences on the focused kind: refused, nothing stored.
     framing = focused_framing()
