@@ -33,6 +33,7 @@ from harrier.apply.claims import (
     parse_claims,
     retry_payload,
 )
+from harrier.apply.letterlint import tone_violations
 from harrier.apply.profile import (
     build_question_guidance,
     load_candidate_document,
@@ -111,6 +112,9 @@ ANSWERS_SHARED: tuple[str, ...] = (
 - Short answers: 1 to 3 sentences.
 - Medium answers: 3 to 6 sentences.
 - Prefer one idea per sentence.
+- Never frame a fact negatively ("had to", "I don't have", "I lack"). State a missing area as what the candidate is doing about it, only when the truth sources state that.
+- Write growth in the active voice ("I built", never "was developed through").
+- Do not start two sentences in a row with "I" or "My".
 
 Banned phrasing:
 """
@@ -637,6 +641,13 @@ def _checked_answers(
                 limit_violations(text, brief.answers, "answers", f"answer {number} {label}")
             )
         violations.extend(check_claims(texts, draft.claims, context))
+        # L18 to L20 of the letter (spec 167); L20 reads the medium answer
+        # only, since a short answer may be one sentence.
+        for label, text in (("short", draft.short_answer), ("medium", draft.medium_answer)):
+            violations.extend(
+                f"answer {number} {label}: {violation}"
+                for violation in tone_violations(text, i_runs=label == "medium")
+            )
     if violations:
         raise ClaimCheckError(list(dict.fromkeys(violations)))
     return drafts

@@ -5,6 +5,8 @@ Deterministic: no model call and no network. It reads the letter, the
 evidence the letter may cite, the posting, and the record's professional
 years, and returns one message per violation. The industry and focused
 kinds run it through `cover_letter_violations`; the academic kind does not.
+The application answers reuse L18 to L20 through `tone_violations` (spec
+167).
 
 The rules name no fact about the candidate. Every value they compare
 against comes from the context.
@@ -16,6 +18,7 @@ import re
 from dataclasses import dataclass
 from itertools import pairwise
 
+from harrier.apply.brief import split_sentences
 from harrier.apply.claims import number_tokens
 from harrier.resume.content import year_counts
 from harrier.resume.dashes import dash_marks, describe
@@ -359,10 +362,12 @@ def _body_blocks(blocks: list[str], context: LintContext) -> list[str]:
     return [block for block in blocks[1:-1] if block.strip() not in added]
 
 
-def _prose_rules(both: str, blocks: list[str], context: LintContext) -> list[str]:
-    """L18 to L22 (spec 165): how the letter reads."""
+def tone_violations(text: str, *, i_runs: bool) -> list[str]:
+    """L18 and L19 over `text`, and L20 over its sentences when `i_runs`
+    is set, split as the answers limits split them (spec 066). The letter
+    and the application answers share these (spec 167)."""
     violations: list[str] = []
-    plain = both.replace(_APOSTROPHE, "'")
+    plain = text.replace(_APOSTROPHE, "'")
 
     # L18: negative framing.
     negative = [phrase for phrase in NEGATIVE_FRAMING if _phrase(phrase).search(plain)]
@@ -374,18 +379,33 @@ def _prose_rules(both: str, blocks: list[str], context: LintContext) -> list[str
     if passive:
         violations.append(f"passive growth: {', '.join(dict.fromkeys(passive))}")
 
-    body = _body_blocks(blocks, context)
-    sentences = [sentence for block in body for sentence in _sentences(block)]
+    if i_runs:
+        violations.extend(_i_runs(split_sentences(text), "sentences"))
+    return violations
 
-    # L20: sentences that start with "I" or "My".
+
+def _i_runs(sentences: list[str], noun: str) -> list[str]:
+    """L20: sentences that start with "I" or "My", two in a row or more
+    than a third of them."""
     starts = [bool(words) and words[0] in I_OPENERS for words in map(_words, sentences)]
     in_a_row = any(first and second for first, second in pairwise(starts))
     count = sum(starts)
     if in_a_row or count * 3 > len(sentences):
-        violations.append(
-            f'"I" or "My" starts {count} of {len(sentences)} body sentences'
+        return [
+            f'"I" or "My" starts {count} of {len(sentences)} {noun}'
             + (", two in a row" if in_a_row else "")
-        )
+        ]
+    return []
+
+
+def _prose_rules(both: str, blocks: list[str], context: LintContext) -> list[str]:
+    """L18 to L22 (spec 165): how the letter reads."""
+    # L18 and L19 read both versions; L20 reads the body sentences only.
+    violations = tone_violations(both, i_runs=False)
+
+    body = _body_blocks(blocks, context)
+    sentences = [sentence for block in body for sentence in _sentences(block)]
+    violations.extend(_i_runs(sentences, "body sentences"))
 
     # L21: a body sentence that copies a fact the writer was given. The
     # message quotes the shared words so the retry knows what to change
