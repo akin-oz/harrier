@@ -1,8 +1,8 @@
 ---
 spec: 163
 title: A failed API answer is read as a failure, whatever its body
-status: proposed
-approved: no
+status: accepted
+approved: yes
 milestone: M6
 depends: [005, 082]
 ---
