@@ -728,10 +728,14 @@ def _put_screening(conn: Connection, scope: Scope, text: str) -> int:
 
 def _cmd_profile_check(args: argparse.Namespace) -> int:
     from harrier.resume.framing import check_resume
+    from harrier.resume.writing import writing_report
 
     with closing(_open_store()) as conn:
-        outcome = check_resume(conn, _scope(conn, args))
-    for line in outcome.lines:
+        scope = _scope(conn, args)
+        outcome = check_resume(conn, scope)
+        # Advisory only (spec 164): the exit code stays the truth gate's.
+        advisory = writing_report(conn, scope)
+    for line in [*outcome.lines, *advisory]:
         print(line)
     return outcome.exit_code
 

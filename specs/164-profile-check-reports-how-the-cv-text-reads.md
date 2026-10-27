@@ -106,25 +106,24 @@ never blocks `profile put`, `tailor` or rendering.
 
 ## Acceptance criteria
 
-- [ ] A synthetic bundle with one line breaking each of W1, W2, W3, W5, W6,
+- [x] A synthetic bundle with one line breaking each of W1, W2, W3, W5, W6,
       W7 and W8 prints that rule's finding with the bullet id or field, and
-      the same bundle with the line fixed prints none for it (planned test
-      in test_cv_writing.py: test_each_writing_rule_finds_and_its_fix_clears).
-- [ ] W4 prints "2 of 3" for a role with three lines, two of which hold a
-      number (planned test: test_role_figure_count).
-- [ ] "myself" does not trigger W2 on "my", "API" and "i.e." do not
-      trigger it on "I", and "US payroll" does not trigger it on "us"
-      (planned test: test_first_person_matches_whole_words).
-- [ ] No finding line contains any pool line's text (planned test:
-      test_findings_name_ids_never_text).
-- [ ] `profile check` exits 0 for a bundle whose bullets pass the truth gate
+      the same bundle with the line fixed prints none for it (`services/api/tests/test_cv_writing.py::test_each_writing_rule_finds_and_its_fix_clears`).
+      The word lists of W1 and W7 are sampled in `services/api/tests/test_cv_writing.py::test_each_weak_opener_and_self_description_is_found`.
+- [x] W4 prints "2 of 3" for a role with three lines, two of which hold a
+      number (`services/api/tests/test_cv_writing.py::test_role_figure_count`).
+- [x] "myself" does not trigger W2 on "my", "API", "I/O", "i.e." and
+      "I.e." do not trigger it on "I", and "US payroll" does not trigger it
+      on "us" (`services/api/tests/test_cv_writing.py::test_first_person_matches_whole_words`).
+- [x] No finding line contains any pool line's text (`services/api/tests/test_cv_writing.py::test_findings_name_ids_never_text`).
+- [x] `profile check` exits 0 for a bundle whose bullets pass the truth gate
       and that has writing findings, and prints them under
-      "writing (advisory):" (planned test: test_profile_check_exit_ignores_writing).
-- [ ] A `profile put` that adds a W1 line to a valid track is stored: a
-      writing finding is not a break (planned test:
-      test_a_writing_finding_does_not_refuse_a_put).
-- [ ] The existing `profile check` tests in
-      `services/api/tests/test_track_framing.py` pass unchanged.
+      "writing (advisory):" (`services/api/tests/test_cv_writing.py::test_profile_check_exit_ignores_writing`).
+- [x] A `profile put` that adds a W1 line to a valid track is stored: a
+      writing finding is not a break (`services/api/tests/test_cv_writing.py::test_a_writing_finding_does_not_refuse_a_put`).
+- [x] The existing `profile check` tests in
+      `services/api/tests/test_track_framing.py` pass unchanged
+      (`services/api/tests/test_track_framing.py::test_profile_check_reports_bullet_ids_only`).
 
 ## Proof / origin
 
@@ -180,3 +179,40 @@ never blocks `profile put`, `tailor` or rendering.
 
 Akin approved the spec as written, which settles the open decisions above
 as the spec states them.
+
+## Amendment (2026-10-27, implementation)
+
+The build found these places where the Behavior was silent or read wrong.
+
+1. **"I" as a word.** W2's "the word I written as a capital" matched the
+   "I" in "I/O" and in a capitalised "I.e.". Neither is the pronoun. A
+   capital "I" counts only when no letter, digit, slash or stop sits
+   before it, and no letter, digit or slash, nor a stop and a letter,
+   follows it. "I'm" and "I've" still count. The word list is unchanged.
+2. **W8 has two messages.** Its one message gave the word count, which
+   reads wrong for a short line of three sentences. A line over 35 words
+   prints `bullet <id>: <n> words; keep a bullet under 35`; a line within
+   35 words but over two sentences prints
+   `bullet <id>: <n> sentences; keep a bullet to 2`.
+3. **Pool findings say "bullet".** W2 and W6 name a pool line as
+   `bullet <id>`, as W1, W3 and W8 do, and a framing string by its field
+   name.
+4. **What each finding quotes.** W1 quotes the listed phrase in lower case.
+   W2, W6 and W7 quote the matched words as the line writes them. W5
+   quotes the first word as its first line writes it, without surrounding
+   punctuation, and compares case-insensitively.
+5. **Order.** The findings print in rule order (W1, W2, W3, W5, W6, W7,
+   W8), pool lines before framing strings within a rule, then W4's lines.
+   A role with no pool lines prints `0 of 0`.
+6. **Inline markup.** Lines are read with backticks and emphasis markers
+   stripped (`strip_inline_markup`), so a bold opener is still an opener.
+7. **One reader for the command.** `writing.py` also holds
+   `writing_report(conn, scope)`: the header and the findings, or nothing
+   when the bundle does not load. `_cmd_profile_check` prints it after
+   `check_resume`'s lines, so a bundle that loads but fails the truth gate
+   still gets its advice.
+8. **One existing test pinned the whole output.**
+   `services/api/tests/test_account_writes.py::test_account_writes_puts_track_documents`
+   compared every line `profile check` printed with the valid line alone.
+   It now pins the valid line first, the advisory header after it when
+   any finding prints, and no truth gate failure.
